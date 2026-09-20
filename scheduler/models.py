@@ -17,6 +17,7 @@ class FixedBlock(BaseModel):
     title: str
     start_slot: int = Field(ge = 0, lt=SLOTS_PER_DAY)
     end_slot: int = Field(gt = 0, le=SLOTS_PER_DAY)  # end is exclusive
+    day: int = Field(default=0, ge=0)  # 0 = first day of the plan
 
 
 class DynamicTask(BaseModel):
@@ -26,9 +27,12 @@ class DynamicTask(BaseModel):
     difficulty: int = Field(ge=1, le=5)
     splittable: bool = True
     max_session_slots: int = Field(default=8, gt=0) # 8 slots = 2 hours
+    deadline_day: int | None = Field(default=None, ge=0)  # None = no deadline
+    deadline_slot: int = Field(default=SLOTS_PER_DAY, gt=0, le=SLOTS_PER_DAY)  # exclusive
 
 class ScheduledItem(BaseModel):
     title: str
     start_slot: int
     end_slot: int  # exclusive
     kind: str      # "fixed" or "task"
+    day: int = 0
