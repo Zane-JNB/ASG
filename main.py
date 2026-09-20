@@ -1,4 +1,5 @@
 from scheduler.greedy import plan_day
+from scheduler.solver import plan_day_cp
 from scheduler.models import DynamicTask, FixedBlock, time_to_slot, slot_to_time
 
 fixed_blocks = [
@@ -15,12 +16,14 @@ tasks = [
     DynamicTask(title="Lab write-up", duration_slots=6, priority=3, difficulty=2),
 ]
 
-items, unscheduled = plan_day(fixed_blocks, tasks)
-
-for item in items:
-    print(f"{slot_to_time(item.start_slot)}-{slot_to_time(item.end_slot)}  [{item.kind}] {item.title}")
-
-if unscheduled:
-    print("\nCould not fit:")
+def show(name, items, unscheduled):
+    print(f"--- {name} ---")
+    for item in items:
+        print(f"{slot_to_time(item.start_slot)}-{slot_to_time(item.end_slot)}  [{item.kind}] {item.title}")
     for task in unscheduled:
-        print(f"  - {task.title}")
+        print(f"  could not fit: {task.title}")
+    print()
+
+
+show("greedy", *plan_day(fixed_blocks, tasks))
+show("solver", *plan_day_cp(fixed_blocks, tasks))
