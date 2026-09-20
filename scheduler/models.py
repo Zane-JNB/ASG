@@ -24,6 +24,8 @@ class DynamicTask(BaseModel):
     duration_slots: int = Field(gt=0)  # 4 slots = 1 hour
     priority: int = Field(ge=1, le=5)
     difficulty: int = Field(ge=1, le=5)
+    splittable: bool = True
+    max_session_slots: int = Field(default=8, gt=0) # 8 slots = 2 hours
 
 class ScheduledItem(BaseModel):
     title: str
