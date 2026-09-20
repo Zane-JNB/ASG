@@ -5,7 +5,8 @@ from scheduler.models import DynamicTask, FixedBlock, ScheduledItem, SLOTS_PER_D
 presence_bonus = 10_000  # big, so fitting a task always beats moving things earlier
 
 
-def plan_day_cp(fixed_blocks: list[FixedBlock], tasks: list[DynamicTask]):
+
+def plan_day_cp(fixed_blocks: list[FixedBlock], tasks: list[DynamicTask],buffer_slots: int = 1):
     model = cp_model.CpModel()
     intervals = []
 
@@ -21,9 +22,10 @@ def plan_day_cp(fixed_blocks: list[FixedBlock], tasks: list[DynamicTask]):
     for i, task in enumerate(tasks):
         start = model.NewIntVar(0, SLOTS_PER_DAY - task.duration_slots, f"start_{i}")
         is_present = model.NewBoolVar(f"present_{i}")
+        size = task.duration_slots + buffer_slots
         intervals.append(
             model.NewOptionalFixedSizeIntervalVar(
-                start, task.duration_slots, is_present, f"task_{i}"
+                start, size, is_present, f"task_{i}"
             )
         )
         placed.append((task, start, is_present))
@@ -67,3 +69,4 @@ def plan_day_cp(fixed_blocks: list[FixedBlock], tasks: list[DynamicTask]):
 
     items.sort(key=lambda i: i.start_slot)
     return items, unscheduled
+

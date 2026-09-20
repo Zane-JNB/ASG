@@ -24,6 +24,5 @@ def show(name, items, unscheduled):
         print(f"  could not fit: {task.title}")
     print()
 
-
 show("greedy", *plan_day(fixed_blocks, tasks))
 show("solver", *plan_day_cp(fixed_blocks, tasks))

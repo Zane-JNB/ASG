@@ -21,3 +21,12 @@ def test_solver_reports_tasks_that_do_not_fit():
     tasks = [DynamicTask(title="A", duration_slots=4, priority=3, difficulty=2)]
     items, unscheduled = plan_day_cp(blocks, tasks)
     assert [t.title for t in unscheduled] == ["A"]
+
+def test_solver_leaves_a_buffer_after_tasks():
+    tasks = [
+        DynamicTask(title="A", duration_slots=4, priority=5, difficulty=3),
+        DynamicTask(title="B", duration_slots=4, priority=4, difficulty=3),
+    ]
+    items, _ = plan_day_cp([], tasks, buffer_slots=1)
+    first, second = items[0], items[1]
+    assert second.start_slot - first.end_slot >= 1
