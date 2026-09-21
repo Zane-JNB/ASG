@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 MINUTES_PER_SLOT = 15
 SLOTS_PER_DAY = 24 * 60 // MINUTES_PER_SLOT  # 96 slots in a day
@@ -16,8 +16,13 @@ def slot_to_time(slot: int) -> str:
 class FixedBlock(BaseModel):
     title: str
     start_slot: int = Field(ge = 0, lt=SLOTS_PER_DAY)
-    end_slot: int = Field(gt = 0, le=SLOTS_PER_DAY)  # end is exclusive
+    end_slot: int = Field(gt = 0, le=2 * SLOTS_PER_DAY)  # end is exclusive
     day: int = Field(default=0, ge=0)  # 0 = first day of the plan
+    @model_validator(mode="after")
+    def end_after_start(self):
+        if self.end_slot <= self.start_slot:
+            raise ValueError("end_slot must be after start_slot")
+        return self
 
 
 class DynamicTask(BaseModel):

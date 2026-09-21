@@ -2,16 +2,25 @@ from scheduler.models import DynamicTask, FixedBlock, SLOTS_PER_DAY, time_to_slo
 from scheduler.solver import plan_day_cp
 
 
-def sleep(day):
-    return [
-        FixedBlock(title="Sleep", start_slot=time_to_slot("00:00"), end_slot=time_to_slot("07:00"), day=day),
-        FixedBlock(title="Sleep", start_slot=time_to_slot("23:00"), end_slot=time_to_slot("24:00"), day=day),
-    ]
+num_days = 2
 
+sleep_blocks = [
+    # the night before the plan starts
+    FixedBlock(title="Sleep", start_slot=time_to_slot("00:00"), end_slot=time_to_slot("07:00"), day=0),
+    # one block per night: 23:00 to 07:00 the next morning
+    *[
+        FixedBlock(
+            title="Sleep",
+            start_slot=time_to_slot("23:00"),
+            end_slot=SLOTS_PER_DAY + time_to_slot("07:00"),
+            day=d,
+        )
+        for d in range(num_days)
+    ],
+]
 
 fixed_blocks = [
-    *sleep(0),
-    *sleep(1),
+    *sleep_blocks,
     FixedBlock(title="Data Structures lecture", start_slot=time_to_slot("09:00"), end_slot=time_to_slot("11:00"), day=0),
     FixedBlock(title="Football practice", start_slot=time_to_slot("16:00"), end_slot=time_to_slot("18:00"), day=0),
     FixedBlock(title="Data Structures lecture", start_slot=time_to_slot("09:00"), end_slot=time_to_slot("11:00"), day=1),
@@ -27,7 +36,7 @@ tasks = [
     DynamicTask(title="Problem set", duration_slots=16, priority=3, difficulty=3),
 ]
 
-items, unscheduled = plan_day_cp(fixed_blocks, tasks, num_days=2)
+items, unscheduled = plan_day_cp(fixed_blocks, tasks, num_days=num_days)
 
 for item in items:
     end = (

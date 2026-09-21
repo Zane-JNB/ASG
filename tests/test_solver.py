@@ -73,3 +73,14 @@ def test_task_can_cross_midnight():
     items, unscheduled = plan_day_cp([], tasks, num_days=2)
     assert unscheduled == []
     assert any(i.end_slot > SLOTS_PER_DAY for i in items)
+
+def test_fixed_block_can_cross_midnight():
+    night = FixedBlock(title="Sleep", start_slot=92, end_slot=SLOTS_PER_DAY + 28, day=0)
+    task = DynamicTask(
+        title="A", duration_slots=4, priority=3, difficulty=2, splittable=False
+    )
+    items, unscheduled = plan_day_cp([night], [task], num_days=2)
+    part = [i for i in items if i.kind == "task"][0]
+    start = part.day * SLOTS_PER_DAY + part.start_slot
+    end = part.day * SLOTS_PER_DAY + part.end_slot
+    assert end <= 92 or start >= SLOTS_PER_DAY + 28  # fully before or after the sleep
