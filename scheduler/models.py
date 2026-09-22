@@ -1,4 +1,5 @@
 from pydantic import BaseModel, Field, model_validator
+from typing import Literal 
 
 MINUTES_PER_SLOT = 15
 SLOTS_PER_DAY = 24 * 60 // MINUTES_PER_SLOT  # 96 slots in a day
@@ -34,6 +35,29 @@ class DynamicTask(BaseModel):
     max_session_slots: int = Field(default=8, gt=0) # 8 slots = 2 hours
     deadline_day: int | None = Field(default=None, ge=0)  # None = no deadline
     deadline_slot: int = Field(default=SLOTS_PER_DAY, gt=0, le=SLOTS_PER_DAY)  # exclusive
+
+class SleepRule(BaseModel):  # 
+    """One night of sleep. Night 0 starts on the evening of day 0.""" 
+    night: int = Field(default=0, ge=0)  
+    length_slots: int = Field(default=32, gt=0) 
+    min_slots: int = Field(default=24, gt=0) 
+    earliest_bed: int = Field(default=84, ge=0, lt=2 * SLOTS_PER_DAY)
+    latest_bed: int = Field(default=100, ge=0, lt=2 * SLOTS_PER_DAY) 
+    preferred_bed: int = Field(default=92, ge=0, lt=2 * SLOTS_PER_DAY)
+    skip: bool = False  
+ 
+    @model_validator(mode="after") 
+    def check_rule(self):  
+        if self.min_slots > self.length_slots:  
+            raise ValueError("min_slots cannot be more than length_slots")  
+        if not (self.earliest_bed <= self.preferred_bed <= self.latest_bed):  
+            raise ValueError("need earliest_bed <= preferred_bed <= latest_bed")  
+        return self 
+    
+class ScheduleWarning(BaseModel): 
+    severity: Literal["hard", "soft"]  # NEW  hard = something protected was given up
+    kind: str  # NEW  e.g. "sleep_skipped", "sleep_short", "late_bedtime", "task_unscheduled"
+    message: str
 
 class ScheduledItem(BaseModel):
     title: str
