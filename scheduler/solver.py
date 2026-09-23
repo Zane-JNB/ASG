@@ -2,13 +2,15 @@ import math
 from ortools.sat.python import cp_model
 from scheduler.models import (
     DynamicTask, FixedBlock, ScheduledItem, SleepRule, ScheduleWarning,
-    SLOTS_PER_DAY, MINUTES_PER_SLOT, slot_to_time,
+    SLOTS_PER_DAY, MINUTES_PER_SLOT, slot_to_time, StudyPlanRule, Exam
 )
 
 presence_bonus = 10_000  # big, so fitting a task always beats moving things earlier
 sleep_min_penalty = 1_000_000  #   per slot below minimum sleep: outweighs any pile of tasks
 sleep_target_penalty = 5_000  #   per slot between minimum and target sleep
 bedtime_penalty = 50  #   per slot away from the preferred bedtime
+same_day_penalty = 3_000 # cost for two sessions of one task landing on the same day
+DEFAULT_MAX_SESSION_SLOTS = 8  # 2 hours, at 15-min slots -- the default cap unless a task overrides it
 
 def split_sizes(duration: int, max_session: int) -> list[int]:
     """Fewest, most even chunks that are each <= max_session."""
@@ -21,7 +23,8 @@ def hours(slots: int) -> str:
 
 def plan_day_cp(fixed_blocks: list[FixedBlock], tasks: list[DynamicTask],
                 buffer_slots: int = 1, num_days: int = 1,
-                sleep_rules: list[SleepRule] | None = None): 
+                sleep_rules: list[SleepRule] | None = None,
+                time_limit_seconds: float | None = 30.0): 
     
     model = cp_model.CpModel()
     intervals = []
@@ -38,6 +41,7 @@ def plan_day_cp(fixed_blocks: list[FixedBlock], tasks: list[DynamicTask],
  
     # tasks: each becomes one or more chunks the solver places
     placed = []  # (task, is_present, [(start_expr, size), ...])
+    spread_cost = []  #  penalty for two sessions of the same task on the same day
     for i, task in enumerate(tasks):
         is_present = model.NewBoolVar(f"present_{i}")
  
@@ -47,8 +51,13 @@ def plan_day_cp(fixed_blocks: list[FixedBlock], tasks: list[DynamicTask],
             sizes = [task.duration_slots]
  
         chunks = []
+        chunk_days = []
+        earliest = 0
+        if task.earliest_start_day is not None:
+            earliest = task.earliest_start_day * SLOTS_PER_DAY + task.earliest_start_slot
         for j, size in enumerate(sizes):
-            start = model.NewIntVar(0, num_days * SLOTS_PER_DAY - size, f"start_{i}_{j}")
+            lower = earliest if j == 0 else 0  # later chunks are bounded by the ordering constraint instead
+            start = model.NewIntVar(lower, num_days * SLOTS_PER_DAY - size, f"start_{i}_{j}")
  
             intervals.append(
                 model.NewOptionalFixedSizeIntervalVar(
@@ -67,9 +76,34 @@ def plan_day_cp(fixed_blocks: list[FixedBlock], tasks: list[DynamicTask],
                 model.Add(
                     start >= prev_start + prev_size + buffer_slots
                 ).OnlyEnforceIf(is_present)
- 
+
+                prev_day = chunk_days[-1][0]
+                # model.AddDivisionEquality(prev_day, prev_start, SLOTS_PER_DAY)
+                this_day = model.NewIntVar(0, num_days - 1, f"day_{i}_{j}")
+                model.AddDivisionEquality(this_day, start, SLOTS_PER_DAY)
+                same_day = model.NewBoolVar(f"same_day_{i}_{j}") 
+                model.Add(prev_day == this_day).OnlyEnforceIf(same_day) 
+                model.Add(prev_day != this_day).OnlyEnforceIf(same_day.Not())
+                spread_cost.append(same_day_penalty * same_day)
+            else:
+                this_day = model.NewIntVar(0, num_days - 1, f"day_{i}_{j}")  # first chunk's day
+                model.AddDivisionEquality(this_day, start, SLOTS_PER_DAY)
+
+            chunk_days.append((this_day, size))
             chunks.append((start, size))
- 
+
+            
+        if task.max_daily_slots is not None and len(chunk_days) > 1:  # NEW: cap this task's per-day total
+            for d in range(num_days):
+                on_day = []
+                for day_var, size in chunk_days:
+                    b = model.NewBoolVar(f"on_day_{i}_{d}_{len(on_day)}")
+                    model.Add(day_var == d).OnlyEnforceIf(b)
+                    model.Add(day_var != d).OnlyEnforceIf(b.Not())
+                    on_day.append((b, size))
+                model.Add(
+                    sum(size * b for b, size in on_day) <= task.max_daily_slots
+                ).OnlyEnforceIf(is_present)
         placed.append((task, is_present, chunks))
  
     # sleep: one flexible interval per night (the solver picks bedtime and length) 
@@ -121,11 +155,19 @@ def plan_day_cp(fixed_blocks: list[FixedBlock], tasks: list[DynamicTask],
             for task, present, chunks in placed
         )
         - sum(sleep_cost)   
+        - sum(spread_cost)
     )
  
     solver = cp_model.CpSolver()
+    if time_limit_seconds is not None: 
+        solver.parameters.max_time_in_seconds = time_limit_seconds 
     status = solver.Solve(model)
     if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+        if status == cp_model.UNKNOWN:  #hit the time limit before finding any feasible plan
+            raise RuntimeError(  # NEW
+                f"No schedule found within {time_limit_seconds}s "  # NEW
+                "(too many tasks/constraints for the time limit -- try raising it or simplifying the plan)"  # NEW
+            )  # NEW
         raise RuntimeError("No valid schedule (do your fixed blocks overlap?)")
  
     items = [
@@ -239,6 +281,39 @@ def task_warnings(unscheduled: list[DynamicTask]) -> list[ScheduleWarning]:
                 message=f"'{task.title}' did not fit in this plan.",   
             ))  
     return warnings   
+
+def generate_study_tasks(exams: list[Exam], rule: StudyPlanRule | None = None, max_session_slots: int | None = None) -> list[DynamicTask]:
+    """Turn each exam into a study DynamicTask, sized and windowed by its difficulty band.
+    
+    Sessions are capped at DEFAULT_MAX_SESSION_SLOTS (2h) unless max_session_slots is given
+    explicitly -- band.max_hours_per_day is the daily study target, not a session-length cap.
+    """
+    rule = rule or StudyPlanRule()
+    session_cap = max_session_slots or DEFAULT_MAX_SESSION_SLOTS  # NEW
+    tasks = []
+    for exam in exams:
+        band = rule.band_for(exam.difficulty)
+        slots_per_hour = 60 // MINUTES_PER_SLOT
+
+        duration_slots = round(band.min_hours_per_day * band.days_before * slots_per_hour)
+        max_session_slots = round(band.max_hours_per_day * slots_per_hour)
+
+        earliest_day = max(0, exam.day - band.days_before)
+
+        tasks.append(DynamicTask(
+            title=f"Study: {exam.title}",
+            duration_slots=duration_slots,
+            priority=exam.priority,
+            difficulty=exam.difficulty,
+            splittable=True,
+            max_session_slots=session_cap,
+            max_daily_slots=round(band.max_hours_per_day * slots_per_hour),
+            deadline_day=exam.day,
+            deadline_slot=exam.slot,
+            earliest_start_day=earliest_day,
+            earliest_start_slot=0,
+        ))
+    return tasks
  
  
  

@@ -35,6 +35,9 @@ class DynamicTask(BaseModel):
     max_session_slots: int = Field(default=8, gt=0) # 8 slots = 2 hours
     deadline_day: int | None = Field(default=None, ge=0)  # None = no deadline
     deadline_slot: int = Field(default=SLOTS_PER_DAY, gt=0, le=SLOTS_PER_DAY)  # exclusive
+    earliest_start_day: int | None = Field(default=None, ge=0)  # None = no earliest bound
+    earliest_start_slot: int = Field(default=0, ge=0, lt=SLOTS_PER_DAY)
+    max_daily_slots: int | None = Field(default=None, gt=0)
 
 class SleepRule(BaseModel):  # 
     """One night of sleep. Night 0 starts on the evening of day 0.""" 
@@ -55,8 +58,8 @@ class SleepRule(BaseModel):  #
         return self 
     
 class ScheduleWarning(BaseModel): 
-    severity: Literal["hard", "soft"]  # NEW  hard = something protected was given up
-    kind: str  # NEW  e.g. "sleep_skipped", "sleep_short", "late_bedtime", "task_unscheduled"
+    severity: Literal["hard", "soft"]  #  hard = something protected was given up
+    kind: str  #  e.g. "sleep_skipped", "sleep_short", "late_bedtime", "task_unscheduled"
     message: str
 
 class ScheduledItem(BaseModel):
@@ -65,3 +68,40 @@ class ScheduledItem(BaseModel):
     end_slot: int  # exclusive
     kind: str      # "fixed" or "task"
     day: int = 0
+
+class Exam(BaseModel):
+    title: str
+    day: int = Field(ge=0)
+    slot: int = Field(default=SLOTS_PER_DAY, gt=0, le=SLOTS_PER_DAY)  # when it starts that day
+    difficulty: int = Field(ge=1, le=5)
+    priority: int = Field(default=4, ge=1, le=5)  # priority given to the generated study task
+
+
+class StudyBand(BaseModel):
+    """One difficulty band's study policy, e.g. 'hard tests get a week, 2-4h/day'."""
+    days_before: int = Field(gt=0)
+    min_hours_per_day: float = Field(gt=0)
+    max_hours_per_day: float = Field(gt=0)
+
+    @model_validator(mode="after")
+    def hours_make_sense(self):
+        if self.min_hours_per_day > self.max_hours_per_day:
+            raise ValueError("min_hours_per_day cannot exceed max_hours_per_day")
+        return self
+
+
+class StudyPlanRule(BaseModel):
+    """Maps exam difficulty (1-5) to a study band. Defaults are Zane's personal rule."""
+    easy: StudyBand = Field(default_factory=lambda: StudyBand(
+        days_before=2, min_hours_per_day=2, max_hours_per_day=4))
+    medium: StudyBand = Field(default_factory=lambda: StudyBand(
+        days_before=5, min_hours_per_day=2, max_hours_per_day=4))
+    hard: StudyBand = Field(default_factory=lambda: StudyBand(
+        days_before=7, min_hours_per_day=2, max_hours_per_day=4))
+
+    def band_for(self, difficulty: int) -> StudyBand:
+        if difficulty <= 2:
+            return self.easy
+        if difficulty == 3:
+            return self.medium
+        return self.hard
