@@ -1,16 +1,9 @@
 import math
 from ortools.sat.python import cp_model
 from scheduler.models import (
-    DynamicTask, FixedBlock, ScheduledItem, SleepRule, ScheduleWarning,
-    SLOTS_PER_DAY, MINUTES_PER_SLOT, slot_to_time, StudyPlanRule, Exam
+    DynamicTask,Exam, FixedBlock, MINUTES_PER_SLOT, ProfileSettings, ScheduledItem, ScheduleWarning,
+    SleepRule, SLOTS_PER_DAY, slot_to_time, StudyPlanRule, 
 )
-
-presence_bonus = 10_000  # big, so fitting a task always beats moving things earlier
-sleep_min_penalty = 1_000_000  #   per slot below minimum sleep: outweighs any pile of tasks
-sleep_target_penalty = 5_000  #   per slot between minimum and target sleep
-bedtime_penalty = 50  #   per slot away from the preferred bedtime
-same_day_penalty = 3_000 # cost for two sessions of one task landing on the same day
-DEFAULT_MAX_SESSION_SLOTS = 8  # 2 hours, at 15-min slots -- the default cap unless a task overrides it
 
 def split_sizes(duration: int, max_session: int) -> list[int]:
     """Fewest, most even chunks that are each <= max_session."""
@@ -21,12 +14,15 @@ def split_sizes(duration: int, max_session: int) -> list[int]:
 def hours(slots: int) -> str:  
     return f"{slots * MINUTES_PER_SLOT / 60:.2g}h"  
 
-def plan_day_cp(fixed_blocks: list[FixedBlock], tasks: list[DynamicTask],
-                buffer_slots: int = 1, num_days: int = 1,
+def build_schedule(fixed_blocks: list[FixedBlock], tasks: list[DynamicTask],
+                buffer_slots: int | None = None , num_days: int = 1,
                 sleep_rules: list[SleepRule] | None = None,
-                time_limit_seconds: float | None = 30.0): 
+                time_limit_seconds: float | None = 30.0,
+                settings: ProfileSettings | None = None): 
     
+    settings = settings or ProfileSettings()
     model = cp_model.CpModel()
+    buffer_slots = settings.buffer_slots if buffer_slots is None else buffer_slots
     intervals = []
 
     fixed_block_bounds = [] #(abs_start, abs_end) per fixed block, for the buffer-after rule below
@@ -85,7 +81,7 @@ def plan_day_cp(fixed_blocks: list[FixedBlock], tasks: list[DynamicTask],
                 same_day = model.NewBoolVar(f"same_day_{i}_{j}") 
                 model.Add(prev_day == this_day).OnlyEnforceIf(same_day) 
                 model.Add(prev_day != this_day).OnlyEnforceIf(same_day.Not())
-                spread_cost.append(same_day_penalty * same_day)
+                spread_cost.append(settings.same_day_penalty * same_day)
             else:
                 this_day = model.NewIntVar(0, num_days - 1, f"day_{i}_{j}")  # first chunk's day
                 model.AddDivisionEquality(this_day, start, SLOTS_PER_DAY)
@@ -140,9 +136,9 @@ def plan_day_cp(fixed_blocks: list[FixedBlock], tasks: list[DynamicTask],
         drift = model.NewIntVar(0, 2 * SLOTS_PER_DAY, f"bed_drift_{rule.night}")   
         model.AddAbsEquality(drift, start - (base + rule.preferred_bed))   
  
-        sleep_cost.append(sleep_min_penalty * shortfall)  
-        sleep_cost.append(sleep_target_penalty * (rule.length_slots - size))   
-        sleep_cost.append(bedtime_penalty * drift)   
+        sleep_cost.append(settings.sleep_min_penalty * shortfall)  
+        sleep_cost.append(settings.sleep_target_penalty * (rule.length_slots - size))   
+        sleep_cost.append(settings.bedtime_penalty * drift)   
         sleep_placed.append((rule, start, size))   
  
     for bi, (bs, be) in enumerate(fixed_block_bounds):
@@ -156,7 +152,7 @@ def plan_day_cp(fixed_blocks: list[FixedBlock], tasks: list[DynamicTask],
     # goal: fit as many high-priority tasks as possible, and place them early
     model.Maximize(
         sum(
-            task.priority * presence_bonus * present
+            task.priority * settings.presence_bonus * present
             - task.priority * sum(start for start, _ in chunks)
             for task, present, chunks in placed
         )
@@ -288,15 +284,19 @@ def task_warnings(unscheduled: list[DynamicTask]) -> list[ScheduleWarning]:
             ))  
     return warnings   
 
-def generate_study_tasks(exams: list[Exam], rule: StudyPlanRule | None = None, max_session_slots: int | None = None) -> list[DynamicTask]:
+def generate_study_tasks(exams: list[Exam], rule: StudyPlanRule |
+                        None = None, max_session_slots: int | None = None,
+                        settings: ProfileSettings | None = None) -> list[DynamicTask]:
     """Turn each exam into a study DynamicTask, sized and windowed by its difficulty band.
     
     Sessions are capped at DEFAULT_MAX_SESSION_SLOTS (2h) unless max_session_slots is given
     explicitly -- band.max_hours_per_day is the daily study target, not a session-length cap.
     """
     rule = rule or StudyPlanRule()
-    session_cap = max_session_slots or DEFAULT_MAX_SESSION_SLOTS  # NEW
+    settings = settings or ProfileSettings()
+    session_cap = max_session_slots or settings.default_max_session_slots  
     tasks = []
+
     for exam in exams:
         band = rule.band_for(exam.difficulty)
         slots_per_hour = 60 // MINUTES_PER_SLOT

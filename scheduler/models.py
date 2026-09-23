@@ -56,6 +56,34 @@ class SleepRule(BaseModel):  #
         if not (self.earliest_bed <= self.preferred_bed <= self.latest_bed):  
             raise ValueError("need earliest_bed <= preferred_bed <= latest_bed")  
         return self 
+
+class ProfileSettings(BaseModel):  # NEW
+    """Per-student tuning knobs. Defaults match the constants the solver used to hardcode."""   
+    buffer_slots: int = Field(default=1, ge=0)
+    presence_bonus: int = Field(default=10_000, gt=0)  #   fitting a task beats moving things earlier
+    sleep_min_penalty: int = Field(default=1_000_000, gt=0)  #   per slot below minimum sleep
+    sleep_target_penalty: int = Field(default=5_000, gt=0)  #   per slot between minimum and target sleep
+    bedtime_penalty: int = Field(default=50, gt=0)  #  per slot away from the preferred bedtime
+    same_day_penalty: int = Field(default=3_000, gt=0)  #  two sessions of one task on the same day
+    default_max_session_slots: int = Field(default=8, gt=0)  #  2h -- study session cap unless overridden
+    default_sleep_length_slots: int = Field(default=32, gt=0)  #  8h target
+    default_sleep_min_slots: int = Field(default=24, gt=0)  #  6h minimum
+    default_earliest_bed: int = Field(default=84, ge=0, lt=2 * SLOTS_PER_DAY)  #  21:00
+    default_latest_bed: int = Field(default=100, ge=0, lt=2 * SLOTS_PER_DAY)  #  01:00
+    default_preferred_bed: int = Field(default=92, ge=0, lt=2 * SLOTS_PER_DAY)  #  23:00
+
+    def default_sleep_rule(self, night: int, **overrides) -> "SleepRule":  
+        """Build a SleepRule for one night using this profile's defaults, with any field overridden."""  
+        fields = dict( 
+            night=night,   
+            length_slots=self.default_sleep_length_slots,  
+            min_slots=self.default_sleep_min_slots,   
+            earliest_bed=self.default_earliest_bed,  
+            latest_bed=self.default_latest_bed,  
+            preferred_bed=self.default_preferred_bed, 
+        )   
+        fields.update(overrides) 
+        return SleepRule(**fields) 
     
 class ScheduleWarning(BaseModel): 
     severity: Literal["hard", "soft"]  #  hard = something protected was given up
