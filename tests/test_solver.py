@@ -276,3 +276,25 @@ def test_time_limit_too_short_raises_clear_error():
     with pytest.raises(RuntimeError, match="No schedule found within"):
         plan_day_cp(fixed_blocks, tasks, num_days=14, sleep_rules=sleep_rules,
                    time_limit_seconds=0.001)
+
+def test_task_gets_a_break_after_a_fixed_block():
+    block = FixedBlock(title="Class", start_slot=32, end_slot=48)  # 08:00-12:00
+    task = DynamicTask(title="Homework", duration_slots=4, priority=3, difficulty=2,
+                       earliest_start_day=0, earliest_start_slot=48)
+    items, unscheduled = plan_day_cp([block], [task], buffer_slots=2)
+    homework = [i for i in items if i.kind == "task"][0]
+    assert homework.start_slot >= block.end_slot + 2
+
+def test_task_can_still_end_right_before_a_fixed_block_starts():
+    block = FixedBlock(title="Class", start_slot=32, end_slot=48)
+    task = DynamicTask(title="Homework", duration_slots=4, priority=3, difficulty=2)
+    items, unscheduled = plan_day_cp([block], [task], buffer_slots=2)
+    homework = [i for i in items if i.kind == "task"][0]
+    assert homework.end_slot <= block.start_slot  # no buffer required before a block
+
+def test_two_fixed_blocks_can_still_be_back_to_back():
+    b1 = FixedBlock(title="Class A", start_slot=32, end_slot=48)
+    b2 = FixedBlock(title="Class B", start_slot=48, end_slot=64)  # zero gap from b1
+    items, unscheduled = plan_day_cp([b1, b2], [], buffer_slots=2)
+    assert unscheduled == []
+    assert len(items) == 2

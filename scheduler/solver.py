@@ -28,8 +28,8 @@ def plan_day_cp(fixed_blocks: list[FixedBlock], tasks: list[DynamicTask],
     
     model = cp_model.CpModel()
     intervals = []
- 
-    # fixed blocks: intervals that can't move
+
+    fixed_block_bounds = [] #(abs_start, abs_end) per fixed block, for the buffer-after rule below
     for block in fixed_blocks:
         if block.day >= num_days:
             raise ValueError(
@@ -38,6 +38,7 @@ def plan_day_cp(fixed_blocks: list[FixedBlock], tasks: list[DynamicTask],
         length = block.end_slot - block.start_slot
         start = block.day * SLOTS_PER_DAY + block.start_slot
         intervals.append(model.NewFixedSizeIntervalVar(start, length, block.title))
+        fixed_block_bounds.append((start, start + length))
  
     # tasks: each becomes one or more chunks the solver places
     placed = []  # (task, is_present, [(start_expr, size), ...])
@@ -144,7 +145,12 @@ def plan_day_cp(fixed_blocks: list[FixedBlock], tasks: list[DynamicTask],
         sleep_cost.append(bedtime_penalty * drift)   
         sleep_placed.append((rule, start, size))   
  
-    # rule: nothing overlaps
+    for bi, (bs, be) in enumerate(fixed_block_bounds):
+        for i, (task, is_present, chunks) in enumerate(placed):
+            for j, (start, size) in enumerate(chunks):
+                after_block = model.NewBoolVar(f"after_block_{bi}_{i}_{j}")
+                model.Add(start >= be + buffer_slots).OnlyEnforceIf([is_present, after_block])
+                model.Add(start + size <= bs).OnlyEnforceIf([is_present, after_block.Not()])
     model.AddNoOverlap(intervals)
  
     # goal: fit as many high-priority tasks as possible, and place them early
