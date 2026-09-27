@@ -1,7 +1,9 @@
 import sqlite3
 from datetime import datetime, timezone
 
-from scheduler.models import ProfileSettings
+from pydantic import BaseModel
+
+from scheduler.models import ProfileSettings, FixedBlock, DynamicTask, Exam
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS students (
@@ -25,8 +27,28 @@ CREATE TABLE IF NOT EXISTS reflections (
     settings_after_json TEXT NOT NULL,
     applied INTEGER NOT NULL
 );
-"""
 
+CREATE TABLE IF NOT EXISTS fixed_blocks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    student_id INTEGER NOT NULL REFERENCES students(id),
+    data_json TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS tasks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    student_id INTEGER NOT NULL REFERENCES students(id),
+    data_json TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS exams (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    student_id INTEGER NOT NULL REFERENCES students(id),
+    data_json TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+"""
 
 def connect(path: str) -> sqlite3.Connection:
     """Open (and initialize, if new) the database at path. ':memory:' works for tests."""
@@ -35,10 +57,8 @@ def connect(path: str) -> sqlite3.Connection:
     conn.executescript(SCHEMA)
     return conn
 
-
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
-
 
 def get_or_create_student(conn: sqlite3.Connection, name: str) -> int:
     """Return this student's id, creating a row (with default settings) if they're new."""
@@ -54,7 +74,6 @@ def get_or_create_student(conn: sqlite3.Connection, name: str) -> int:
     conn.commit()
     return student_id
 
-
 def load_settings(conn: sqlite3.Connection, student_id: int) -> ProfileSettings:
     """Load a student's settings. Raises if the student doesn't exist yet."""
     row = conn.execute(
@@ -63,7 +82,6 @@ def load_settings(conn: sqlite3.Connection, student_id: int) -> ProfileSettings:
     if row is None:
         raise ValueError(f"no settings found for student_id={student_id}")
     return ProfileSettings.model_validate_json(row[0])
-
 
 def save_settings(conn: sqlite3.Connection, student_id: int, settings: ProfileSettings) -> None:
     """Insert or overwrite a student's settings."""
@@ -78,7 +96,6 @@ def save_settings(conn: sqlite3.Connection, student_id: int, settings: ProfileSe
         (student_id, settings.model_dump_json(), _now()),
     )
     conn.commit()
-
 
 def log_reflection(conn: sqlite3.Connection, student_id: int, reflection_text: str,
                    before: ProfileSettings, after: ProfileSettings, applied: bool) -> int:
@@ -116,3 +133,69 @@ def get_reflections(conn: sqlite3.Connection, student_id: int) -> list[dict]:
         }
         for r in rows
     ]
+
+def _add_item(conn: sqlite3.Connection, table: str, student_id: int, item: BaseModel) -> int:
+    """Insert one item (a FixedBlock, DynamicTask, or Exam) for a student. Returns its new id."""
+    cur = conn.execute(
+        f"INSERT INTO {table} (student_id, data_json, created_at) VALUES (?, ?, ?)",
+        (student_id, item.model_dump_json(), _now()),
+    )
+    conn.commit()
+    return cur.lastrowid
+
+def _get_items(conn: sqlite3.Connection, table: str, student_id: int, model_cls: type) -> list:
+    """Return every item of this type for a student, oldest first, as (id, model_instance) pairs."""
+    rows = conn.execute(
+        f"SELECT id, data_json FROM {table} WHERE student_id = ? ORDER BY id ASC", (student_id,)
+    ).fetchall()
+    return [(r[0], model_cls.model_validate_json(r[1])) for r in rows]
+
+def _delete_item(conn: sqlite3.Connection, table: str, student_id: int, item_id: int) -> bool:
+    """Delete one item by id, scoped to this student (so one student can't delete another's row)."""
+    cur = conn.execute(
+        f"DELETE FROM {table} WHERE id = ? AND student_id = ?", (item_id, student_id)
+    )
+    conn.commit()
+    return cur.rowcount > 0
+
+def _clear_items(conn: sqlite3.Connection, table: str, student_id: int) -> int:
+    """Delete every item of this type for a student. Returns how many rows were removed."""
+    cur = conn.execute(f"DELETE FROM {table} WHERE student_id = ?", (student_id,))
+    conn.commit()
+    return cur.rowcount
+
+def add_fixed_block(conn: sqlite3.Connection, student_id: int, block: FixedBlock) -> int:
+    return _add_item(conn, "fixed_blocks", student_id, block)
+
+def get_fixed_blocks(conn: sqlite3.Connection, student_id: int) -> list[tuple[int, FixedBlock]]:
+    return _get_items(conn, "fixed_blocks", student_id, FixedBlock)
+
+def delete_fixed_block(conn: sqlite3.Connection, student_id: int, block_id: int) -> bool:
+    return _delete_item(conn, "fixed_blocks", student_id, block_id)
+
+def clear_fixed_blocks(conn: sqlite3.Connection, student_id: int) -> int:
+    return _clear_items(conn, "fixed_blocks", student_id)
+
+def add_task(conn: sqlite3.Connection, student_id: int, task: DynamicTask) -> int:
+    return _add_item(conn, "tasks", student_id, task)
+
+def get_tasks(conn: sqlite3.Connection, student_id: int) -> list[tuple[int, DynamicTask]]:
+    return _get_items(conn, "tasks", student_id, DynamicTask)
+
+def delete_task(conn: sqlite3.Connection, student_id: int, task_id: int) -> bool:
+    return _delete_item(conn, "tasks", student_id, task_id)
+
+def clear_tasks(conn: sqlite3.Connection, student_id: int) -> int:
+    return _clear_items(conn, "tasks", student_id)
+
+def add_exam(conn: sqlite3.Connection, student_id: int, exam: Exam) -> int:
+    return _add_item(conn, "exams", student_id, exam)
+
+def get_exams(conn: sqlite3.Connection, student_id: int) -> list[tuple[int, Exam]]:
+    return _get_items(conn, "exams", student_id, Exam)
+
+def delete_exam(conn: sqlite3.Connection, student_id: int, exam_id: int) -> bool:
+    return _delete_item(conn, "exams", student_id, exam_id)
+
+def clear_exams(conn: sqlite3.Connection, student_id: int) -> int:
+    return _clear_items(conn, "exams", student_id)

@@ -176,7 +176,7 @@ def test_missed_deadline_gives_hard_warning():
     _, unscheduled = build_schedule([block], [task], num_days=2)  
     assert [(w.severity, w.kind) for w in task_warnings(unscheduled)] == [("hard", "task_unscheduled")]  
 
-def test_generate_study_tasks_sizes_by_band():  # NEW
+def test_generate_study_tasks_sizes_by_band():  
     exams = [Exam(title="Hard test", day=9, difficulty=5)]
     tasks = generate_study_tasks(exams)
     band = StudyPlanRule().hard
@@ -185,12 +185,12 @@ def test_generate_study_tasks_sizes_by_band():  # NEW
     assert tasks[0].deadline_day == 9
     assert tasks[0].earliest_start_day == 9 - band.days_before
 
-def test_generate_study_tasks_session_cap_can_be_overridden():  # NEW
+def test_generate_study_tasks_session_cap_can_be_overridden():  
     exams = [Exam(title="Test", day=9, difficulty=5)]
     tasks = generate_study_tasks(exams, max_session_slots=16)  # explicit 4h override
     assert tasks[0].max_session_slots == 16
 
-def test_consecutive_study_sessions_prefer_different_days():  # NEW
+def test_consecutive_study_sessions_prefer_different_days():  
     exams = [Exam(title="Hard test", day=8, difficulty=5)]  # 7-day window, plenty of room to spread
     tasks = generate_study_tasks(exams)
     items, unscheduled = build_schedule([], tasks, num_days=9)
@@ -222,12 +222,12 @@ def test_daily_cap_ignored_when_not_set():
     items, unscheduled = build_schedule([], [task], num_days=1)
     assert unscheduled == []
 
-def test_generate_study_tasks_clamps_earliest_day_to_zero():  # NEW
+def test_generate_study_tasks_clamps_earliest_day_to_zero():  
     exams = [Exam(title="Soon", day=1, difficulty=5)]  # hard band wants 7 days before, but day 1 - 7 < 0
     tasks = generate_study_tasks(exams)
     assert tasks[0].earliest_start_day == 0
 
-def test_study_task_does_not_start_before_its_window():  # NEW
+def test_study_task_does_not_start_before_its_window():  
     exams = [Exam(title="Test", day=6, difficulty=3)]  # medium: 5 days before -> earliest day 1
     tasks = generate_study_tasks(exams)
     items, unscheduled = build_schedule([], tasks, num_days=7)
@@ -235,7 +235,7 @@ def test_study_task_does_not_start_before_its_window():  # NEW
     for item in items:
         assert item.day >= 1
 
-def test_study_task_finishes_before_the_exam():  # NEW
+def test_study_task_finishes_before_the_exam():  
     exams = [Exam(title="Test", day=3, difficulty=1, slot=32)]  # easy, deadline day 3 slot 32
     tasks = generate_study_tasks(exams)
     items, unscheduled = build_schedule([], tasks, num_days=4)
@@ -243,7 +243,7 @@ def test_study_task_finishes_before_the_exam():  # NEW
     for item in items:
         assert item.day * SLOTS_PER_DAY + item.end_slot <= 3 * SLOTS_PER_DAY + 32
 
-def test_two_exams_generate_two_independent_study_tasks():  # NEW
+def test_two_exams_generate_two_independent_study_tasks():  
     exams = [Exam(title="A", day=5, difficulty=1), Exam(title="B", day=10, difficulty=5)]
     tasks = generate_study_tasks(exams)
     items, unscheduled = build_schedule([], tasks, num_days=11)

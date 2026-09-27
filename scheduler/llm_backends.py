@@ -23,7 +23,7 @@ def _groq_call(system_prompt: str, user_message: str, tool_name: str, tool_schem
     # Free tier, no credit card required: https://console.groq.com
     from openai import OpenAI
     client = OpenAI(base_url="https://api.groq.com/openai/v1", api_key=os.environ["GROQ_API_KEY"])
-    model = os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b")  # NEW -- Groq decommissioned
+    model = os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b")  #  -- Groq decommissioned
     # llama-3.1-8b-instant and llama-3.3-70b-versatile in Aug 2026; gpt-oss-120b follows
     # the tool schema more reliably than the smaller 20b. Groq's free-tier catalog
     # churns -- override with GROQ_MODEL if this one stops working too.

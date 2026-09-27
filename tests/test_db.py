@@ -105,3 +105,132 @@ def test_connect_is_idempotent():
     finally:
         if os.path.exists(path):
             os.remove(path)
+
+# --- schedule input persistence: fixed blocks, tasks, exams ---  
+
+from scheduler.db import (  
+    add_fixed_block, get_fixed_blocks, delete_fixed_block, clear_fixed_blocks,  
+    add_task, get_tasks, delete_task, clear_tasks,  
+    add_exam, get_exams, delete_exam, clear_exams,  
+)  
+from scheduler.models import FixedBlock, DynamicTask, Exam   
+
+
+def test_add_and_get_fixed_blocks(conn):  
+    sid = get_or_create_student(conn, "Zane")   
+    add_fixed_block(conn, sid, FixedBlock(title="Class A", start_slot=32, end_slot=48))  
+    add_fixed_block(conn, sid, FixedBlock(title="Class B", start_slot=60, end_slot=72))  
+
+    blocks = get_fixed_blocks(conn, sid)   
+    assert len(blocks) == 2   
+    assert [b.title for _, b in blocks] == ["Class A", "Class B"]   
+
+
+def test_add_and_get_tasks(conn):  
+    sid = get_or_create_student(conn, "Zane") 
+    add_task(conn, sid, DynamicTask(title="Essay", duration_slots=8, priority=3, difficulty=2))   
+
+    tasks = get_tasks(conn, sid)  
+    assert len(tasks) == 1  
+    assert tasks[0][1].title == "Essay"   
+    assert tasks[0][1].duration_slots == 8  
+
+
+def test_add_and_get_exams(conn):   
+    sid = get_or_create_student(conn, "Zane")  
+    add_exam(conn, sid, Exam(title="Midterm", day=5, difficulty=4))   
+
+    exams = get_exams(conn, sid)   
+    assert len(exams) == 1   
+    assert exams[0][1].title == "Midterm"  
+
+
+def test_items_returned_oldest_first(conn):   
+    sid = get_or_create_student(conn, "Zane")  
+    add_fixed_block(conn, sid, FixedBlock(title="First", start_slot=0, end_slot=10))  
+    add_fixed_block(conn, sid, FixedBlock(title="Second", start_slot=20, end_slot=30))  
+
+    blocks = get_fixed_blocks(conn, sid)   
+    assert [b.title for _, b in blocks] == ["First", "Second"]  
+
+
+def test_delete_fixed_block_removes_only_that_one(conn):   
+    sid = get_or_create_student(conn, "Zane")  
+    id1 = add_fixed_block(conn, sid, FixedBlock(title="Keep", start_slot=0, end_slot=10))  
+    id2 = add_fixed_block(conn, sid, FixedBlock(title="Remove", start_slot=20, end_slot=30)) 
+
+    assert delete_fixed_block(conn, sid, id2) is True  
+    remaining = get_fixed_blocks(conn, sid)  
+    assert [b.title for _, b in remaining] == ["Keep"]   
+
+
+def test_delete_nonexistent_item_returns_false(conn):  
+    sid = get_or_create_student(conn, "Zane")  
+    assert delete_fixed_block(conn, sid, 9999) is False   
+
+
+def test_delete_is_scoped_to_the_right_student(conn): 
+    sid1 = get_or_create_student(conn, "Zane")  
+    sid2 = get_or_create_student(conn, "Priya")  
+    block_id = add_fixed_block(conn, sid1, FixedBlock(title="Zane's class", start_slot=0, end_slot=10))   
+
+    assert delete_fixed_block(conn, sid2, block_id) is False  
+    assert len(get_fixed_blocks(conn, sid1)) == 1  
+
+
+def test_clear_fixed_blocks_removes_all_for_that_student(conn):   
+    sid = get_or_create_student(conn, "Zane")   
+    add_fixed_block(conn, sid, FixedBlock(title="A", start_slot=0, end_slot=10))   
+    add_fixed_block(conn, sid, FixedBlock(title="B", start_slot=20, end_slot=30)) 
+
+    removed = clear_fixed_blocks(conn, sid)  
+    assert removed == 2  
+    assert get_fixed_blocks(conn, sid) == []   
+
+
+def test_items_isolated_between_students(conn):  
+    sid1 = get_or_create_student(conn, "Zane")  
+    sid2 = get_or_create_student(conn, "Priya")  
+    add_fixed_block(conn, sid1, FixedBlock(title="Zane's class", start_slot=0, end_slot=10))  
+    add_task(conn, sid1, DynamicTask(title="Zane's task", duration_slots=4, priority=1, difficulty=1))  
+    add_exam(conn, sid1, Exam(title="Zane's exam", day=1, difficulty=1))  
+
+    assert get_fixed_blocks(conn, sid2) == []  
+    assert get_tasks(conn, sid2) == []  
+    assert get_exams(conn, sid2) == []  
+
+
+def test_tasks_and_exams_support_delete_and_clear_too(conn):  
+    sid = get_or_create_student(conn, "Zane")  
+    tid = add_task(conn, sid, DynamicTask(title="A", duration_slots=4, priority=1, difficulty=1))  
+    add_task(conn, sid, DynamicTask(title="B", duration_slots=4, priority=1, difficulty=1))  
+    eid = add_exam(conn, sid, Exam(title="X", day=1, difficulty=1))  
+
+    assert delete_task(conn, sid, tid) is True  
+    assert len(get_tasks(conn, sid)) == 1  
+
+    assert clear_exams(conn, sid) == 1  
+    assert get_exams(conn, sid) == []  
+
+    assert clear_tasks(conn, sid) == 1  
+    assert get_tasks(conn, sid) == []  
+
+
+def test_round_trip_preserves_all_fields(conn):  
+    sid = get_or_create_student(conn, "Zane")  
+    block = FixedBlock(title="Complex", start_slot=90, end_slot=100, day=2)  
+    add_fixed_block(conn, sid, block)  
+    _, reloaded_block = get_fixed_blocks(conn, sid)[0]  
+    assert reloaded_block == block  
+
+    task = DynamicTask(title="Complex task", duration_slots=20, priority=5, difficulty=4,  
+                       splittable=True, max_session_slots=8, deadline_day=3, deadline_slot=50,  
+                       earliest_start_day=1, earliest_start_slot=10, max_daily_slots=16)  
+    add_task(conn, sid, task)  
+    _, reloaded_task = get_tasks(conn, sid)[0]  
+    assert reloaded_task == task  
+
+    exam = Exam(title="Complex exam", day=7, slot=40, difficulty=5, priority=5)  
+    add_exam(conn, sid, exam)  
+    _, reloaded_exam = get_exams(conn, sid)[0]  
+    assert reloaded_exam == exam  

@@ -90,7 +90,7 @@ def build_schedule(fixed_blocks: list[FixedBlock], tasks: list[DynamicTask],
             chunks.append((start, size))
 
             
-        if task.max_daily_slots is not None and len(chunk_days) > 1:  # NEW: cap this task's per-day total
+        if task.max_daily_slots is not None and len(chunk_days) > 1:  # : cap this task's per-day total
             for d in range(num_days):
                 on_day = []
                 for day_var, size in chunk_days:
@@ -166,10 +166,10 @@ def build_schedule(fixed_blocks: list[FixedBlock], tasks: list[DynamicTask],
     status = solver.Solve(model)
     if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
         if status == cp_model.UNKNOWN:  #hit the time limit before finding any feasible plan
-            raise RuntimeError(  # NEW
-                f"No schedule found within {time_limit_seconds}s "  # NEW
-                "(too many tasks/constraints for the time limit -- try raising it or simplifying the plan)"  # NEW
-            )  # NEW
+            raise RuntimeError(  
+                f"No schedule found within {time_limit_seconds}s "  
+                "(too many tasks/constraints for the time limit -- try raising it or simplifying the plan)"  
+            )  
         raise RuntimeError("No valid schedule (do your fixed blocks overlap?)")
  
     items = [

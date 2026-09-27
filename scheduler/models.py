@@ -57,7 +57,7 @@ class SleepRule(BaseModel):  #
             raise ValueError("need earliest_bed <= preferred_bed <= latest_bed")  
         return self 
 
-class ProfileSettings(BaseModel):  # NEW
+class ProfileSettings(BaseModel):  
     """Per-student tuning knobs. Defaults match the constants the solver used to hardcode."""   
     buffer_slots: int = Field(default=1, ge=0)
     presence_bonus: int = Field(default=10_000, gt=0)  #   fitting a task beats moving things earlier
