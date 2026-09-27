@@ -133,3 +133,66 @@ class StudyPlanRule(BaseModel):
         if difficulty == 3:
             return self.medium
         return self.hard
+
+class WeeklyPattern(BaseModel):
+    """A recurring fixed commitment on ONE specific day of the week -- e.g. 'Data Structures,
+    Monday, 09:00-11:00'. If a class meets on several days, that's several WeeklyPattern
+    entries, one per day -- this model deliberately cannot represent more than one day per
+    entry, so extraction never has to judge whether two days' times are "close enough" to
+    merge (a judgment call that proved unreliable in practice). This is expanded into
+    concrete FixedBlocks for a specific plan by calendar_utils.expand_weekly_pattern, once the
+    plan's real start date is known.
+    """
+    title: str
+    day: Literal["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+    start_time: str  # "HH:MM", 24-hour
+    end_time: str  # "HH:MM", 24-hour
+
+    @model_validator(mode="after")
+    def times_make_sense(self):
+        if time_to_slot(self.end_time) <= time_to_slot(self.start_time):
+            raise ValueError("end_time must be after start_time")
+        return self
+
+class ExtractedTask(BaseModel):
+    """A task/assignment found in an uploaded document, with a real calendar deadline.
+
+    Only title and date come from the document itself -- duration, priority, and difficulty
+    aren't things a syllabus states, they're the student's judgment call, so they default to
+    reasonable placeholders and are meant to be reviewed/adjusted before saving, not trusted
+    as extracted fact.
+    """
+    title: str
+    date: str  # "YYYY-MM-DD" -- a real calendar date, not a relative day index
+    duration_slots: int = Field(default=4, gt=0)  # placeholder: 1 hour
+    priority: int = Field(default=3, ge=1, le=5)  # placeholder: medium
+    difficulty: int = Field(default=3, ge=1, le=5)  # placeholder: medium
+
+
+class DatedBlock(BaseModel):
+    """A one-off commitment on a specific calendar date with a specific time -- e.g. a module
+    timetable that lists individual class sessions by date rather than a recurring weekly
+    pattern. Distinct from WeeklyPattern (recurs every week) and ExtractedTask (a deadline
+    with no fixed time): this has both a specific date AND a specific start/end time.
+    """
+    title: str
+    date: str  # "YYYY-MM-DD"
+    start_time: str  # "HH:MM", 24-hour
+    end_time: str  # "HH:MM", 24-hour
+
+    @model_validator(mode="after")
+    def times_make_sense(self):
+        if time_to_slot(self.end_time) <= time_to_slot(self.start_time):
+            raise ValueError("end_time must be after start_time")
+        return self
+
+
+class ExtractionResult(BaseModel):
+    """What a document (image or PDF) yields: a recurring weekly timetable, one-off dated
+    sessions with specific times, and/or a list of dated tasks/deadlines. Any list may be
+    empty -- a syllabus might have only deadlines, a class-schedule screenshot might have
+    only weekly patterns, a session-by-session timetable might have only dated blocks.
+    """
+    weekly_patterns: list[WeeklyPattern] = Field(default_factory=list)
+    dated_blocks: list[DatedBlock] = Field(default_factory=list)
+    tasks: list[ExtractedTask] = Field(default_factory=list)

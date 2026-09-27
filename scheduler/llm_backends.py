@@ -100,3 +100,80 @@ def call_llm(system_prompt: str, user_message: str, tool_name: str, tool_schema:
     if backend not in _BACKENDS:
         raise ValueError(f"unknown LLM_BACKEND '{backend}' (choose from: {', '.join(_BACKENDS)})")
     return _BACKENDS[backend](system_prompt, user_message, tool_name, tool_schema)
+
+def _anthropic_vision_call(system_prompt: str, user_text: str, image_base64: str, media_type: str,
+                           tool_name: str, tool_schema: dict) -> dict:
+    import anthropic
+    client = anthropic.Anthropic()
+    content = [{"type": "text", "text": user_text}]
+    if media_type == "application/pdf":
+        content.insert(0, {"type": "document",
+                           "source": {"type": "base64", "media_type": media_type, "data": image_base64}})
+    else:
+        content.insert(0, {"type": "image",
+                           "source": {"type": "base64", "media_type": media_type, "data": image_base64}})
+
+    response = client.messages.create(
+        model="claude-sonnet-5",
+        max_tokens=2048,
+        system=system_prompt,
+        tools=[{"name": tool_name, "description": tool_schema.get("description", ""),
+                "input_schema": tool_schema}],
+        tool_choice={"type": "tool", "name": tool_name},
+        messages=[{"role": "user", "content": content}],
+    )
+    block = next(b for b in response.content if b.type == "tool_use")
+    return block.input
+
+
+def _groq_vision_call(system_prompt: str, user_text: str, image_base64: str, media_type: str,
+                      tool_name: str, tool_schema: dict) -> dict:
+    if media_type == "application/pdf":
+        raise ValueError(
+            "Groq's vision model doesn't support PDF input directly (images only, per their docs). "
+            "Convert the PDF's first page to an image first, or use LLM_BACKEND=anthropic for PDFs."
+        )
+    from openai import OpenAI
+    client = OpenAI(base_url="https://api.groq.com/openai/v1", api_key=os.environ["GROQ_API_KEY"])
+    model = os.environ.get("GROQ_VISION_MODEL", "qwen/qwen3.8-27b")  # Groq's only vision model as of writing
+    response = client.chat.completions.create(
+        model=model,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": [
+                {"type": "text", "text": user_text},
+                {"type": "image_url", "image_url": {"url": f"data:{media_type};base64,{image_base64}"}},
+            ]},
+        ],
+        tools=[{
+            "type": "function",
+            "function": {"name": tool_name, "description": tool_schema.get("description", ""),
+                        "parameters": tool_schema},
+        }],
+        tool_choice={"type": "function", "function": {"name": tool_name}},
+    )
+    call = response.choices[0].message.tool_calls[0]
+    return json.loads(call.function.arguments)
+
+
+def _fake_vision_call(system_prompt: str, user_text: str, image_base64: str, media_type: str,
+                      tool_name: str, tool_schema: dict) -> dict:
+    """Offline stub -- can't actually read the image. Returns an empty result so the extraction
+    pipeline (review screen, db writes) can be built and tested with zero cost and no real
+    document, before you're ready to spend even Groq's free-tier rate limit on it.
+    """
+    return {"weekly_patterns": [], "tasks": []}
+
+
+_VISION_BACKENDS = {"anthropic": _anthropic_vision_call, "groq": _groq_vision_call, "fake": _fake_vision_call}
+
+
+def call_vision_llm(system_prompt: str, user_text: str, image_base64: str, media_type: str,
+                    tool_name: str, tool_schema: dict) -> dict:
+    """Same LLM_BACKEND-driven dispatch as call_llm, but for image/PDF input. 'anthropic' and
+    'groq' both work for images; only 'anthropic' currently handles PDFs (see _groq_vision_call).
+    """
+    backend = os.environ.get("LLM_BACKEND", "fake")
+    if backend not in _VISION_BACKENDS:
+        raise ValueError(f"unknown LLM_BACKEND '{backend}' (choose from: {', '.join(_VISION_BACKENDS)})")
+    return _VISION_BACKENDS[backend](system_prompt, user_text, image_base64, media_type, tool_name, tool_schema)
