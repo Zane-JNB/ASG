@@ -1,0 +1,147 @@
+import pytest
+from pydantic import ValidationError
+
+from scheduler.models import ProfileSettings
+from scheduler.reflection import (
+    ADJUSTABLE_FIELDS, PreferenceChangeProposal, ReflectionResult,
+    apply_proposal, apply_all, propose_preference_changes,
+)
+
+
+class FakeBlock:
+    def __init__(self, input_data):
+        self.type = "tool_use"
+        self.input = input_data
+
+
+class FakeResponse:
+    def __init__(self, content):
+        self.content = content
+
+
+class FakeClient:
+    def __init__(self, response):
+        self.messages = self
+        self._response = response
+
+    def create(self, **kwargs):
+        return self._response
+
+
+def make_client(summary: str, proposals: list[dict]) -> FakeClient:
+    response = FakeResponse([FakeBlock({"summary": summary, "proposals": proposals})])
+    return FakeClient(response)
+
+
+def test_locked_fields_are_rejected():
+    locked = {"presence_bonus", "sleep_min_penalty", "default_sleep_min_slots",
+              "default_earliest_bed", "default_latest_bed"}
+    assert locked.isdisjoint(ADJUSTABLE_FIELDS)
+    for field in locked:
+        with pytest.raises(ValidationError):
+            PreferenceChangeProposal(field=field, direction="decrease", magnitude="large", reason="x")
+
+
+def test_adjustable_field_is_accepted():
+    p = PreferenceChangeProposal(field="buffer_slots", direction="increase",
+                                 magnitude="small", reason="felt rushed")
+    assert p.field == "buffer_slots"
+
+
+def test_reason_cannot_be_empty():
+    with pytest.raises(ValidationError):
+        PreferenceChangeProposal(field="buffer_slots", direction="increase",
+                                 magnitude="small", reason="")
+
+
+def test_apply_proposal_increase():
+    s = ProfileSettings()
+    p = PreferenceChangeProposal(field="buffer_slots", direction="increase",
+                                 magnitude="medium", reason="x")
+    s2 = apply_proposal(s, p)
+    assert s2.buffer_slots == s.buffer_slots + ADJUSTABLE_FIELDS["buffer_slots"]["medium"]
+
+
+def test_apply_proposal_decrease():
+    s = ProfileSettings(same_day_penalty=3000)
+    p = PreferenceChangeProposal(field="same_day_penalty", direction="decrease",
+                                 magnitude="small", reason="x")
+    s2 = apply_proposal(s, p)
+    assert s2.same_day_penalty == 3000 - ADJUSTABLE_FIELDS["same_day_penalty"]["small"]
+
+
+def test_apply_proposal_clamps_at_lower_bound():
+    s = ProfileSettings(buffer_slots=1)
+    p = PreferenceChangeProposal(field="buffer_slots", direction="decrease",
+                                 magnitude="large", reason="x")  # delta of 4, would go negative
+    s2 = apply_proposal(s, p)
+    assert s2.buffer_slots == 0  # buffer_slots allows 0 (ge=0), clamped there not negative
+
+
+def test_apply_proposal_clamps_gt_zero_field_at_one():
+    s = ProfileSettings(sleep_target_penalty=100)
+    p = PreferenceChangeProposal(field="sleep_target_penalty", direction="decrease",
+                                 magnitude="large", reason="x")  # would go to -2400
+    s2 = apply_proposal(s, p)
+    assert s2.sleep_target_penalty == 1  # gt=0, so 1 is the smallest valid int
+
+
+def test_apply_all_applies_every_proposal_in_order():
+    s = ProfileSettings()
+    proposals = [
+        PreferenceChangeProposal(field="buffer_slots", direction="increase", magnitude="small", reason="a"),
+        PreferenceChangeProposal(field="same_day_penalty", direction="decrease", magnitude="medium", reason="b"),
+    ]
+    s2 = apply_all(s, proposals)
+    assert s2.buffer_slots == s.buffer_slots + 1
+    assert s2.same_day_penalty == s.same_day_penalty - 1000
+
+
+def test_apply_all_with_no_proposals_returns_unchanged_settings():
+    s = ProfileSettings()
+    assert apply_all(s, []) == s
+
+
+def test_propose_preference_changes_parses_valid_response():
+    client = make_client(
+        "Felt rushed between tasks.",
+        [{"field": "buffer_slots", "direction": "increase", "magnitude": "medium",
+          "reason": "mentioned feeling rushed"}],
+    )
+    result = propose_preference_changes("I felt rushed today", client=client)
+    assert isinstance(result, ReflectionResult)
+    assert len(result.proposals) == 1
+    assert result.proposals[0].field == "buffer_slots"
+
+
+def test_propose_preference_changes_drops_invalid_proposals_but_keeps_valid_ones():
+    client = make_client(
+        "Mixed reflection.",
+        [
+            {"field": "buffer_slots", "direction": "increase", "magnitude": "small", "reason": "valid"},
+            {"field": "sleep_min_penalty", "direction": "decrease", "magnitude": "large", "reason": "locked field"},
+        ],
+    )
+    result = propose_preference_changes("some reflection", client=client)
+    assert len(result.proposals) == 1
+    assert result.proposals[0].field == "buffer_slots"
+
+
+def test_propose_preference_changes_handles_zero_proposals():
+    client = make_client("Nothing notable to change.", [])
+    result = propose_preference_changes("today was fine", client=client)
+    assert result.proposals == []
+    assert result.summary == "Nothing notable to change."
+
+def test_system_prompt_names_exact_required_keys():
+    """Regression guard: gpt-oss-120b has repeatedly used wrong key names ("change"/
+    "size" instead of "direction"/"magnitude", and dropped "reason") when calling the
+    tool. The prompt must explicitly spell out the four required keys and warn against
+    the specific wrong names it's been using.
+    """
+    from scheduler.reflection import build_system_prompt
+    prompt = build_system_prompt()
+    for required_key in ('"direction"', '"magnitude"', '"reason"'):
+        assert required_key in prompt
+    for wrong_key in ('"change"', '"size"', '"amount"'):
+        assert wrong_key in prompt  # named explicitly as WRONG, but must be mentioned
