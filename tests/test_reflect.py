@@ -95,3 +95,4 @@ def test_reflection_gets_logged_even_when_rejected(monkeypatch, conn):
     history = get_reflections(conn, sid)
     assert len(history) == 1
     assert history[0]["applied"] is False
+
