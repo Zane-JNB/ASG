@@ -1,0 +1,72 @@
+{
+  "weekly_patterns": [],
+  "dated_blocks": [
+    {
+      "title": "MAT2003 - Calculus 1-UN1 (F2F-Lecture)",
+      "date": "2026-08-31",
+      "start_time": "12:00",
+      "end_time": "13:50"
+    },
+    {
+      "title": "CIT3003 - Analysis of Algorithms-UE1 (Online Lecture)",
+      "date": "2026-08-31",
+      "start_time": "17:00",
+      "end_time": "18:50"
+    },
+    {
+      "title": "MAT2003 - Calculus 1-UN1 (F2F-Tutorial)",
+      "date": "2026-09-01",
+      "start_time": "13:00",
+      "end_time": "13:50"
+    },
+    {
+      "title": "CMP3011 - Computer Organisation and Assembly-UN1 (Blended Lecture with Online)",
+      "date": "2026-09-01",
+      "start_time": "16:00",
+      "end_time": "16:50"
+    },
+    {
+      "title": "AA14001 - Supervised Machine Learning-UN1 (F2F Practical)",
+      "date": "2026-09-02",
+      "start_time": "08:00",
+      "end_time": "10:50"
+    },
+    {
+      "title": "CIT3003 - Analysis of Algorithms-UE1 (Online Tutorial)",
+      "date": "2026-09-02",
+      "start_time": "15:00",
+      "end_time": "15:50"
+    },
+    {
+      "title": "CIT2011 - Web Programming-UE1 (F2F-Tutorial)",
+      "date": "2026-09-02",
+      "start_time": "18:00",
+      "end_time": "19:50"
+    },
+    {
+      "title": "CMP3011 - Computer Organisation and Assembly-UN1 (F2F-Tutorial)",
+      "date": "2026-09-03",
+      "start_time": "10:00",
+      "end_time": "10:50"
+    },
+    {
+      "title": "CMP3011 - Computer Organisation and Assembly-UN1 (F2F Practical)",
+      "date": "2026-09-03",
+      "start_time": "11:00",
+      "end_time": "13:50"
+    },
+    {
+      "title": "CIT2011 - Web Programming-UE1 (Blended Lecture with Online)",
+      "date": "2026-09-03",
+      "start_time": "20:00",
+      "end_time": "20:50"
+    },
+    {
+      "title": "AA14001 - Supervised Machine Learning-UN1 (Online Lecture and Tutorial)",
+      "date": "2026-09-06",
+      "start_time": "17:00",
+      "end_time": "18:50"
+    }
+  ],
+  "tasks": []
+}

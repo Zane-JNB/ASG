@@ -1,6 +1,7 @@
 import math
-
-from scheduler.models import ExtractedTask, MINUTES_PER_SLOT
+from datetime import date, datetime 
+from pydantic import ValidationError  
+from scheduler.models import ExtractedTask, ExtractionResult, WeeklyPattern, DatedBlock, MINUTES_PER_SLOT
 
 
 def hours_to_slots(hours: float) -> int:  # NEW
@@ -22,3 +23,125 @@ def edit_extracted_task(task: ExtractedTask, hours: float | None = None,  # NEW
     if difficulty is not None:
         changes["difficulty"] = difficulty
     return ExtractedTask.model_validate({**task.model_dump(), **changes})
+
+def _confirm(ask, prompt: str, default: bool) -> bool:  
+    """Y/n question. Enter = default; anything unrecognised re-asks."""
+    hint = " [Y/n] " if default else " [y/N] "
+    while True:
+        answer = ask(prompt + hint).strip().lower()
+        if answer == "":
+            return default
+        if answer in ("y", "yes"):
+            return True
+        if answer in ("n", "no"):
+            return False
+
+_DAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+
+
+def _time(s: str) -> str:  # NEW -- "9:00" -> "09:00"; ValueError if not a real time
+    return datetime.strptime(s, "%H:%M").strftime("%H:%M")
+
+
+def _date(s: str) -> str:  # NEW -- the models store dates as plain strings, so check them here
+    return date.fromisoformat(s).isoformat()
+
+
+def _day(s: str) -> str:  # NEW -- "monday" -> "Mon"
+    d = s.strip().capitalize()[:3]
+    if d not in _DAYS:
+        raise ValueError(f"day must be one of {', '.join(_DAYS)}")
+    return d
+
+
+def _hours(s: str) -> int:  # NEW -- typed as hours, stored as slots
+    return hours_to_slots(float(s))
+
+
+# NEW -- what can be edited per item type: (prompt label, model field, parser)
+_EDIT_FIELDS = {
+    WeeklyPattern: [("title", "title", str), ("day", "day", _day),
+                    ("start HH:MM", "start_time", _time), ("end HH:MM", "end_time", _time)],
+    DatedBlock: [("title", "title", str), ("date YYYY-MM-DD", "date", _date),
+                 ("start HH:MM", "start_time", _time), ("end HH:MM", "end_time", _time)],
+    ExtractedTask: [("title", "title", str), ("due date YYYY-MM-DD", "date", _date),
+                    ("hours", "duration_slots", _hours), ("priority 1-5", "priority", int),
+                    ("difficulty 1-5", "difficulty", int)],
+}
+
+
+def _current(item, key: str):  # NEW
+    value = getattr(item, key)
+    return f"{value * MINUTES_PER_SLOT / 60:g}" if key == "duration_slots" else value
+
+
+def _describe(kind: str, item) -> str:  # NEW
+    if kind == "Task":
+        hours = item.duration_slots * MINUTES_PER_SLOT / 60
+        return f"{item.title} due {item.date} ({hours:g}h, priority {item.priority}, difficulty {item.difficulty})"
+    when = f"{item.day}" if kind == "Weekly" else f"{item.date}"
+    return f"{item.title} -- {when} {item.start_time}-{item.end_time}"
+
+
+def _edit_item(item, ask, show):  # NEW
+    """Ask for each field (Enter keeps the current value). Bad input shows why and re-asks."""
+    while True:
+        try:
+            changes = {}
+            for label, key, parse in _EDIT_FIELDS[type(item)]:
+                raw = ask(f"  {label} [{_current(item, key)}]: ").strip()
+                if raw:
+                    changes[key] = parse(raw)
+            return type(item).model_validate({**item.model_dump(), **changes})
+        except ValueError as e:  # parser errors AND pydantic's ValidationError
+            msg = e.errors()[0]["msg"] if isinstance(e, ValidationError) else str(e)
+            show(f"  Invalid: {msg} -- try again.")
+
+
+def _parse_picks(text: str, count: int) -> list[int]:  # NEW
+    picks = sorted({int(x) for x in text.replace(",", " ").split()})
+    if any(n < 1 or n > count for n in picks):
+        raise ValueError
+    return picks
+
+
+def review_extraction(result: ExtractionResult, ask=input, show=print) -> ExtractionResult:  # NEW
+    """Show everything found, then ONE prompt: Enter accepts all, or pick numbers to edit/delete."""
+    items = ([("Weekly", p) for p in result.weekly_patterns]
+             + [("Session", b) for b in result.dated_blocks]
+             + [("Task", t) for t in result.tasks])
+    if not items:
+        return ExtractionResult()
+
+    show("Found:")
+    for n, (kind, item) in enumerate(items, 1):
+        show(f"{n}. [{kind}] {_describe(kind, item)}")
+    if result.tasks:
+        show("Task hours/priority/difficulty are placeholder guesses -- fix any that are off.")
+
+    while True:
+        answer = ask("Numbers to fix or delete (e.g. 2 5), or Enter to accept all: ")
+        try:
+            picks = _parse_picks(answer, len(items))
+            break
+        except ValueError:
+            show(f"Enter numbers between 1 and {len(items)}, like: 2 5")
+
+    for n in picks:
+        kind, item = items[n - 1]
+        show(f"{n}. [{kind}] {_describe(kind, item)}")
+        while True:
+            action = ask("  [e]dit, [d]elete, or Enter to leave as is: ").strip().lower()
+            if action in ("", "e", "d"):
+                break
+        if action == "d":
+            items[n - 1] = None
+        elif action == "e":
+            items[n - 1] = (kind, _edit_item(item, ask, show))
+
+    kept = [x for x in items if x is not None]
+    return ExtractionResult(
+        weekly_patterns=[i for k, i in kept if k == "Weekly"],
+        dated_blocks=[i for k, i in kept if k == "Session"],
+        tasks=[i for k, i in kept if k == "Task"],
+    )

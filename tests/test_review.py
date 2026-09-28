@@ -2,7 +2,7 @@ import pytest
 from pydantic import ValidationError
 
 from scheduler.models import ExtractedTask
-from scheduler.review import hours_to_slots, edit_extracted_task
+from scheduler.review import hours_to_slots, edit_extracted_task, review_extraction,ExtractionResult, WeeklyPattern, DatedBlock
 
 
 def _task():
@@ -36,3 +36,5 @@ def test_edit_with_no_changes_returns_equal_task():
 def test_edit_rejects_out_of_range(kwargs):
     with pytest.raises(ValidationError):
         edit_extracted_task(_task(), **kwargs)
+
+edit_extracted_task
