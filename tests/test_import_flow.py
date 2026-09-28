@@ -136,3 +136,15 @@ def test_extractor_value_error_is_reported_not_raised(env, tmp_path):
     assert not run_import(conn, sid, str(pdf), ask=Recorder([]), show=shown.append,
                           extractor=groq_style, cache_path=cache)
     assert any("Extraction failed" in s for s in shown)
+
+def test_summary_message_says_what_was_replaced_and_what_was_added(env):
+    conn, sid, img, cache = env
+    shown = []
+    run_import(conn, sid, str(img), ask=Recorder(KEEP_ALL), show=shown.append,
+               extractor=lambda d, m: _extraction(), cache_path=cache)
+    assert shown[-1] == "Saved: 1 weekly (replaced old), 1 dated (replaced old), 1 task(s) added."
+    shown.clear()  # same import again: tasks now repeat
+    run_import(conn, sid, str(img), ask=Recorder(KEEP_ALL), show=shown.append,
+               extractor=lambda d, m: _extraction(), cache_path=cache)
+    assert shown[-1] == ("Saved: 1 weekly (replaced old), 1 dated (replaced old), "
+                         "0 task(s) added, 1 duplicate(s) skipped.")

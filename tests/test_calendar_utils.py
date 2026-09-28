@@ -5,7 +5,7 @@ import pytest
 from scheduler.models import WeeklyPattern, ExtractedTask
 from scheduler.calendar_utils import (
     weekday_name, day_index_for_date, expand_weekly_pattern, expand_weekly_patterns,
-    extracted_task_to_dynamic_task, extracted_tasks_to_dynamic_tasks,
+    extracted_task_to_dynamic_task, extracted_tasks_to_dynamic_tasks, FixedBlock, WeeklyPattern, ExtractedTask, time_to_slot,find_overlaps
 )
 
 
@@ -124,3 +124,24 @@ def test_expand_weekly_patterns_combines_multiple():
     blocks = expand_weekly_patterns([p1, p2], start, num_days=7)
     assert {b.title for b in blocks} == {"A", "B"}
     assert len(blocks) == 2
+
+def _fb(title, day, start, end):
+    return FixedBlock(title=title, day=day, start_slot=time_to_slot(start), end_slot=time_to_slot(end))
+
+
+def test_find_overlaps_detects_identical_and_partial_clashes():
+    a, b, c = _fb("A", 0, "12:00", "13:50"), _fb("A2", 0, "12:00", "13:50"), _fb("C", 0, "13:00", "14:00")
+    pairs = find_overlaps([a, b, c])
+    assert {frozenset((x.title, y.title)) for x, y in pairs} == {
+        frozenset(("A", "A2")), frozenset(("A", "C")), frozenset(("A2", "C"))}
+
+
+def test_find_overlaps_ignores_back_to_back_and_other_days():
+    blocks = [_fb("A", 0, "10:00", "11:00"), _fb("B", 0, "11:00", "12:00"), _fb("C", 1, "10:00", "11:00")]
+    assert find_overlaps(blocks) == []
+
+
+def test_find_overlaps_sees_a_block_that_crosses_midnight():
+    late = FixedBlock(title="Shift", day=0, start_slot=time_to_slot("22:00"), end_slot=96 + time_to_slot("02:00"))
+    early = _fb("Class", 1, "01:00", "03:00")
+    assert len(find_overlaps([late, early])) == 1

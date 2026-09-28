@@ -1,7 +1,7 @@
 import math
 from datetime import date, datetime 
 from pydantic import ValidationError  
-from scheduler.models import ExtractedTask, ExtractionResult, WeeklyPattern, DatedBlock, MINUTES_PER_SLOT
+from scheduler.models import ExtractedTask, ExtractionResult, WeeklyPattern, DatedBlock, MINUTES_PER_SLOT, time_to_slot 
 
 
 def hours_to_slots(hours: float) -> int:  # NEW
@@ -104,7 +104,22 @@ def _parse_picks(text: str, count: int) -> list[int]:  # NEW
         raise ValueError
     return picks
 
-
+def _overlap_notes(items) -> list[str]:  # NEW
+    """Numbered items that clash: weekly ones on the same weekday, sessions on the same date."""
+    notes = []
+    for i, (kind_a, a) in enumerate(items):
+        for j in range(i + 1, len(items)):
+            kind_b, b = items[j]
+            if kind_a != kind_b or kind_a == "Task":
+                continue
+            same_day = a.day == b.day if kind_a == "Weekly" else a.date == b.date
+            if same_day and (time_to_slot(a.start_time) < time_to_slot(b.end_time)
+                             and time_to_slot(b.start_time) < time_to_slot(a.end_time)):
+                notes.append(f"{i + 1} and {j + 1}")
+    return notes
+       
+    
+        
 def review_extraction(result: ExtractionResult, ask=input, show=print) -> ExtractionResult:  # NEW
     """Show everything found, then ONE prompt: Enter accepts all, or pick numbers to edit/delete."""
     items = ([("Weekly", p) for p in result.weekly_patterns]
@@ -116,6 +131,10 @@ def review_extraction(result: ExtractionResult, ask=input, show=print) -> Extrac
     show("Found:")
     for n, (kind, item) in enumerate(items, 1):
         show(f"{n}. [{kind}] {_describe(kind, item)}")
+    clashes = _overlap_notes(items)
+    if clashes:
+        show("WARNING -- these overlap in time (often the same class listed twice): "
+             + "; ".join(clashes))
     if result.tasks:
         show("Task hours/priority/difficulty are placeholder guesses -- fix any that are off.")
 
@@ -137,8 +156,7 @@ def review_extraction(result: ExtractionResult, ask=input, show=print) -> Extrac
         if action == "d":
             items[n - 1] = None
         elif action == "e":
-            items[n - 1] = (kind, _edit_item(item, ask, show))
-
+            items[n - 1] = (kind, _edit_item(item, ask, show))     
     kept = [x for x in items if x is not None]
     return ExtractionResult(
         weekly_patterns=[i for k, i in kept if k == "Weekly"],

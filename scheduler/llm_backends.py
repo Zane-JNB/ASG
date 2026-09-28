@@ -151,6 +151,7 @@ def _groq_vision_call(system_prompt: str, user_text: str, image_base64: str, med
                         "parameters": tool_schema},
         }],
         tool_choice={"type": "function", "function": {"name": tool_name}},
+        temperature=0
     )
     call = response.choices[0].message.tool_calls[0]
     return json.loads(call.function.arguments)

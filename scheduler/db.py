@@ -258,22 +258,41 @@ def delete_extracted_task(conn, student_id: int, item_id: int) -> bool:  # NEW
 def clear_extracted_tasks(conn, student_id: int) -> int:  # NEW
     return _clear_items(conn, "extracted_tasks", student_id)
 
-def replace_extraction(conn, student_id: int, result: ExtractionResult) -> None:  # NEW
-    """Swap this student's saved extracted items for a fresh (reviewed) result, all-or-nothing."""
-    if not (result.weekly_patterns or result.dated_blocks or result.tasks):  # NEW
+def replace_extraction(conn, student_id: int, result: ExtractionResult) -> dict:  # NEW
+    """Save a reviewed import, all-or-nothing. Fixed blocks are REPLACED, tasks are ADDED:
+    weekly patterns and dated blocks are each replaced only if the import contains some
+    (so an exam sheet can't wipe your classes); tasks are appended, skipping exact repeats
+    (same title and due date, ignoring case). Returns counts of what was written."""
+    if not (result.weekly_patterns or result.dated_blocks or result.tasks):
         raise ValueError("nothing was extracted; existing data left untouched")
-    groups = [("weekly_patterns", result.weekly_patterns),
-              ("dated_blocks", result.dated_blocks),
-              ("extracted_tasks", result.tasks)]
+
+    def insert(table, item):
+        conn.execute(
+            f"INSERT INTO {table} (student_id, data_json, created_at) VALUES (?, ?, ?)",
+            (student_id, item.model_dump_json(), _now()),
+        )
+
+    summary = {"weekly": 0, "dated": 0, "tasks_added": 0, "tasks_skipped": 0}
     try:
-        for table, items in groups:
-            conn.execute(f"DELETE FROM {table} WHERE student_id = ?", (student_id,))
-            for item in items:
-                conn.execute(
-                    f"INSERT INTO {table} (student_id, data_json, created_at) VALUES (?, ?, ?)",
-                    (student_id, item.model_dump_json(), _now()),
-                )
-        conn.commit()  # NEW -- the only commit, so it's all-or-nothing
+        for table, key, items in (("weekly_patterns", "weekly", result.weekly_patterns),
+                                  ("dated_blocks", "dated", result.dated_blocks)):
+            if items:  # NEW -- an import with none of this type leaves the old ones alone
+                conn.execute(f"DELETE FROM {table} WHERE student_id = ?", (student_id,))
+                for item in items:
+                    insert(table, item)
+                summary[key] = len(items)
+
+        seen = {(t.title.strip().lower(), t.date) for _, t in get_extracted_tasks(conn, student_id)}
+        for task in result.tasks:  # NEW -- tasks are appended, never replaced
+            key = (task.title.strip().lower(), task.date)
+            if key in seen:
+                summary["tasks_skipped"] += 1
+                continue
+            seen.add(key)
+            insert("extracted_tasks", task)
+            summary["tasks_added"] += 1
+        conn.commit()  # the only commit, so it's all-or-nothing
     except Exception:
         conn.rollback()
         raise
+    return summary

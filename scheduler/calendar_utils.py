@@ -110,3 +110,15 @@ def build_plan_inputs(patterns, dated_blocks, tasks, anchor: PlanAnchor):  # NEW
     fixed += [b for b in dated_blocks_to_fixed_blocks(dated_blocks, anchor.start_date)
               if b.day < anchor.num_days]  # NEW -- solver rejects blocks past the horizon
     return fixed, extracted_tasks_to_dynamic_tasks(tasks, anchor.start_date)
+
+def find_overlaps(blocks: list[FixedBlock]) -> list[tuple[FixedBlock, FixedBlock]]:  # NEW
+    """Pairs of fixed blocks whose time ranges overlap. Back-to-back (end == next start) is fine."""
+    spans = sorted(((b.day * SLOTS_PER_DAY + b.start_slot, b.day * SLOTS_PER_DAY + b.end_slot, b)
+                    for b in blocks), key=lambda x: (x[0], x[1]))
+    pairs = []
+    for i, (s1, e1, b1) in enumerate(spans):
+        for s2, e2, b2 in spans[i + 1:]:
+            if s2 >= e1:  # sorted by start, so nothing later can overlap b1
+                break
+            pairs.append((b1, b2))
+    return pairs

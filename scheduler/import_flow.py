@@ -62,7 +62,16 @@ def run_import(conn, student_id, source_path, ask=input, show=print,
         show("Nothing kept. Your saved schedule is untouched.")
         return False
 
-    replace_extraction(conn, student_id, reviewed)
-    show(f"Saved {len(reviewed.weekly_patterns)} weekly, {len(reviewed.dated_blocks)} "
-         f"dated, {len(reviewed.tasks)} task item(s).")
+    summary = replace_extraction(conn, student_id, reviewed)  # NEW -- now returns a dict, not None
+    parts = []  # NEW -- say what was replaced and what was left alone
+    if summary["weekly"]:
+        parts.append(f"{summary['weekly']} weekly (replaced old)")
+    if summary["dated"]:
+        parts.append(f"{summary['dated']} dated (replaced old)")
+    if summary["tasks_added"] or summary["tasks_skipped"]:
+        text = f"{summary['tasks_added']} task(s) added"
+        if summary["tasks_skipped"]:
+            text += f", {summary['tasks_skipped']} duplicate(s) skipped"
+        parts.append(text)
+    show("Saved: " + ", ".join(parts) + ".")
     return True

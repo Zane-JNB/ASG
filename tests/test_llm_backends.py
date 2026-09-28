@@ -232,3 +232,35 @@ def test_groq_backend_reraises_non_api_errors_untouched(monkeypatch):
 
     with pytest.raises(ConnectionError, match="network is down"):
         call_llm("system", "text", "tool", SCHEMA)
+
+def test_groq_vision_call_is_deterministic_and_sends_the_image(monkeypatch):
+    import json
+    from types import SimpleNamespace
+    from scheduler.llm_backends import call_vision_llm
+
+    monkeypatch.setenv("LLM_BACKEND", "groq")
+    monkeypatch.setenv("GROQ_API_KEY", "fake-key-for-test")
+    seen = {}
+
+    class FakeCompletions:
+        def create(self, **kwargs):
+            seen.update(kwargs)
+            call = SimpleNamespace(function=SimpleNamespace(arguments=json.dumps({"weekly_patterns": []})))
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(tool_calls=[call]))])
+
+    class FakeChat:
+        completions = FakeCompletions()
+
+    class FakeClient:
+        def __init__(self, *a, **kw):
+            self.chat = FakeChat()
+
+    monkeypatch.setattr("openai.OpenAI", FakeClient)
+
+    result = call_vision_llm("sys", "read this", "QUJD", "image/png", "extract", SCHEMA)
+
+    assert result == {"weekly_patterns": []}
+    assert seen["temperature"] == 0  # same image should give the same extraction
+    image_part = seen["messages"][1]["content"][1]
+    assert image_part["image_url"]["url"] == "data:image/png;base64,QUJD"
+    assert seen["tool_choice"]["function"]["name"] == "extract"  # forces structured output

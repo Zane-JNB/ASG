@@ -106,3 +106,22 @@ def test_out_of_range_or_junk_numbers_reask():
 def test_junk_action_reasks_and_enter_leaves_item_alone():
     result, _ = _run(["1", "x", ""])
     assert result == _extraction()
+
+def _dup_extraction():
+    return ExtractionResult(weekly_patterns=[
+        WeeklyPattern(title="MAT", day="Mon", start_time="12:00", end_time="13:50"),
+        WeeklyPattern(title="MAT (F2F Lecture)", day="Mon", start_time="12:00", end_time="13:50"),
+        WeeklyPattern(title="CIT", day="Tue", start_time="12:00", end_time="13:50"),
+        WeeklyPattern(title="CMP", day="Mon", start_time="13:50", end_time="15:00"),  # back-to-back: fine
+    ])
+
+
+def test_review_warns_about_overlapping_items():
+    _, shown = _run([""], extraction=_dup_extraction())
+    warnings = [s for s in shown if "overlap" in s]
+    assert len(warnings) == 1 and warnings[0].endswith("1 and 2")  # not 3 (other day) or 4 (back-to-back)
+
+
+def test_review_has_no_warning_without_overlaps():
+    _, shown = _run([""])
+    assert not any("overlap" in s for s in shown)
