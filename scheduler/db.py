@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 
 from pydantic import BaseModel
 
-from scheduler.models import ProfileSettings, FixedBlock, DynamicTask, Exam, WeeklyPattern, DatedBlock, ExtractedTask
+from scheduler.models import ProfileSettings, FixedBlock, DynamicTask, Exam, WeeklyPattern, DatedBlock, ExtractedTask, ExtractionResult
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS students (
@@ -257,3 +257,23 @@ def delete_extracted_task(conn, student_id: int, item_id: int) -> bool:  # NEW
 
 def clear_extracted_tasks(conn, student_id: int) -> int:  # NEW
     return _clear_items(conn, "extracted_tasks", student_id)
+
+def replace_extraction(conn, student_id: int, result: ExtractionResult) -> None:  # NEW
+    """Swap this student's saved extracted items for a fresh (reviewed) result, all-or-nothing."""
+    if not (result.weekly_patterns or result.dated_blocks or result.tasks):  # NEW
+        raise ValueError("nothing was extracted; existing data left untouched")
+    groups = [("weekly_patterns", result.weekly_patterns),
+              ("dated_blocks", result.dated_blocks),
+              ("extracted_tasks", result.tasks)]
+    try:
+        for table, items in groups:
+            conn.execute(f"DELETE FROM {table} WHERE student_id = ?", (student_id,))
+            for item in items:
+                conn.execute(
+                    f"INSERT INTO {table} (student_id, data_json, created_at) VALUES (?, ?, ?)",
+                    (student_id, item.model_dump_json(), _now()),
+                )
+        conn.commit()  # NEW -- the only commit, so it's all-or-nothing
+    except Exception:
+        conn.rollback()
+        raise
