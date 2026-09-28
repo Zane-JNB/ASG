@@ -1,5 +1,6 @@
 from pydantic import BaseModel, Field, model_validator
 from typing import Literal 
+from datetime import date, timedelta
 
 MINUTES_PER_SLOT = 15
 SLOTS_PER_DAY = 24 * 60 // MINUTES_PER_SLOT  # 96 slots in a day
@@ -196,3 +197,17 @@ class ExtractionResult(BaseModel):
     weekly_patterns: list[WeeklyPattern] = Field(default_factory=list)
     dated_blocks: list[DatedBlock] = Field(default_factory=list)
     tasks: list[ExtractedTask] = Field(default_factory=list)
+
+
+class PlanAnchor(BaseModel):  
+    """The plan window for ONE solve: day 0 == start_date. Built fresh each run, never stored."""
+    start_date: date
+    num_days: int = Field(gt=0)
+
+    @classmethod
+    def from_today(cls, num_days: int, today: date | None = None) -> "PlanAnchor":
+        return cls(start_date=today or date.today(), num_days=num_days)
+
+    @property
+    def end_date(self) -> date:  # last day INCLUDED in the plan
+        return self.start_date + timedelta(days=self.num_days - 1)

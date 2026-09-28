@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 
 from pydantic import BaseModel
 
-from scheduler.models import ProfileSettings, FixedBlock, DynamicTask, Exam
+from scheduler.models import ProfileSettings, FixedBlock, DynamicTask, Exam, WeeklyPattern, DatedBlock, ExtractedTask
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS students (
@@ -43,6 +43,27 @@ CREATE TABLE IF NOT EXISTS tasks (
 );
 
 CREATE TABLE IF NOT EXISTS exams (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    student_id INTEGER NOT NULL REFERENCES students(id),
+    data_json TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS weekly_patterns ( 
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    student_id INTEGER NOT NULL REFERENCES students(id),
+    data_json TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS dated_blocks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    student_id INTEGER NOT NULL REFERENCES students(id),
+    data_json TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS extracted_tasks (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     student_id INTEGER NOT NULL REFERENCES students(id),
     data_json TEXT NOT NULL,
@@ -199,3 +220,40 @@ def delete_exam(conn: sqlite3.Connection, student_id: int, exam_id: int) -> bool
 
 def clear_exams(conn: sqlite3.Connection, student_id: int) -> int:
     return _clear_items(conn, "exams", student_id)
+
+def add_weekly_pattern(conn, student_id: int, item: WeeklyPattern) -> int:  # NEW
+    return _add_item(conn, "weekly_patterns", student_id, item)
+
+def get_weekly_patterns(conn, student_id: int) -> list[tuple[int, WeeklyPattern]]:  # NEW
+    return _get_items(conn, "weekly_patterns", student_id, WeeklyPattern)
+
+def delete_weekly_pattern(conn, student_id: int, item_id: int) -> bool:  # NEW
+    return _delete_item(conn, "weekly_patterns", student_id, item_id)
+
+def clear_weekly_patterns(conn, student_id: int) -> int:  # NEW
+    return _clear_items(conn, "weekly_patterns", student_id)
+
+def add_dated_block(conn, student_id: int, item: DatedBlock) -> int:  # NEW
+    return _add_item(conn, "dated_blocks", student_id, item)
+
+def get_dated_blocks(conn, student_id: int) -> list[tuple[int, DatedBlock]]:  # NEW
+    return _get_items(conn, "dated_blocks", student_id, DatedBlock)
+
+def delete_dated_block(conn, student_id: int, item_id: int) -> bool:  # NEW
+    return _delete_item(conn, "dated_blocks", student_id, item_id)
+
+def clear_dated_blocks(conn, student_id: int) -> int:  # NEW
+    return _clear_items(conn, "dated_blocks", student_id)
+
+
+def add_extracted_task(conn, student_id: int, item: ExtractedTask) -> int:  # NEW
+    return _add_item(conn, "extracted_tasks", student_id, item)
+
+def get_extracted_tasks(conn, student_id: int) -> list[tuple[int, ExtractedTask]]:  # NEW
+    return _get_items(conn, "extracted_tasks", student_id, ExtractedTask)
+
+def delete_extracted_task(conn, student_id: int, item_id: int) -> bool:  # NEW
+    return _delete_item(conn, "extracted_tasks", student_id, item_id)
+
+def clear_extracted_tasks(conn, student_id: int) -> int:  # NEW
+    return _clear_items(conn, "extracted_tasks", student_id)

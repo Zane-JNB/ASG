@@ -1,6 +1,6 @@
 from datetime import date, timedelta
 
-from scheduler.models import FixedBlock, DynamicTask, WeeklyPattern, ExtractedTask, SLOTS_PER_DAY, time_to_slot,DatedBlock
+from scheduler.models import FixedBlock, DynamicTask, WeeklyPattern, ExtractedTask, SLOTS_PER_DAY, time_to_slot,DatedBlock, PlanAnchor
 
 _WEEKDAY_ABBR = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]  # matches date.weekday()'s 0-6 order
 
@@ -103,3 +103,10 @@ def dated_blocks_to_fixed_blocks(blocks: list[DatedBlock], plan_start_date: date
         except ValueError:
             continue
     return result
+
+def build_plan_inputs(patterns, dated_blocks, tasks, anchor: PlanAnchor):  # NEW
+    """Expand saved, real-dated items into solver inputs for THIS anchor window."""
+    fixed = expand_weekly_patterns(patterns, anchor.start_date, anchor.num_days)
+    fixed += [b for b in dated_blocks_to_fixed_blocks(dated_blocks, anchor.start_date)
+              if b.day < anchor.num_days]  # NEW -- solver rejects blocks past the horizon
+    return fixed, extracted_tasks_to_dynamic_tasks(tasks, anchor.start_date)
