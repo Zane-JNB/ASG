@@ -72,6 +72,11 @@ class ProfileSettings(BaseModel):
     default_earliest_bed: int = Field(default=84, ge=0, lt=2 * SLOTS_PER_DAY)  #  21:00
     default_latest_bed: int = Field(default=100, ge=0, lt=2 * SLOTS_PER_DAY)  #  01:00
     default_preferred_bed: int = Field(default=92, ge=0, lt=2 * SLOTS_PER_DAY)  #  23:00
+    drop_priority_weight: int = Field(default=10, ge=0)  # NEW  cost per lost slot, per priority point
+    drop_difficulty_weight: int = Field(default=2, ge=0)  # NEW
+    drop_deadline_multiplier: int = Field(default=3, ge=1)  # NEW  losing time on a deadline task costs 3x
+    drop_sleep_weight: int = Field(default=40, ge=0)  # NEW  per slot of sleep below target
+    drop_hard_flag_penalty: int = Field(default=5_000, ge=0)  # NEW  per hard flag
 
     def default_sleep_rule(self, night: int, **overrides) -> "SleepRule":  
         """Build a SleepRule for one night using this profile's defaults, with any field overridden."""  
@@ -211,3 +216,35 @@ class PlanAnchor(BaseModel):
     @property
     def end_date(self) -> date:  # last day INCLUDED in the plan
         return self.start_date + timedelta(days=self.num_days - 1)
+
+class DropAction(BaseModel):  # NEW  (whole class)
+    task_index: int
+    title: str
+    chunks_cut: int
+    total_chunks: int
+    slots_lost: int
+    slots_kept: int
+    priority: int
+    difficulty: int
+    has_deadline: bool
+
+    @property
+    def is_full_drop(self) -> bool:
+        return self.slots_kept == 0
+
+class DropProposal(BaseModel):  # NEW
+    rank: int = 0
+    actions: list[DropAction]
+    new_task_added: bool  # False = "don't add the new task"
+    score: float  # lower is better
+    slots_freed: int
+    sleep_sacrificed_slots: int
+    flags: list[str]  # hard problems the student must see
+    schedule: list[ScheduledItem]  # already solved
+
+class DropReport(BaseModel):  # NEW
+    new_task_title: str
+    fits_already: bool
+    proposals: list[DropProposal]  # best first
+    checks_used: int
+    search_exhausted: bool  # False = stopped at the check limit
