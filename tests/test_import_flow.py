@@ -148,3 +148,45 @@ def test_summary_message_says_what_was_replaced_and_what_was_added(env):
                extractor=lambda d, m: _extraction(), cache_path=cache)
     assert shown[-1] == ("Saved: 1 weekly (replaced old), 1 dated (replaced old), "
                          "0 task(s) added, 1 duplicate(s) skipped.")
+
+def test_pdf_uses_the_local_pdf_path_not_the_default_extractor(env, monkeypatch, tmp_path):
+    """A .pdf must NOT go through extract_schedule (which would reach the vision backend
+    and reject PDFs on Groq) -- it should route through extract_schedule_from_pdf instead."""
+    conn, sid, _, cache = env
+    from reportlab.lib.pagesizes import letter
+    from reportlab.pdfgen import canvas
+    import io
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf, pagesize=letter)
+    c.drawString(72, 700, "Weekly Schedule")
+    c.drawString(72, 680, "Monday 09:00-11:00 Data Structures")
+    c.save()
+    pdf_path = tmp_path / "t.pdf"
+    pdf_path.write_bytes(buf.getvalue())
+
+    def fake_from_pdf(file_bytes, call_text_llm=None, call_vision=None):
+        return _extraction("PDF-DS")
+
+    monkeypatch.setattr("scheduler.import_flow.extract_schedule_from_pdf", fake_from_pdf)
+    ask = Recorder(KEEP_ALL)
+    ok = run_import(conn, sid, str(pdf_path), ask=ask, show=lambda _: None, cache_path=cache)
+    assert ok and _titles(conn, sid)[0] == ["PDF-DS"]
+    assert all("LLM_BACKEND" not in p for p in ask.prompts)  # no vision cost prompt for the PDF path
+
+def test_pdf_cost_prompt_mentions_page_count(env, monkeypatch, tmp_path):
+    conn, sid, _, cache = env
+    from reportlab.lib.pagesizes import letter
+    from reportlab.pdfgen import canvas
+    import io
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf, pagesize=letter)
+    c.drawString(72, 700, "page one"); c.showPage()
+    c.drawString(72, 700, "page two"); c.showPage()
+    c.save()
+    pdf_path = tmp_path / "two_pages.pdf"
+    pdf_path.write_bytes(buf.getvalue())
+
+    monkeypatch.setenv("LLM_BACKEND", "groq")
+    ask = Recorder([""])  # decline (Enter = default No)
+    run_import(conn, sid, str(pdf_path), ask=ask, show=lambda _: None, cache_path=cache)
+    assert "2 page(s)" in ask.prompts[0]

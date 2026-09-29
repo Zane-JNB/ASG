@@ -48,7 +48,6 @@ def _groq_call(system_prompt: str, user_message: str, tool_name: str, tool_schem
         body = getattr(e, "body", None)
         body = body if isinstance(body, dict) else {}
         code = body.get("code") or body.get("error", {}).get("code")
-        print("### DEBUG: extracted code =", repr(code), file=__import__("sys").stderr)
         if status_code == 404:
             raise RuntimeError(
                 f"Groq model '{model}' isn't available -- it may have been decommissioned "

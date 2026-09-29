@@ -4,6 +4,7 @@ from scheduler.db import replace_extraction
 from scheduler.models import ExtractionResult
 from scheduler.review import _confirm, review_extraction
 from scheduler.schedule_extraction import extract_schedule
+from scheduler.pdf_extraction import extract_schedule_from_pdf
 
 CACHE_PATH = "last_extraction.json"  # NEW -- last raw extraction, so the review can be replayed free
 
@@ -27,18 +28,28 @@ def _load_result(source_path, ask, show, extractor, cache_path):  # NEW
         show(f"Unsupported file type '{ext}'. Use png, jpg, jpeg, pdf, or a saved .json.")
         return None
 
+    with open(source_path, "rb") as f:  # NEW -- read once, reused below for the page count too
+        file_bytes = f.read()
+
     backend = os.environ.get("LLM_BACKEND", "fake")
     if backend != "fake":
         cost_note = "paid" if backend == "anthropic" else "free-tier but a real API call"
-        if not _confirm(ask, f"LLM_BACKEND={backend} ({cost_note}). Continue?", default=False):
+        page_note = ""
+        if ext == ".pdf":  # NEW -- each page can be its own call (text or rendered-image)
+            import io
+            import pdfplumber
+            with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:  # NEW -- from bytes, matches
+                num_pages = len(pdf.pages)                        # extract_schedule_from_pdf exactly
+            page_note = f" This PDF has {num_pages} page(s); each may use its own call."
+        if not _confirm(ask, f"LLM_BACKEND={backend} ({cost_note}).{page_note} Continue?", default=False):
             show("Aborted.")
             return None
-
-    with open(source_path, "rb") as f:
-        file_bytes = f.read()
     try:
-        result = extractor(file_bytes, MEDIA_TYPES[ext])
-    except ValueError as e:  # e.g. Groq's vision model rejecting a PDF
+        if ext == ".pdf" and extractor is extract_schedule:  # NEW -- default PDF path avoids
+            result = extract_schedule_from_pdf(file_bytes)   # Groq's vision model rejecting PDFs
+        else:
+            result = extractor(file_bytes, MEDIA_TYPES[ext])
+    except ValueError as e:
         show(f"Extraction failed: {e}")
         return None
 
