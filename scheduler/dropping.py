@@ -17,7 +17,7 @@ def cut_task(task, chunks_cut):  # NEW  -- method A
     return task.model_copy(update={"duration_slots": task.duration_slots - sum(sizes[-chunks_cut:])})
 
 def loss_cost(task, lost_slots, settings):  # NEW
-    per_slot = (task.priority * settings.drop_priority_weight
+    per_slot = (task.priority ** 2 * settings.drop_priority_weight
                 + task.difficulty * settings.drop_difficulty_weight)
     if task.deadline_day is not None:
         per_slot *= settings.drop_deadline_multiplier
