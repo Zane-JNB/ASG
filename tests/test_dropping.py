@@ -80,7 +80,8 @@ def test_partial_cut_of_a_split_task_is_offered():
 def test_no_proposal_is_a_wasteful_superset_of_another():
     fixed, tasks, new, rules = busy_day()
     report = propose_drops(fixed, tasks, new, 1, rules)
-    cuts = [{a.task_index: a.chunks_cut for a in p.actions} for p in report.proposals if p.new_task_added]
+    cuts = [{**{a.task_index: a.slots_lost for a in p.actions}, **({-1: p.new_task_slots_cut} if p.new_task_slots_cut else {})}
+            for p in report.proposals if p.new_task_added]
     for a in cuts:
         for b in cuts:
             if a is not b:

@@ -69,6 +69,13 @@ CREATE TABLE IF NOT EXISTS extracted_tasks (
     data_json TEXT NOT NULL,
     created_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS plan_cuts (  -- NEW
+    task_id INTEGER PRIMARY KEY REFERENCES extracted_tasks(id) ON DELETE CASCADE,
+    student_id INTEGER NOT NULL REFERENCES students(id),
+    slots_cut INTEGER NOT NULL CHECK (slots_cut > 0),
+    updated_at TEXT NOT NULL
+);
 """
 
 def connect(path: str) -> sqlite3.Connection:
@@ -252,6 +259,12 @@ def add_extracted_task(conn, student_id: int, item: ExtractedTask) -> int:  # NE
 def get_extracted_tasks(conn, student_id: int) -> list[tuple[int, ExtractedTask]]:  # NEW
     return _get_items(conn, "extracted_tasks", student_id, ExtractedTask)
 
+def update_extracted_task(conn, student_id: int, item_id: int, item: ExtractedTask) -> bool:  # NEW
+    cur = conn.execute("UPDATE extracted_tasks SET data_json = ? WHERE id = ? AND student_id = ?",
+                       (item.model_dump_json(), item_id, student_id))
+    conn.commit()
+    return cur.rowcount > 0
+
 def delete_extracted_task(conn, student_id: int, item_id: int) -> bool:  # NEW
     return _delete_item(conn, "extracted_tasks", student_id, item_id)
 
@@ -296,3 +309,61 @@ def replace_extraction(conn, student_id: int, result: ExtractionResult) -> dict:
         conn.rollback()
         raise
     return summary
+
+def _own_task(conn, student_id: int, task_id: int) -> bool:  # NEW
+    return conn.execute("SELECT 1 FROM extracted_tasks WHERE id = ? AND student_id = ?",
+                        (task_id, student_id)).fetchone() is not None
+
+def _upsert_cut(conn, student_id: int, task_id: int, slots: int) -> None:  # NEW
+    if slots < 1:
+        raise ValueError("a cut must be at least one slot")
+    if not _own_task(conn, student_id, task_id):
+        raise ValueError(f"task {task_id} does not belong to this student")
+    conn.execute(
+        """INSERT INTO plan_cuts (task_id, student_id, slots_cut, updated_at) VALUES (?, ?, ?, ?)
+           ON CONFLICT(task_id) DO UPDATE SET slots_cut = slots_cut + excluded.slots_cut,
+                                              updated_at = excluded.updated_at""",
+        (task_id, student_id, slots, _now()))
+
+def add_plan_cut(conn, student_id: int, task_id: int, slots: int) -> None:  # NEW
+    try:
+        _upsert_cut(conn, student_id, task_id, slots)
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+
+def get_plan_cuts(conn, student_id: int) -> dict[int, int]:  # NEW
+    rows = conn.execute("SELECT task_id, slots_cut FROM plan_cuts WHERE student_id = ?",
+                        (student_id,)).fetchall()
+    return {r[0]: r[1] for r in rows}
+
+def clear_plan_cut(conn, student_id: int, task_id: int) -> bool:  # NEW  -- gives the time back
+    cur = conn.execute("DELETE FROM plan_cuts WHERE task_id = ? AND student_id = ?", (task_id, student_id))
+    conn.commit()
+    return cur.rowcount > 0
+
+def clear_plan_cuts(conn, student_id: int) -> int:  # NEW
+    cur = conn.execute("DELETE FROM plan_cuts WHERE student_id = ?", (student_id,))
+    conn.commit()
+    return cur.rowcount
+
+def apply_plan_changes(conn, student_id: int, cuts: dict[int, int],
+                       new_task: ExtractedTask | None = None, new_task_cut: int = 0) -> int | None:  # NEW new_task_cut
+    """Save a chosen drop proposal all-or-nothing: the cuts plus (optionally) the new task.
+    Returns the new task's id, or None if no task was added."""
+    try:
+        for task_id, slots in cuts.items():
+            _upsert_cut(conn, student_id, task_id, slots)
+        new_id = None
+        if new_task is not None:
+            new_id = conn.execute(
+                "INSERT INTO extracted_tasks (student_id, data_json, created_at) VALUES (?, ?, ?)",
+                (student_id, new_task.model_dump_json(), _now())).lastrowid
+            if new_task_cut > 0:  # NEW -- saved at full hours; the shortening is plan-only, like any cut
+                _upsert_cut(conn, student_id, new_id, new_task_cut)
+        conn.commit()
+        return new_id
+    except Exception:
+        conn.rollback()
+        raise

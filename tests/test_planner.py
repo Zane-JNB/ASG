@@ -34,13 +34,6 @@ def test_end_to_end_uses_real_dates_and_meets_deadline():
     hw = [i for i in items if i.title.startswith("HW")]
     assert hw and all(i.day <= 4 for i in hw)  # due Fri 2 Oct = day 4
 
-
-def test_start_date_defaults_to_tomorrow():
-    conn, sid = _setup()
-    anchor, *_ = plan_from_saved(conn, sid, 2, time_limit_seconds=5)
-    assert anchor.start_date == date.today() + timedelta(days=1)
-
-
 def test_no_saved_items_raises_clear_error():
     conn = connect(":memory:")
     sid = get_or_create_student(conn, "Empty")

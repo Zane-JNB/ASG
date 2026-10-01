@@ -6,7 +6,10 @@ def _h(slots: int) -> str:  # NEW  -- 7 -> "1.75h"
 
 
 def _action_line(a: DropAction) -> str:  # NEW
-    if a.is_full_drop:
+    if a.shrink:  # NEW
+        what = (f"Shorten '{a.title}' by {_h(a.slots_lost)} ({_h(a.slots_kept + a.slots_lost)} -> "
+                f"{_h(a.slots_kept)}, still one block)")
+    elif a.is_full_drop:
         what = f"Drop '{a.title}' entirely (-{_h(a.slots_lost)})"
     else:
         what = (f"Cut {a.chunks_cut} of {a.total_chunks} sessions of '{a.title}' "
@@ -15,13 +18,19 @@ def _action_line(a: DropAction) -> str:  # NEW
     return f"{what} [{detail}]"
 
 
-def describe_proposal(n: int, p: DropProposal, new_task: DynamicTask) -> list[str]:  # NEW
+def describe_proposal(n: int, p: DropProposal, new_task: DynamicTask) -> list[str]:
+    """Lines for one numbered option: what changes, what happens to the new task, sleep, warnings."""
     tag = "  <- best" if n == 1 else ""
     lines = [f"{n}.{tag}"]
     if p.new_task_added:
         lines += [f"   - {_action_line(a)}" for a in p.actions]
-        lines.append(f"   - Adds '{new_task.title}' ({_h(new_task.duration_slots)}, "
-                     f"priority {new_task.priority}, difficulty {new_task.difficulty})")
+        if p.new_task_slots_cut:
+            lines.append(f"   - Adds '{new_task.title}' shortened to {_h(new_task.duration_slots - p.new_task_slots_cut)} "
+                         f"(from {_h(new_task.duration_slots)}, still one block; priority {new_task.priority}, "
+                         f"difficulty {new_task.difficulty})")
+        else:
+            lines.append(f"   - Adds '{new_task.title}' ({_h(new_task.duration_slots)}, "
+                         f"priority {new_task.priority}, difficulty {new_task.difficulty})")
     else:
         lines.append(f"   - Don't add '{new_task.title}' ({_h(new_task.duration_slots)}, "
                      f"priority {new_task.priority}, difficulty {new_task.difficulty}); nothing else changes")

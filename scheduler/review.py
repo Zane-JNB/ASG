@@ -75,15 +75,21 @@ def _current(item, key: str):  # NEW
     return f"{value * MINUTES_PER_SLOT / 60:g}" if key == "duration_slots" else value
 
 
-def _describe(kind: str, item) -> str:  # NEW
+def _describe(kind: str, item, session_cap: int | None = None) -> str:  # NEW
     if kind == "Task":
         hours = item.duration_slots * MINUTES_PER_SLOT / 60
-        return f"{item.title} due {item.date} ({hours:g}h, priority {item.priority}, difficulty {item.difficulty})"
+        if not item.splittable:  # NEW
+            note = ", one block"
+        elif session_cap and item.duration_slots > session_cap:
+            note = ", can be split"
+        else:
+            note = ""
+        return f"{item.title} due {item.date} ({hours:g}h, priority {item.priority}, difficulty {item.difficulty}{note})"
     when = f"{item.day}" if kind == "Weekly" else f"{item.date}"
     return f"{item.title} -- {when} {item.start_time}-{item.end_time}"
 
 
-def _edit_item(item, ask, show):  # NEW
+def _edit_item(item, ask, show, session_cap: int | None):  # NEW
     """Ask for each field (Enter keeps the current value). Bad input shows why and re-asks."""
     while True:
         try:
@@ -92,6 +98,11 @@ def _edit_item(item, ask, show):  # NEW
                 raw = ask(f"  {label} [{_current(item, key)}]: ").strip()
                 if raw:
                     changes[key] = parse(raw)
+            if isinstance(item, ExtractedTask) and session_cap:  # NEW -- only long tasks can be split
+                if changes.get("duration_slots", item.duration_slots) > session_cap:
+                    cap_h = session_cap * MINUTES_PER_SLOT / 60
+                    changes["splittable"] = _confirm(
+                        ask, f"  Can it be split into sessions of up to {cap_h:g}h? (n = one block)", item.splittable)
             return type(item).model_validate({**item.model_dump(), **changes})
         except ValueError as e:  # parser errors AND pydantic's ValidationError
             msg = e.errors()[0]["msg"] if isinstance(e, ValidationError) else str(e)
@@ -120,7 +131,7 @@ def _overlap_notes(items) -> list[str]:  # NEW
        
     
         
-def review_extraction(result: ExtractionResult, ask=input, show=print) -> ExtractionResult:  # NEW
+def review_extraction(result: ExtractionResult, ask=input, show=print, session_cap: int | None = None) -> ExtractionResult:  # NEW
     """Show everything found, then ONE prompt: Enter accepts all, or pick numbers to edit/delete."""
     items = ([("Weekly", p) for p in result.weekly_patterns]
              + [("Session", b) for b in result.dated_blocks]
@@ -137,6 +148,10 @@ def review_extraction(result: ExtractionResult, ask=input, show=print) -> Extrac
              + "; ".join(clashes))
     if result.tasks:
         show("Task hours/priority/difficulty are placeholder guesses -- fix any that are off.")
+        if session_cap and any(t.duration_slots > session_cap for t in result.tasks):  # NEW
+            cap_h = session_cap * MINUTES_PER_SLOT / 60
+            show(f"Tasks longer than {cap_h:g}h are marked 'can be split' into sessions -- "
+                 "pick one and edit it to make it a single block instead.")
 
     while True:
         answer = ask("Numbers to fix or delete (e.g. 2 5), or Enter to accept all: ")
@@ -156,7 +171,7 @@ def review_extraction(result: ExtractionResult, ask=input, show=print) -> Extrac
         if action == "d":
             items[n - 1] = None
         elif action == "e":
-            items[n - 1] = (kind, _edit_item(item, ask, show))     
+            items[n - 1] = (kind, _edit_item(item, ask, show, session_cap))    
     kept = [x for x in items if x is not None]
     return ExtractionResult(
         weekly_patterns=[i for k, i in kept if k == "Weekly"],

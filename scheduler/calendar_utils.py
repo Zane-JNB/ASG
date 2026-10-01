@@ -51,7 +51,8 @@ def expand_weekly_patterns(patterns: list[WeeklyPattern], plan_start_date: date,
     return blocks
 
 
-def extracted_task_to_dynamic_task(task: ExtractedTask, plan_start_date: date) -> DynamicTask:
+def extracted_task_to_dynamic_task(task: ExtractedTask, plan_start_date: date,
+                                   max_session_slots: int | None = None) -> DynamicTask:
     """Convert one extracted task (real calendar date) into a DynamicTask (relative day index)."""
     deadline_date = date.fromisoformat(task.date)
     deadline_day = day_index_for_date(plan_start_date, deadline_date)
@@ -60,6 +61,8 @@ def extracted_task_to_dynamic_task(task: ExtractedTask, plan_start_date: date) -
         duration_slots=task.duration_slots,
         priority=task.priority,
         difficulty=task.difficulty,
+        splittable=task.splittable,
+        **({} if max_session_slots is None else {"max_session_slots": max_session_slots}),
         deadline_day=deadline_day,
         deadline_slot=SLOTS_PER_DAY,
     )

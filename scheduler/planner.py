@@ -1,40 +1,39 @@
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta  # NEW datetime
 
 from scheduler.calendar_utils import build_plan_inputs, find_overlaps
 from scheduler.db import (
     get_dated_blocks, get_extracted_tasks, get_weekly_patterns, load_settings,
 )
+from scheduler.fit_check import build_fit_inputs, overlap_error, planned_tasks  # NEW
 from scheduler.models import FixedBlock, PlanAnchor, SLOTS_PER_DAY, slot_to_time
 from scheduler.solver import build_schedule, sleep_warnings, task_warnings
 
 
-def plan_from_saved(conn, student_id: int, num_days: int = 7, start_date: date | None = None,
-                    time_limit_seconds: float = 30.0):  # NEW
-    """Load the student's saved extracted items, anchor them to `start_date`, and solve.
-    start_date defaults to TOMORROW: day 0 starts at 00:00, so planning from today could
-    put tasks in hours that have already passed.
-    Returns (anchor, fixed_blocks, scheduled_items, warnings)."""
+def plan_from_saved(conn, student_id: int, num_days: int | None = None, start_date: date | None = None,
+                    time_limit_seconds: float = 30.0, now: datetime | None = None):  # NEW  now, num_days optional
+    """Default (no start_date): a continuous plan from `now` to the last deadline; num_days is only
+    a minimum. start_date given: the old explicit window of num_days (default 7) from that date."""
     patterns = [p for _, p in get_weekly_patterns(conn, student_id)]
     dated = [b for _, b in get_dated_blocks(conn, student_id)]
     saved_tasks = [t for _, t in get_extracted_tasks(conn, student_id)]
     if not (patterns or dated or saved_tasks):
         raise ValueError("no saved schedule items -- run import_schedule.py first")
 
-    anchor = PlanAnchor(start_date=start_date or date.today() + timedelta(days=1),
-                        num_days=num_days)
-    fixed, tasks = build_plan_inputs(patterns, dated, saved_tasks, anchor)
-    overlaps = find_overlaps(fixed)  # NEW -- the solver only says "no valid schedule"
+    if start_date is None:  # NEW -- continuous mode
+        fit = build_fit_inputs(conn, student_id, now or datetime.now(), min_days=num_days or 1)
+        items, unscheduled = build_schedule(
+            fit.fixed, [t for _, t in fit.planned], num_days=fit.anchor.num_days,
+            sleep_rules=fit.sleep_rules, time_limit_seconds=time_limit_seconds, settings=fit.settings,
+        )
+        return fit.anchor, fit.fixed, items, sleep_warnings(fit.sleep_rules, items) + task_warnings(unscheduled)
+
+    num_days = num_days or 7
+    anchor = PlanAnchor(start_date=start_date, num_days=num_days)
+    fixed, _ = build_plan_inputs(patterns, dated, saved_tasks, anchor)
+    tasks = [t for _, t in planned_tasks(conn, student_id, anchor)]  # honours plan cuts
+    overlaps = find_overlaps(fixed)
     if overlaps:
-        lines = []
-        for a, b in overlaps[:5]:
-            d = anchor.start_date + timedelta(days=a.day)
-            lines.append(f"  {d:%a %d %b}: '{a.title}' {slot_to_time(a.start_slot)}-"
-                         f"{slot_to_time(a.end_slot % SLOTS_PER_DAY)} overlaps '{b.title}' "
-                         f"{slot_to_time(b.start_slot)}-{slot_to_time(b.end_slot % SLOTS_PER_DAY)}")
-        more = f"\n  ...and {len(overlaps) - 5} more" if len(overlaps) > 5 else ""
-        raise ValueError("Some saved blocks overlap, so no schedule is possible:\n"
-                         + "\n".join(lines) + more
-                         + "\nRe-run import_schedule.py and delete or fix the duplicates.")
+        raise ValueError(overlap_error(anchor, overlaps))  # NEW  shared message
     settings = load_settings(conn, student_id)
     sleep_rules = [settings.default_sleep_rule(night=n) for n in range(num_days)]
     rule0 = sleep_rules[0]
@@ -48,7 +47,6 @@ def plan_from_saved(conn, student_id: int, num_days: int = 7, start_date: date |
     )
     warnings = sleep_warnings(sleep_rules, items) + task_warnings(unscheduled)
     return anchor, fixed, items, warnings
-
 
 def format_plan(anchor: PlanAnchor, fixed, items, warnings) -> list[str]:  # NEW
     """Plain-text lines: fixed blocks and solved items merged by real date and time."""

@@ -8,9 +8,9 @@ def main():
     conn = connect(DB_PATH)
     name = input("Student name: ").strip()
     student_id = get_or_create_student(conn, name)
-    days = input("Days to plan [7]: ").strip()
+    anchor, fixed, items, warnings = plan_from_saved(conn, student_id)
     try:
-        anchor, fixed, items, warnings = plan_from_saved(conn, student_id, int(days) if days else 7)
+        anchor, fixed, items, warnings = plan_from_saved(conn, student_id)
     except ValueError as e:
         print(e)
         return

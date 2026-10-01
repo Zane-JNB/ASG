@@ -1,6 +1,6 @@
 import os
 
-from scheduler.db import replace_extraction
+from scheduler.db import replace_extraction, load_settings
 from scheduler.models import ExtractionResult
 from scheduler.review import _confirm, review_extraction
 from scheduler.schedule_extraction import extract_schedule
@@ -68,7 +68,8 @@ def run_import(conn, student_id, source_path, ask=input, show=print,
         show("Nothing was extracted. Your saved schedule is untouched.")
         return False
 
-    reviewed = review_extraction(result, ask=ask, show=show)
+    cap = load_settings(conn, student_id).default_max_session_slots  # NEW
+    reviewed = review_extraction(result, ask=ask, show=show, session_cap=cap)  # NEW
     if not (reviewed.weekly_patterns or reviewed.dated_blocks or reviewed.tasks):
         show("Nothing kept. Your saved schedule is untouched.")
         return False

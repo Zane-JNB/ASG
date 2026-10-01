@@ -1,6 +1,7 @@
 from pydantic import BaseModel, Field, model_validator
 from typing import Literal 
 from datetime import date, timedelta
+from pydantic.json_schema import SkipJsonSchema
 
 MINUTES_PER_SLOT = 15
 SLOTS_PER_DAY = 24 * 60 // MINUTES_PER_SLOT  # 96 slots in a day
@@ -31,14 +32,15 @@ class DynamicTask(BaseModel):
     title: str
     duration_slots: int = Field(gt=0)  # 4 slots = 1 hour
     priority: int = Field(ge=1, le=5)
-    difficulty: int = Field(ge=1, le=5)
-    splittable: bool = True
+    difficulty: int = Field(default=3, ge=1, le=5)
+    splittable: SkipJsonSchema[bool] = True
     max_session_slots: int = Field(default=8, gt=0) # 8 slots = 2 hours
     deadline_day: int | None = Field(default=None, ge=0)  # None = no deadline
     deadline_slot: int = Field(default=SLOTS_PER_DAY, gt=0, le=SLOTS_PER_DAY)  # exclusive
     earliest_start_day: int | None = Field(default=None, ge=0)  # None = no earliest bound
     earliest_start_slot: int = Field(default=0, ge=0, lt=SLOTS_PER_DAY)
     max_daily_slots: int | None = Field(default=None, gt=0)
+    # completed_at: SkipJsonSchema[str | None] = None
 
 class SleepRule(BaseModel):  # 
     """One night of sleep. Night 0 starts on the evening of day 0.""" 
@@ -77,6 +79,8 @@ class ProfileSettings(BaseModel):
     drop_deadline_multiplier: int = Field(default=3, ge=1)  # NEW  losing time on a deadline task costs 3x
     drop_sleep_weight: int = Field(default=40, ge=0)  # NEW  per slot of sleep below target
     drop_hard_flag_penalty: int = Field(default=5_000, ge=0)  # NEW  per hard flag
+    plan_horizon_max_days: int = Field(default=28, gt=0)
+    shrink_steps: list[float] = Field(default_factory=lambda: [0.25, 0.5, 0.75])
 
     def default_sleep_rule(self, night: int, **overrides) -> "SleepRule":  
         """Build a SleepRule for one night using this profile's defaults, with any field overridden."""  
@@ -173,6 +177,8 @@ class ExtractedTask(BaseModel):
     duration_slots: int = Field(default=4, gt=0)  # placeholder: 1 hour
     priority: int = Field(default=3, ge=1, le=5)  # placeholder: medium
     difficulty: int = Field(default=3, ge=1, le=5)  # placeholder: medium
+    splittable: SkipJsonSchema[bool] = True  # placeholder: can be split into sessions
+
 
 
 class DatedBlock(BaseModel):
@@ -227,6 +233,7 @@ class DropAction(BaseModel):  # NEW  (whole class)
     priority: int
     difficulty: int
     has_deadline: bool
+    shrink: bool = False
 
     @property
     def is_full_drop(self) -> bool:
@@ -241,6 +248,7 @@ class DropProposal(BaseModel):  # NEW
     sleep_sacrificed_slots: int
     flags: list[str]  # hard problems the student must see
     schedule: list[ScheduledItem]  # already solved
+    new_task_slots_cut: int = 0
 
 class DropReport(BaseModel):  # NEW
     new_task_title: str

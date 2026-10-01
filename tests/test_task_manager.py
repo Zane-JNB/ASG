@@ -30,22 +30,22 @@ def test_add_with_all_defaults_takes_title_and_date_only():
 
 
 def test_add_with_custom_values():
-    ask, shown = scripted(["Report", "2026-10-05", "6", "5", "4"])
+    ask, shown = scripted(["Report", "2026-10-05", "6", "5", "4", "n"])
     task = prompt_new_task(ask, shown.append, today=TODAY)
     assert (task.duration_slots, task.priority, task.difficulty) == (24, 5, 4)
 
 
 def test_bad_input_reasks_only_that_field():
     ask, shown = scripted(["", "Essay",                       # blank title -> re-asked
-                           "2026-13-45", "2026-09-28", "2026-10-05",  # impossible date, today, then valid
+                           "2026-13-45", "2026-09-27", "2026-10-05",  # impossible date, today, then valid
                            "0", "2",                          # under 15 minutes, then 2h
                            "9", "5",                          # priority out of range, then 5
                            "", ])                             # difficulty Enter = default
     task = prompt_new_task(ask, shown.append, today=TODAY)
     assert (task.title, task.date, task.duration_slots, task.priority, task.difficulty) == \
            ("Essay", "2026-10-05", 8, 5, 3)
-    text = " ".join(shown)
-    assert "required" in text and "tomorrow or later" in text and "1 to 5" in text
+    text = " ".join(" ".join(shown).split()) 
+    assert "required" in text and "today or later" in text and "1 to 5" in text
 
 
 def test_menu_add_list_and_quit():
@@ -99,7 +99,7 @@ def test_menu_handles_junk_and_empty_states():
     conn, sid = _conn()
     ask, shown = scripted(["zzz", "l", "d", "x", "q"])
     run_menu(conn, sid, ask, shown.append, today=TODAY)
-    assert "Choose a, l, d, x or q." in shown and shown.count("No tasks saved.") == 3
+    assert "Choose a, l, d, s, t, x or q." in shown and shown.count("No tasks saved.") == 3
 
 
 def test_added_task_reaches_the_plan():
@@ -109,3 +109,8 @@ def test_added_task_reaches_the_plan():
     _, _, items, _ = plan_from_saved(conn, sid, 7, start_date=date(2026, 9, 29), time_limit_seconds=10)
     essay = [i for i in items if i.title.startswith("Essay")]
     assert essay and all(i.day <= 3 for i in essay)  # due Fri 2 Oct = day 3 from Tue 29 Sep
+
+def test_due_today_is_accepted():  # NEW
+    ask, shown = scripted(["Quiz", "2026-09-28", "", "", ""])
+    task = prompt_new_task(ask, shown.append, today=TODAY)
+    assert task.date == "2026-09-28"
