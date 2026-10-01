@@ -7,6 +7,8 @@ from scheduler.db import (
 from scheduler.models import DynamicTask, ExtractedTask, MINUTES_PER_SLOT   
 from scheduler.review import _confirm, _date, _describe, _hours
 from tests.test_reflection_cycle import conn, student_id
+from scheduler.completion import finish_task, run_checkin  # NEW
+from scheduler.task_filter import describe_reminders  # NEW
 
 _DEFAULT = ExtractedTask(title="x", date="2000-01-01")  # only used to read the placeholder defaults
 _SESSION_CAP = DynamicTask.model_fields["max_session_slots"].default
@@ -64,8 +66,38 @@ def prompt_new_task(ask=input, show=print, today: date | None = None, session_ca
 
 
 def _sorted_tasks(conn, student_id):
-    return sorted(get_extracted_tasks(conn, student_id), key=lambda x: (x[1].date, x[1].title.lower()))
+    open_tasks = [(i, t) for i, t in get_extracted_tasks(conn, student_id) if not t.completed_at]  # NEW -- done = history
+    return sorted(open_tasks, key=lambda x: (x[1].date, x[1].title.lower()))
 
+def _ask_level(ask, show, prompt: str) -> int | None:  # NEW
+    while True:
+        raw = ask(prompt).strip()
+        if not raw:
+            return None
+        if raw.isdigit() and 1 <= int(raw) <= 5:
+            return int(raw)
+        show("Enter a number from 1 to 5, or press Enter to ignore it.")
+
+
+def _reminder_settings(conn, student_id, ask, show) -> None:  # NEW
+    settings = load_settings(conn, student_id)
+    show(describe_reminders(settings))
+    choice = ask("Change: [a]ll tasks  [c]ustom  [o]ff  (Enter to keep): ").strip().lower()
+    if choice == "a":
+        update = {"reminders_enabled": True, "reminder_min_difficulty": None, "reminder_min_priority": None}
+    elif choice == "o":
+        update = {"reminders_enabled": False}
+    elif choice == "c":
+        d = _ask_level(ask, show, "Remind me about difficulty at or above (1-5, Enter to ignore difficulty): ")
+        p = _ask_level(ask, show, "Remind me about priority at or above (1-5, Enter to ignore priority): ")
+        update = {"reminders_enabled": True, "reminder_min_difficulty": d, "reminder_min_priority": p}
+    else:
+        if choice:
+            show("Choose a, c or o.")
+        return
+    settings = settings.model_copy(update=update)
+    save_settings(conn, student_id, settings)
+    show(describe_reminders(settings))
 
 def _show_tasks(tasks, show, session_cap: int | None = None):
     if not tasks:
@@ -76,9 +108,10 @@ def _show_tasks(tasks, show, session_cap: int | None = None):
 def run_menu(conn, student_id, ask=input, show=print, today: date | None = None, 
              now: datetime | None = None) -> None:
     now = now or (datetime.combine(today, time(0, 0)) if today else datetime.now())
-    today = today or now.date()
+    today = today or now.date()  # NEW
+    run_checkin(conn, student_id, now, ask, show)
     while True:
-        choice = ask("Tasks: [a]dd  [l]ist  [d]elete one  [s]plit setting  session [t]ime  [x] delete ALL  [q]uit: ").strip().lower()
+        choice = ask("Tasks: [a]dd  [l]ist  [d]elete one  [f]inished  [c]heck-in  [s]plit setting  session [t]ime  [r]eminders  [x] delete ALL  [q]uit: ").strip().lower()
         if choice == "q":
             return
         if choice == "a":
@@ -97,6 +130,21 @@ def run_menu(conn, student_id, ask=input, show=print, today: date | None = None,
                 show("Deleted.")
             elif raw:
                 show(f"Enter a number between 1 and {len(tasks)}.")
+        elif choice == "f":  # NEW -- manual "mark task done"
+            tasks = _sorted_tasks(conn, student_id)
+            _show_tasks(tasks, show, load_settings(conn, student_id).default_max_session_slots)
+            if not tasks:
+                continue
+            raw = ask("Number of the task you finished (Enter to cancel): ").strip()
+            if raw.isdigit() and 1 <= int(raw) <= len(tasks):
+                finish_task(conn, student_id, tasks[int(raw) - 1][0], now, ask, show)
+            elif raw:
+                show(f"Enter a number between 1 and {len(tasks)}.")
+        elif choice == "c":  # NEW
+            if not run_checkin(conn, student_id, now, ask, show):
+                show("Nothing to check in on right now.")
+        elif choice == "r":  # NEW
+            _reminder_settings(conn, student_id, ask, show)
         elif choice == "s":  # NEW
             tasks = _sorted_tasks(conn, student_id)
             _show_tasks(tasks, show)
@@ -132,4 +180,4 @@ def run_menu(conn, student_id, ask=input, show=print, today: date | None = None,
             else:
                 show("Cancelled -- nothing deleted.")
         else:
-            show("Choose a, l, d, s, t, x or q.")
+            show("Choose a, l, d, f, c, s, t, r, x or q.")

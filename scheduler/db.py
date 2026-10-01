@@ -76,6 +76,15 @@ CREATE TABLE IF NOT EXISTS plan_cuts (  -- NEW
     slots_cut INTEGER NOT NULL CHECK (slots_cut > 0),
     updated_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS plan_sessions (  -- NEW
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    student_id INTEGER NOT NULL REFERENCES students(id),
+    task_id INTEGER NOT NULL REFERENCES extracted_tasks(id) ON DELETE CASCADE,
+    start_at TEXT NOT NULL,
+    end_at TEXT NOT NULL,
+    asked INTEGER NOT NULL DEFAULT 0
+);
 """
 
 def connect(path: str) -> sqlite3.Connection:
@@ -367,3 +376,35 @@ def apply_plan_changes(conn, student_id: int, cuts: dict[int, int],
     except Exception:
         conn.rollback()
         raise
+
+def record_plan_sessions(conn, student_id: int, now_iso: str, sessions: list[tuple[int, str, str]]) -> None:  # NEW
+    """Replace the not-yet-finished sessions of the previous plan with the new plan's. Sessions that
+    already ended stay until the student has been asked about them."""
+    conn.execute("DELETE FROM plan_sessions WHERE student_id = ? AND end_at > ?", (student_id, now_iso))
+    conn.executemany(
+        "INSERT INTO plan_sessions (student_id, task_id, start_at, end_at) VALUES (?, ?, ?, ?)",
+        [(student_id, t, s, e) for t, s, e in sessions])
+    conn.commit()
+
+def due_sessions(conn, student_id: int, now_iso: str) -> list[tuple[int, str, str]]:  # NEW
+    """[(task id, start, end)] of sessions that ended and have not been asked about yet."""
+    return conn.execute("SELECT task_id, start_at, end_at FROM plan_sessions "
+                        "WHERE student_id = ? AND asked = 0 AND end_at <= ? ORDER BY end_at",
+                        (student_id, now_iso)).fetchall()
+
+def mark_sessions_asked(conn, student_id: int, task_id: int, now_iso: str) -> None:  # NEW
+    conn.execute("UPDATE plan_sessions SET asked = 1 WHERE student_id = ? AND task_id = ? AND end_at <= ?",
+                 (student_id, task_id, now_iso))
+    conn.commit()
+
+def clear_task_sessions(conn, student_id: int, task_id: int) -> None:  # NEW
+    conn.execute("DELETE FROM plan_sessions WHERE student_id = ? AND task_id = ?", (student_id, task_id))
+    conn.commit()
+
+def reduce_plan_cut(conn, student_id: int, task_id: int, slots: int) -> None:  # NEW  -- give time back
+    # delete first when the whole cut is given back: the table forbids a cut of 0
+    conn.execute("DELETE FROM plan_cuts WHERE task_id = ? AND student_id = ? AND slots_cut <= ?",
+                 (task_id, student_id, slots))
+    conn.execute("UPDATE plan_cuts SET slots_cut = slots_cut - ?, updated_at = ? WHERE task_id = ? AND student_id = ?",
+                 (slots, _now(), task_id, student_id))
+    conn.commit()

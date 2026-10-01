@@ -99,7 +99,7 @@ def test_menu_handles_junk_and_empty_states():
     conn, sid = _conn()
     ask, shown = scripted(["zzz", "l", "d", "x", "q"])
     run_menu(conn, sid, ask, shown.append, today=TODAY)
-    assert "Choose a, l, d, s, t, x or q." in shown and shown.count("No tasks saved.") == 3
+    assert "Choose a, l, d, f, c, s, t, r, x or q." in shown and shown.count("No tasks saved.") == 3
 
 
 def test_added_task_reaches_the_plan():

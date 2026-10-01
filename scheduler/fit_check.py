@@ -16,6 +16,8 @@ def planned_tasks(conn, student_id: int, anchor: PlanAnchor):  # NEW
      # NEW
     result = []
     for task_id, saved in get_extracted_tasks(conn, student_id):
+        if saved.completed_at:
+            continue  # NEW
         try:
             task = extracted_task_to_dynamic_task(saved, anchor.start_date, session)
         except ValueError:  # due before the plan starts
@@ -95,6 +97,10 @@ def next_slot(now: datetime) -> int:  # NEW
     seconds = now.hour * 3600 + now.minute * 60 + now.second + now.microsecond / 1e6
     return math.ceil(seconds / (MINUTES_PER_SLOT * 60))
 
+def starts_from(task: DynamicTask, now: datetime) -> DynamicTask:
+    day, slot = divmod(next_slot(now), SLOTS_PER_DAY)
+    return task.model_copy(update={"earliest_start_day": day, "earliest_start_slot": slot})
+
 def build_fit_inputs(conn, student_id: int, now: datetime,
                      new_task: ExtractedTask | None = None, min_days: int = 1) -> FitInputs:  # NEW min_days
     """Everything the solver needs, from `now` until the last deadline in play. Nothing is placed
@@ -106,7 +112,7 @@ def build_fit_inputs(conn, student_id: int, now: datetime,
     start_day, start_slot = divmod(next_slot(now), SLOTS_PER_DAY)
 
     def from_now(t: DynamicTask) -> DynamicTask:
-        return t.model_copy(update={"earliest_start_day": start_day, "earliest_start_slot": start_slot})
+        return starts_from(t, now)
 
     planned = [(i, from_now(t)) for i, t in planned_tasks(conn, student_id, day0)]
     new_dyn = from_now(extracted_task_to_dynamic_task(new_task, today, settings.default_max_session_slots)) if new_task else None

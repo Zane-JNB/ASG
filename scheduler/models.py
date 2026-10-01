@@ -40,7 +40,7 @@ class DynamicTask(BaseModel):
     earliest_start_day: int | None = Field(default=None, ge=0)  # None = no earliest bound
     earliest_start_slot: int = Field(default=0, ge=0, lt=SLOTS_PER_DAY)
     max_daily_slots: int | None = Field(default=None, gt=0)
-    # completed_at: SkipJsonSchema[str | None] = None
+    completed_at: SkipJsonSchema[str | None] = None
 
 class SleepRule(BaseModel):  # 
     """One night of sleep. Night 0 starts on the evening of day 0.""" 
@@ -81,6 +81,9 @@ class ProfileSettings(BaseModel):
     drop_hard_flag_penalty: int = Field(default=5_000, ge=0)  # NEW  per hard flag
     plan_horizon_max_days: int = Field(default=28, gt=0)
     shrink_steps: list[float] = Field(default_factory=lambda: [0.25, 0.5, 0.75])
+    reminders_enabled: bool = True
+    reminder_min_difficulty: int | None = Field(default=None, ge=1, le=5)  # NEW  None = ignore difficulty
+    reminder_min_priority: int | None = Field(default=None, ge=1, le=5)  # NEW  None = ignore priority
 
     def default_sleep_rule(self, night: int, **overrides) -> "SleepRule":  
         """Build a SleepRule for one night using this profile's defaults, with any field overridden."""  
@@ -178,7 +181,10 @@ class ExtractedTask(BaseModel):
     priority: int = Field(default=3, ge=1, le=5)  # placeholder: medium
     difficulty: int = Field(default=3, ge=1, le=5)  # placeholder: medium
     splittable: SkipJsonSchema[bool] = True  # placeholder: can be split into sessions
-
+    reminders_enabled: bool = True  # NEW
+    reminder_min_difficulty: int | None = Field(default=None, ge=1, le=5)  # NEW  None = ignore difficulty
+    reminder_min_priority: int | None = Field(default=None, ge=1, le=5)  # NEW  None = ignore priority
+    completed_at: SkipJsonSchema[str | None] = None
 
 
 class DatedBlock(BaseModel):
