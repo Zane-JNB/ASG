@@ -111,7 +111,8 @@ def test_shortening_the_new_task_keeps_full_hours_saved_and_records_a_plan_cut(c
 def test_screen_and_summary_say_shorten_and_still_one_block(conn, sid):
     essay = _tight_day(conn, sid)
     shown = []
-    add_task_with_fit(conn, sid, essay, NOW, ask=lambda _p: "1", show=shown.append)
+    answers = iter(["s", "1"])  # NEW
+    add_task_with_fit(conn, sid, essay, NOW, ask=lambda _p: next(answers), show=shown.append)
     text = "\n".join(shown)
     assert "Shorten 'Lab' by" in text and "still one block" in text
     assert "shortened to" in text

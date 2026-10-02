@@ -92,7 +92,7 @@ def _tight_day(conn, sid):
 
 def test_impossible_deadline_offers_ranked_options_and_saves_the_pick(conn, sid):
     essay = _tight_day(conn, sid)
-    result, shown = _run(conn, sid, essay, ["1"])
+    result, shown = _run(conn, sid, essay, ["s", "1"])
     assert any("Options, best first" in l for l in shown)
     assert result["new_task_id"] is not None and sum(get_plan_cuts(conn, sid).values()) > 0
     saved = {t.title: t.duration_slots for _, t in get_extracted_tasks(conn, sid)}
@@ -101,20 +101,20 @@ def test_impossible_deadline_offers_ranked_options_and_saves_the_pick(conn, sid)
 
 def test_choosing_not_to_add_saves_nothing(conn, sid):
     essay = _tight_day(conn, sid)
-    result, shown = _run(conn, sid, essay, ["2"])
+    result, shown = _run(conn, sid, essay, ["s", "2"])
     assert result["new_task_id"] is None and result["cuts"] == {}
     assert get_plan_cuts(conn, sid) == {} and len(get_extracted_tasks(conn, sid)) == 1
 
 
 def test_enter_cancels_and_saves_nothing(conn, sid):
     essay = _tight_day(conn, sid)
-    result, shown = _run(conn, sid, essay, [""])
+    result, shown = _run(conn, sid, essay, ["s", ""])
     assert result is None and "Cancelled -- nothing saved." in shown
     assert len(get_extracted_tasks(conn, sid)) == 1
 
 
 def test_late_night_task_due_today_does_not_crash(conn, sid):
-    result, shown = _run(conn, sid, _task("Late", 4, 5, D), [""], now=datetime(2026, 10, 5, 22, 0))
+    result, shown = _run(conn, sid, _task("Late", 4, 5, D), ["s", ""], now=datetime(2026, 10, 5, 22, 0))
     assert result is None
     assert any("would not be done by its deadline" in l for l in shown)
     assert get_extracted_tasks(conn, sid) == []
@@ -142,3 +142,30 @@ def test_report_moves_later_so_the_task_due_today_fits_and_nothing_is_cut(conn, 
     assert all(i.day <= 3 for i in report)  # ...but never past its own deadline
     assert not [w for w in warnings if w.kind == "task_unscheduled"]
     assert get_plan_cuts(conn, sid) == {}  # shuffled, not cut
+
+def test_manual_drop_then_save_cuts_only_what_the_student_chose(conn, sid):  # NEW
+    essay = _tight_day(conn, sid)  # screen order: 1 = Lab, 2 = Essay (new)
+    result, shown = _run(conn, sid, essay, ["m", "1", "d", "s"])
+    lab_id = next(i for i, t in get_extracted_tasks(conn, sid) if t.title == "Lab")
+    assert get_plan_cuts(conn, sid) == {lab_id: 20}
+    assert result["new_task_id"] is not None
+
+
+def test_manual_cancel_after_cutting_restores_the_timetable(conn, sid):  # NEW
+    essay = _tight_day(conn, sid)
+    result, shown = _run(conn, sid, essay, ["m", "1", "d", "", "y"])
+    assert result is None and get_plan_cuts(conn, sid) == {}
+    assert len(get_extracted_tasks(conn, sid)) == 1
+
+
+def test_manual_dont_add_discards_the_cuts_made_so_far(conn, sid):  # NEW
+    essay = _tight_day(conn, sid)
+    result, shown = _run(conn, sid, essay, ["m", "1", "d", "n"])
+    assert result["new_task_id"] is None and get_plan_cuts(conn, sid) == {}
+    assert len(get_extracted_tasks(conn, sid)) == 1
+
+
+def test_manual_can_shorten_the_new_task_and_keep_cutting(conn, sid):  # NEW
+    essay = _tight_day(conn, sid)
+    result, shown = _run(conn, sid, essay, ["m", "2", "t", "1", "1", "d", "s"])
+    assert get_plan_cuts(conn, sid)[result["new_task_id"]] == 4  # 1h of the new task, plan-only

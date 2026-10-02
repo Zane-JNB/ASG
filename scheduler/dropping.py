@@ -1,3 +1,4 @@
+import functools
 import itertools  # NEW
 from scheduler.models import (  # NEW
     DropAction, DropProposal, DropReport, DynamicTask, FixedBlock,
@@ -81,21 +82,7 @@ def _sleep_sacrificed(sleep_rules, items):  # NEW
     slept = sum(i.end_slot - i.start_slot for i in items if i.kind == "sleep")
     return max(0, target - slept)
 
-def propose_drops(fixed_blocks, tasks, new_task, num_days=1, sleep_rules=None,  # NEW
-                  settings=None, must_add=False, max_actions=3, max_proposals=4,
-                  max_checks=60, time_limit_seconds=5.0) -> DropReport:
-    settings = settings or ProfileSettings()
-    sleep_rules = sleep_rules or []
-    base = build_schedule(fixed_blocks, tasks + [new_task], num_days=num_days,
-                          sleep_rules=sleep_rules, time_limit_seconds=time_limit_seconds,
-                          settings=settings)
-    if not base[1]:  # everything already fits
-        return DropReport(new_task_title=new_task.title, fits_already=True, proposals=[],
-                          checks_used=1, search_exhausted=True)
-
-    checks, found = 1, []
-
-    def make(actions, new_added, new_cut, items, warns): # builds + scores one proposal
+def make_proposal(tasks, new_task, settings, sleep_rules, actions, new_added, new_cut, items, warns): # builds + scores one proposal
         sleep = _sleep_sacrificed(sleep_rules, items)
         flags = [w.message for w in warns if w.severity == "hard"]
         flags += [f"'{a.title}' would fall short of its deadline" for a in actions if a.has_deadline]
@@ -112,6 +99,25 @@ def propose_drops(fixed_blocks, tasks, new_task, num_days=1, sleep_rules=None,  
         return DropProposal(actions=list(actions), new_task_added=new_added, new_task_slots_cut=new_cut,
                             score=score,slots_freed=freed, sleep_sacrificed_slots=sleep, flags=flags,
                             schedule=items)
+
+def propose_drops(fixed_blocks, tasks, new_task, num_days=1, sleep_rules=None,  # NEW
+                  settings=None, must_add=False, max_actions=3, max_proposals=4,
+                  max_checks=60, time_limit_seconds=5.0, search = True) -> DropReport:
+    settings = settings or ProfileSettings()
+    sleep_rules = sleep_rules or []
+    base = build_schedule(fixed_blocks, tasks + [new_task], num_days=num_days,
+                          sleep_rules=sleep_rules, time_limit_seconds=time_limit_seconds,
+                          settings=settings)
+    if not base[1]: 
+        return DropReport(new_task_title=new_task.title, fits_already=True, proposals=[],
+                          checks_used=1, search_exhausted=True)
+    if not search:  
+        return DropReport(new_task_title=new_task.title, fits_already=False, proposals=[],
+                          checks_used=1, search_exhausted=False)
+
+    checks, found = 1, []
+    make = functools.partial(make_proposal, tasks, new_task, settings, sleep_rules)
+
     if not must_add:
         checks += 1
         r = _solve_all_fit(fixed_blocks, tasks, num_days, sleep_rules, settings, time_limit_seconds)
