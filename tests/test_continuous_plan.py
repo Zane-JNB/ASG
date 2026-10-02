@@ -3,9 +3,9 @@ from datetime import date, datetime, timedelta
 import pytest
 
 from scheduler.db import (
-    add_dated_block, add_extracted_task, add_weekly_pattern, connect, get_or_create_student,
+    add_dated_block, add_extracted_task, add_weekly_pattern, connect, get_or_create_student, add_commute
 )
-from scheduler.models import DatedBlock, ExtractedTask, WeeklyPattern
+from scheduler.models import DatedBlock, ExtractedTask, WeeklyPattern, Commute
 from scheduler.planner import plan_from_saved
 
 D = date(2026, 10, 5)  # a Monday
@@ -16,11 +16,9 @@ NOW = datetime(2026, 10, 5, 15, 0)  # Monday 3pm
 def conn():
     return connect(":memory:")
 
-
 @pytest.fixture
 def sid(conn):
     return get_or_create_student(conn, "Zane")
-
 
 def _task(title, hours, priority, due):
     return ExtractedTask(title=title, date=due.isoformat(), duration_slots=int(hours * 4),
@@ -88,3 +86,26 @@ def test_explicit_start_date_still_gives_the_old_fixed_window(conn, sid):
     add_extracted_task(conn, sid, _task("Report", 2, 3, D + timedelta(days=1)))
     anchor, *_ = plan_from_saved(conn, sid, 3, start_date=D, time_limit_seconds=10)
     assert (anchor.start_date, anchor.num_days) == (D, 3)
+
+def _commute_vs_class(conn, sid, class_start="17:00", class_end="19:00", commute_start="16:30"):  # NEW
+    add_weekly_pattern(conn, sid, WeeklyPattern(title="Class", day="Mon",
+                                                start_time=class_start, end_time=class_end))
+    add_commute(conn, sid, Commute(start_time=commute_start, length_minutes=60,
+                                   recurring=True, weekday="Mon"))
+    add_extracted_task(conn, sid, _task("Report", 2, 3, D + timedelta(days=1)))
+
+def test_commute_overlap_warns_instead_of_raising(conn, sid):  # NEW
+    _commute_vs_class(conn, sid)  # commute 16:30-17:30 vs class 17:00-19:00, after NOW
+    _, fixed, _, warnings = plan_from_saved(conn, sid, now=NOW, time_limit_seconds=10)
+    assert any(w.kind == "commute_overlap" and w.severity == "soft" for w in warnings)
+    assert any(b.title == "Commute" for b in fixed)
+
+def test_commute_already_over_gives_no_warning(conn, sid):  # NEW
+    _commute_vs_class(conn, sid, "07:30", "09:00", "07:00")  # both before NOW (15:00)
+    _, _, _, warnings = plan_from_saved(conn, sid, now=NOW, time_limit_seconds=10)
+    assert not any(w.kind == "commute_overlap" for w in warnings)
+
+def test_explicit_window_also_warns(conn, sid):  # NEW
+    _commute_vs_class(conn, sid)
+    _, _, _, warnings = plan_from_saved(conn, sid, 3, start_date=D, time_limit_seconds=10)
+    assert any(w.kind == "commute_overlap" for w in warnings)

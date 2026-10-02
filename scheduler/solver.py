@@ -189,7 +189,7 @@ def build_schedule(fixed_blocks: list[FixedBlock], tasks: list[DynamicTask],
                 f"No schedule found within {time_limit_seconds}s "  
                 "(too many tasks/constraints for the time limit -- try raising it or simplifying the plan)"  
             )  
-        raise RuntimeError("No valid schedule (do your fixed blocks overlap?)")
+        raise RuntimeError("No valid schedule (check your fixed blocks and sleep rules)")
  
     items = [
         ScheduledItem(

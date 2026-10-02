@@ -1,5 +1,5 @@
 from datetime import date, datetime, timedelta  # NEW datetime
-
+from scheduler.fit_check import build_fit_inputs, overlap_error, planned_tasks, with_commutes
 from scheduler.calendar_utils import build_plan_inputs, find_overlaps
 from scheduler.db import (
     get_dated_blocks, get_extracted_tasks, get_weekly_patterns, load_settings,
@@ -25,8 +25,7 @@ def plan_from_saved(conn, student_id: int, num_days: int | None = None, start_da
             fit.fixed, [t for _, t in fit.planned], num_days=fit.anchor.num_days,
             sleep_rules=fit.sleep_rules, time_limit_seconds=time_limit_seconds, settings=fit.settings,
         )
-        return fit.anchor, fit.fixed, items, sleep_warnings(fit.sleep_rules, items) + task_warnings(unscheduled)
-
+        return fit.anchor, fit.fixed, items, sleep_warnings(fit.sleep_rules, items) + task_warnings(unscheduled) + fit.warnings  # NEW
     num_days = num_days or 7
     anchor = PlanAnchor(start_date=start_date, num_days=num_days)
     fixed, _ = build_plan_inputs(patterns, dated, saved_tasks, anchor)
@@ -34,6 +33,7 @@ def plan_from_saved(conn, student_id: int, num_days: int | None = None, start_da
     overlaps = find_overlaps(fixed)
     if overlaps:
         raise ValueError(overlap_error(anchor, overlaps))  # NEW  shared message
+    fixed, commute_warnings = with_commutes(conn, student_id, fixed, anchor)
     settings = load_settings(conn, student_id)
     sleep_rules = [settings.default_sleep_rule(night=n) for n in range(num_days)]
     rule0 = sleep_rules[0]
@@ -45,7 +45,7 @@ def plan_from_saved(conn, student_id: int, num_days: int | None = None, start_da
         fixed, tasks, num_days=num_days, sleep_rules=sleep_rules,
         time_limit_seconds=time_limit_seconds, settings=settings,
     )
-    warnings = sleep_warnings(sleep_rules, items) + task_warnings(unscheduled)
+    warnings = sleep_warnings(sleep_rules, items) + task_warnings(unscheduled) + commute_warnings
     return anchor, fixed, items, warnings
 
 def format_plan(anchor: PlanAnchor, fixed, items, warnings) -> list[str]:  # NEW
