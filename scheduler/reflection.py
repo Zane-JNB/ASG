@@ -11,15 +11,8 @@ from scheduler.models import ProfileSettings
 # Deliberately excluded: presence_bonus, sleep_min_penalty, default_sleep_min_slots,
 # default_earliest_bed, default_latest_bed -- these protect hard constraints (deadlines,
 # minimum sleep) and are never adjusted by a reflection.
-ADJUSTABLE_FIELDS: dict[str, dict[str, int]] = {
-    "buffer_slots": {"small": 1, "medium": 2, "large": 4},
-    "bedtime_penalty": {"small": 10, "medium": 25, "large": 50},
-    "same_day_penalty": {"small": 500, "medium": 1000, "large": 2000},
-    "default_max_session_slots": {"small": 2, "medium": 4, "large": 8},
-    "sleep_target_penalty": {"small": 500, "medium": 1000, "large": 2500},
-    "default_sleep_length_slots": {"small": 2, "medium": 4, "large": 8},
-    "default_preferred_bed": {"small": 2, "medium": 4, "large": 8},
-}
+from scheduler.preference_policy import MODEL_DELTAS  # NEW
+ADJUSTABLE_FIELDS: dict[str, dict[str, int]] = MODEL_DELTAS  # NEW (derived; old name kept so nothing else breaks)
 
 
 class PreferenceChangeProposal(BaseModel):
