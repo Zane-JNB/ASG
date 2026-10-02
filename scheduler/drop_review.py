@@ -47,6 +47,12 @@ def _dont_add_fallback(new_task: DynamicTask, rank: int) -> DropProposal:  # NEW
     return DropProposal(rank=rank, actions=[], new_task_added=False, score=float("inf"),
                         slots_freed=0, sleep_sacrificed_slots=0, flags=flags, schedule=[])
 
+def _ranked_options(report: DropReport, new_task: DynamicTask, must_add: bool) -> list[DropProposal]:  # NEW
+    """Best first. Lifted out of choose_drop_proposal so automatic mode shares it."""
+    options = [p for p in report.proposals if p.new_task_added or not must_add]
+    if not must_add and not any(not p.new_task_added for p in options):
+        options.append(_dont_add_fallback(new_task, len(options) + 1))
+    return options
 
 def choose_drop_proposal(report: DropReport, new_task: DynamicTask, must_add: bool = False,
                          ask=input, show=print) -> DropProposal | None:  # NEW
@@ -73,3 +79,21 @@ def choose_drop_proposal(report: DropReport, new_task: DynamicTask, must_add: bo
         if answer.isdigit() and 1 <= int(answer) <= len(options):
             return options[int(answer) - 1]
         show(f"Enter a number between 1 and {len(options)}.")
+
+def choose_automatic(report: DropReport, new_task: DynamicTask, must_add: bool = False,
+                     ask=input, show=print) -> DropProposal | None:  # NEW
+    """Same signature as choose_drop_proposal: shows the single best plan, applies it only on a "y"."""
+    if report.fits_already:
+        raise ValueError("everything already fits -- nothing to choose")
+    options = _ranked_options(report, new_task, must_add)
+    if not options:
+        show(f"No combination of cuts found that fits '{new_task.title}'.")
+        return None
+    show(f"'{new_task.title}' does not fit as things stand. Best plan found:")
+    for line in describe_proposal(1, options[0], new_task):
+        show(line)
+    if not report.search_exhausted:
+        show("Note: the search stopped at its limit, so a better plan may exist.")
+    if ask("Apply this plan? [y/N]: ").strip().lower() != "y":
+        return None
+    return options[0]

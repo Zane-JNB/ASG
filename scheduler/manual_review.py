@@ -3,15 +3,15 @@ from scheduler.manual_cuts import NEW, CutState  # NEW
 from scheduler.review import _hours  # NEW
 
 
-def ask_mode(ask=input, show=print) -> str | None:  # NEW  "m" / "s" / None (cancel)
+def ask_mode(ask=input, show=print) -> str | None:  # NEW  "m" / "s" / "a" / None (cancel)
     while True:
         raw = ask("How do you want to make room? [m]anual  [s]emi-automatic  "
                   "[a]utomatic (coming soon)  (Enter to cancel): ").strip().lower()
         if raw == "":
             return None
-        if raw in ("m", "s"):
+        if raw in ("m", "s", "a"):
             return raw
-        show("Automatic mode isn't available yet." if raw == "a" else "Choose m, s or a.")
+        show("Choose m, s or a.")
 
 
 def _show_list(state: CutState, titles: dict, order: list, show) -> None:  # NEW

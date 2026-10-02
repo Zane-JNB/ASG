@@ -108,13 +108,13 @@ def test_choosing_not_to_add_saves_nothing(conn, sid):
 
 def test_enter_cancels_and_saves_nothing(conn, sid):
     essay = _tight_day(conn, sid)
-    result, shown = _run(conn, sid, essay, ["s", ""])
+    result, shown = _run(conn, sid, essay, ["s", "", ""])
     assert result is None and "Cancelled -- nothing saved." in shown
     assert len(get_extracted_tasks(conn, sid)) == 1
 
 
 def test_late_night_task_due_today_does_not_crash(conn, sid):
-    result, shown = _run(conn, sid, _task("Late", 4, 5, D), ["s", ""], now=datetime(2026, 10, 5, 22, 0))
+    result, shown = _run(conn, sid, _task("Late", 4, 5, D), ["s", "", ""], now=datetime(2026, 10, 5, 22, 0))
     assert result is None
     assert any("would not be done by its deadline" in l for l in shown)
     assert get_extracted_tasks(conn, sid) == []
@@ -153,7 +153,7 @@ def test_manual_drop_then_save_cuts_only_what_the_student_chose(conn, sid):  # N
 
 def test_manual_cancel_after_cutting_restores_the_timetable(conn, sid):  # NEW
     essay = _tight_day(conn, sid)
-    result, shown = _run(conn, sid, essay, ["m", "1", "d", "", "y"])
+    result, shown = _run(conn, sid, essay, ["m", "1", "d", "", "y", ""])
     assert result is None and get_plan_cuts(conn, sid) == {}
     assert len(get_extracted_tasks(conn, sid)) == 1
 
@@ -169,3 +169,30 @@ def test_manual_can_shorten_the_new_task_and_keep_cutting(conn, sid):  # NEW
     essay = _tight_day(conn, sid)
     result, shown = _run(conn, sid, essay, ["m", "2", "t", "1", "1", "d", "s"])
     assert get_plan_cuts(conn, sid)[result["new_task_id"]] == 4  # 1h of the new task, plan-only
+
+def test_automatic_applies_the_top_plan_on_y(conn, sid):  # NEW
+    essay = _tight_day(conn, sid)
+    result, shown = _run(conn, sid, essay, ["a", "y"])
+    assert result["new_task_id"] is not None and sum(get_plan_cuts(conn, sid).values()) > 0
+
+
+def test_automatic_declined_saves_nothing(conn, sid):  # NEW
+    essay = _tight_day(conn, sid)
+    result, shown = _run(conn, sid, essay, ["a", "", ""])
+    assert result is None and get_plan_cuts(conn, sid) == {}
+    assert len(get_extracted_tasks(conn, sid)) == 1
+
+def test_declining_automatic_returns_to_the_mode_prompt(conn, sid):  # NEW
+    essay = _tight_day(conn, sid)
+    result, shown = _run(conn, sid, essay, ["a", "n", "m", "1", "d", "s"])
+    assert "Nothing saved yet. Choose another way, or Enter to cancel." in shown
+    assert result["new_task_id"] is not None
+
+
+def test_the_ranked_search_runs_once_across_mode_switches(conn, sid, monkeypatch):  # NEW
+    from scheduler.dropping import propose_drops
+    calls = []
+    monkeypatch.setattr("scheduler.add_with_fit.propose_drops",
+                        lambda *a, **k: (calls.append(k.get("search", True)), propose_drops(*a, **k))[1])
+    _run(conn, sid, _tight_day(conn, sid), ["a", "n", "s", "1"])
+    assert calls == [False, True]  # one cheap fit check, then exactly one full search

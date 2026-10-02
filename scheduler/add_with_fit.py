@@ -2,7 +2,7 @@ from datetime import datetime
 
 from scheduler.db import add_extracted_task
 from scheduler.drop_apply import apply_drop_choice
-from scheduler.drop_review import _h, choose_drop_proposal
+from scheduler.drop_review import _h, choose_drop_proposal, choose_automatic
 from scheduler.dropping import propose_drops
 from scheduler.fit_check import build_fit_inputs
 from scheduler.models import ExtractedTask
@@ -28,20 +28,24 @@ def add_task_with_fit(conn, student_id: int, new_task: ExtractedTask, now: datet
         show("Added.")
         return {"cuts": {}, "new_task_id": new_id}
 
-    mode = ask_mode(ask, show)  # NEW
-    if mode is None:  # NEW
-        show("Cancelled -- nothing saved.")
-        return None
-    if mode == "m":  # NEW
-        choice = choose_manual(fit, must_add, ask, show)
-    else:  # NEW -- semi: the search that used to run up front
-        report = propose_drops(fit.fixed, [t for _, t in fit.planned], fit.new_task, fit.anchor.num_days,
-                               fit.sleep_rules, settings=fit.settings, must_add=must_add)
-        choice = choose_drop_proposal(report, fit.new_task, must_add, ask, show)
-    if choice is None:
-        show("Cancelled -- nothing saved.")
-        return None
-    summary = apply_drop_choice(conn, student_id, choice, fit.planned, new_task)
+    full = None  # NEW -- the ranked search, run at most once and shared by semi and automatic
+    while True:  # NEW -- declining or cancelling a mode returns to the mode prompt
+        mode = ask_mode(ask, show)
+        if mode is None:
+            show("Cancelled -- nothing saved.")
+            return None
+        if mode == "m":  # manual: the student cuts, the solver only verifies
+            choice = choose_manual(fit, must_add, ask, show)
+        else:  # semi and automatic share one search; they differ in who picks
+            if full is None:  # NEW
+                full = propose_drops(fit.fixed, [t for _, t in fit.planned], fit.new_task, fit.anchor.num_days,
+                                     fit.sleep_rules, settings=fit.settings, must_add=must_add)
+            pick = choose_automatic if mode == "a" else choose_drop_proposal
+            choice = pick(full, fit.new_task, must_add, ask, show)
+        if choice is not None:
+            break
+        show("Nothing saved yet. Choose another way, or Enter to cancel.")  # NEW
+    summary = apply_drop_choice(conn, student_id, choice, fit.planned, new_task)  # unchanged from here down
     if summary["new_task_id"] is None:
         show(f"'{new_task.title}' was not added. Nothing else changed.")
     else:

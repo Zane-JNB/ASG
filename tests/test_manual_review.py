@@ -113,8 +113,10 @@ def test_flags_and_sleep_shortfall_are_shown_before_saving():
     assert any("fall short of its deadline" in l for l in shown)
 
 
-def test_ask_mode_accepts_m_and_s_and_blocks_automatic():
-    it, shown = iter(["a", "z", "M"]), []
+def test_ask_mode_accepts_m_s_and_a_and_rejects_anything_else():
+    shown = []
+    for typed, expected in (("M", "m"), ("s", "s"), ("A", "a"), ("", None)):
+        assert ask_mode(ask=lambda _p, t=typed: t, show=shown.append) == expected
+    it = iter(["z", "m"])
     assert ask_mode(ask=lambda _p: next(it), show=shown.append) == "m"
-    assert any("isn't available yet" in l for l in shown) and any("Choose m, s or a" in l for l in shown)
-    assert ask_mode(ask=lambda _p: "") is None
+    assert shown == ["Choose m, s or a."]
