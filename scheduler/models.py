@@ -21,6 +21,7 @@ class FixedBlock(BaseModel):
     start_slot: int = Field(ge = 0, lt=SLOTS_PER_DAY)
     end_slot: int = Field(gt = 0, le=2 * SLOTS_PER_DAY)  # end is exclusive
     day: int = Field(default=0, ge=0)  # 0 = first day of the plan
+    buffer_before: bool = True
     @model_validator(mode="after")
     def end_after_start(self):
         if self.end_slot <= self.start_slot:
@@ -215,6 +216,35 @@ class ExtractionResult(BaseModel):
     dated_blocks: list[DatedBlock] = Field(default_factory=list)
     tasks: list[ExtractedTask] = Field(default_factory=list)
 
+class Commute(BaseModel):  # NEW (whole class)
+    title: str = "Commute"
+    start_time: str  # "HH:MM", 24-hour
+    length_minutes: int = Field(gt=0, le=720)
+    recurring: bool = False
+    weekday: Literal["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] | None = None
+    date: str | None = None  # one-time only
+    end_date: str | None = None  # recurring only; None = until deleted
+    skip_dates: list[str] = Field(default_factory=list)  # recurring only
+
+    @model_validator(mode="after")
+    def check_commute(self):
+        h, m = self.start_time.split(":")
+        if not (0 <= int(h) <= 23 and 0 <= int(m) <= 59):
+            raise ValueError("start_time must be a valid HH:MM")
+        if self.recurring:
+            if self.weekday is None:
+                raise ValueError("a recurring commute needs a weekday")
+            if self.date is not None:
+                raise ValueError("a recurring commute uses weekday, not date")
+        else:
+            if self.date is None:
+                raise ValueError("a one-time commute needs a date")
+            if self.weekday or self.end_date or self.skip_dates:
+                raise ValueError("weekday, end_date and skip_dates are for recurring commutes only")
+        for d in [self.date, self.end_date, *self.skip_dates]:
+            if d is not None:
+                date.fromisoformat(d)  # raises on a bad date
+        return self
 
 class PlanAnchor(BaseModel):  
     """The plan window for ONE solve: day 0 == start_date. Built fresh each run, never stored."""

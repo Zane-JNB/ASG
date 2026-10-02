@@ -1,9 +1,9 @@
 import sqlite3
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from pydantic import BaseModel
 
-from scheduler.models import ProfileSettings, FixedBlock, DynamicTask, Exam, WeeklyPattern, DatedBlock, ExtractedTask, ExtractionResult
+from scheduler.models import ProfileSettings, FixedBlock, DynamicTask, Exam, WeeklyPattern, DatedBlock, ExtractedTask, ExtractionResult,Commute
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS students (
@@ -84,6 +84,13 @@ CREATE TABLE IF NOT EXISTS plan_sessions (  -- NEW
     start_at TEXT NOT NULL,
     end_at TEXT NOT NULL,
     asked INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS commutes (  -- NEW
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    student_id INTEGER NOT NULL REFERENCES students(id),
+    data_json TEXT NOT NULL,
+    created_at TEXT NOT NULL
 );
 """
 
@@ -279,6 +286,34 @@ def delete_extracted_task(conn, student_id: int, item_id: int) -> bool:  # NEW
 
 def clear_extracted_tasks(conn, student_id: int) -> int:  # NEW
     return _clear_items(conn, "extracted_tasks", student_id)
+
+def add_commute(conn, student_id: int, item: Commute) -> int:  # NEW
+    return _add_item(conn, "commutes", student_id, item)
+
+def get_commutes(conn, student_id: int) -> list[tuple[int, Commute]]:  # NEW
+    return _get_items(conn, "commutes", student_id, Commute)
+
+def update_commute(conn, student_id: int, item_id: int, item: Commute) -> bool:  # NEW
+    cur = conn.execute("UPDATE commutes SET data_json = ? WHERE id = ? AND student_id = ?",
+                       (item.model_dump_json(), item_id, student_id))
+    conn.commit()
+    return cur.rowcount > 0
+
+def delete_commute(conn, student_id: int, item_id: int) -> bool:  # NEW
+    return _delete_item(conn, "commutes", student_id, item_id)
+
+def clear_commutes(conn, student_id: int) -> int:  # NEW
+    return _clear_items(conn, "commutes", student_id)
+
+def skip_commute_date(conn, student_id: int, item_id: int, day: str) -> bool:  # NEW
+    date.fromisoformat(day)  # raises ValueError on a bad date
+    found = {i: c for i, c in get_commutes(conn, student_id)}.get(item_id)
+    if found is None or not found.recurring:
+        return False
+    if day not in found.skip_dates:  # skipping twice is harmless
+        found.skip_dates.append(day)
+        update_commute(conn, student_id, item_id, found)
+    return True
 
 def replace_extraction(conn, student_id: int, result: ExtractionResult) -> dict:  # NEW
     """Save a reviewed import, all-or-nothing. Fixed blocks are REPLACED, tasks are ADDED:
