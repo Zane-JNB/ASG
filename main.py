@@ -2,14 +2,18 @@
 build a schedule, simulate a reflection, apply the resulting preference changes, and
 re-solve to see what actually changed. Run with: python3 main.py
 """
-from scheduler.db import connect, get_or_create_student, load_settings
+
+from datetime import date, datetime
+from scheduler.add_with_fit import add_task_with_fit
+from scheduler.db import add_dated_block, add_extracted_task, connect, get_or_create_student, get_plan_cuts, load_settings
 from scheduler.models import (
-    Exam, FixedBlock, SleepRule, StudyPlanRule, slot_to_time, time_to_slot,
+    DatedBlock, Exam, ExtractedTask, FixedBlock, SleepRule, StudyPlanRule, slot_to_time, time_to_slot,
 )
 from scheduler.reflection_cycle import apply_and_log, get_proposals, rerun_schedule
 from scheduler.solver import build_schedule, generate_study_tasks, sleep_warnings, task_warnings
+from scheduler.planner import format_plan, plan_from_saved
 
-DB_PATH = "scheduler.db"
+DB_PATH = ":memory:"
 NUM_DAYS = 5  # today through the exam
 
 
@@ -28,7 +32,7 @@ def print_warnings(warnings):
         print(f"  [{w.severity}] {w.kind}: {w.message}")
 
 
-def main():
+def demo_reflection():
     conn = connect(DB_PATH)
     student_id = get_or_create_student(conn, "Zane")
 
@@ -83,6 +87,36 @@ def main():
     print_schedule(items2)
     print("\n--- Warnings ---")
     print_warnings(sleep_warnings(sleep_rules, items2) + task_warnings(unscheduled2))
+
+def demo_make_room():  # NEW
+    d, now = date(2026, 10, 5), datetime(2026, 10, 5, 9, 0)
+    scripts = (("MANUAL", ["m", "1", "d", "s"]),
+               ("SEMI-AUTOMATIC", ["s", "1"]),
+               ("AUTOMATIC", ["a", "y"]))
+    for label, answers in scripts:
+        conn = connect(":memory:")
+        sid = get_or_create_student(conn, "Demo")
+        add_dated_block(conn, sid, DatedBlock(title="Class", date=d.isoformat(), start_time="09:00", end_time="17:00"))
+        add_extracted_task(conn, sid, ExtractedTask(title="Lab", date=d.isoformat(), duration_slots=20, priority=4, difficulty=3))
+        essay = ExtractedTask(title="Essay", date=d.isoformat(), duration_slots=16, priority=5, difficulty=3)
+        it = iter(answers)
+
+        def ask(prompt):  # echo the scripted answer so the output reads like a real session
+            answer = next(it)
+            print(f"{prompt}{answer}")
+            return answer
+
+        print(f"\n=============== {label} ===============")
+        add_task_with_fit(conn, sid, essay, now, ask=ask, show=print)
+        print(f"Plan cuts saved: {get_plan_cuts(conn, sid)}")
+        anchor, fixed, items, warnings = plan_from_saved(conn, sid, now=now, time_limit_seconds=10)
+        print("\n".join(format_plan(anchor, fixed, items, warnings)))
+
+
+def main():  # NEW
+    demo_make_room()
+    print("\n\n=============== REFLECTION (offline demo) ===============")
+    demo_reflection()
 
 
 if __name__ == "__main__":

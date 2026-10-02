@@ -2,7 +2,8 @@ from scheduler.models import DropAction, DropProposal, DropReport, DynamicTask, 
 
 
 def _h(slots: int) -> str:  # NEW  -- 7 -> "1.75h"
-    return f"{slots * MINUTES_PER_SLOT / 60:g}h"
+    h, m = divmod(slots * MINUTES_PER_SLOT, 60) 
+    return " ".join(part for part in (f"{h}h" if h else "", f"{m}m" if m else "") if part) or "0m"  
 
 
 def _action_line(a: DropAction) -> str:  # NEW
@@ -12,8 +13,8 @@ def _action_line(a: DropAction) -> str:  # NEW
     elif a.is_full_drop:
         what = f"Drop '{a.title}' entirely (-{_h(a.slots_lost)})"
     else:
-        what = (f"Cut {a.chunks_cut} of {a.total_chunks} sessions of '{a.title}' "
-                f"(-{_h(a.slots_lost)}, {_h(a.slots_kept)} left)")
+        what = (f"Cut {a.chunks_cut} of {a.total_chunks} sessions of '{a.title}': "
+                f"{_h(a.slots_kept + a.slots_lost)} -> {_h(a.slots_kept)} (-{_h(a.slots_lost)})")
     detail = f"priority {a.priority}, difficulty {a.difficulty}" + (", has a deadline" if a.has_deadline else "")
     return f"{what} [{detail}]"
 

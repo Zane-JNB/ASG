@@ -6,7 +6,6 @@ from scheduler.db import (
 )
 from scheduler.models import DynamicTask, ExtractedTask, MINUTES_PER_SLOT   
 from scheduler.review import _confirm, _date, _describe, _hours
-from tests.test_reflection_cycle import conn, student_id
 from scheduler.completion import finish_task, run_checkin  # NEW
 from scheduler.task_filter import describe_reminders  # NEW
 

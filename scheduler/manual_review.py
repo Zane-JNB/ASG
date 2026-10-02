@@ -1,12 +1,13 @@
 from scheduler.drop_review import _h  # NEW
 from scheduler.manual_cuts import NEW, CutState  # NEW
+from scheduler.models import MINUTES_PER_SLOT
 from scheduler.review import _hours  # NEW
 
 
 def ask_mode(ask=input, show=print) -> str | None:  # NEW  "m" / "s" / "a" / None (cancel)
     while True:
         raw = ask("How do you want to make room? [m]anual  [s]emi-automatic  "
-                  "[a]utomatic (coming soon)  (Enter to cancel): ").strip().lower()
+                  "[a]utomatic (Enter to cancel): ").strip().lower()
         if raw == "":
             return None
         if raw in ("m", "s", "a"):
@@ -53,7 +54,7 @@ def _edit_task(state: CutState, i: int, ask, show) -> bool:  # NEW  True if some
                 raise ValueError(f"enter a whole number from 1 to {sessions - 1}")
             state.cut_chunks(i, int(text))
         elif raw == "t":
-            state.reduce(i, _hours_or_error(ask(f"  Reduce by how many hours (up to {_h(left - 1)})? ").strip()))
+            state.reduce(i, _hours_or_error(ask(f"  Reduce by how many hours (up to {(left - 1) * MINUTES_PER_SLOT / 60:g}, e.g. 1.5)? ").strip()))
         else:
             show("  Choose one of the options shown.")
             return False

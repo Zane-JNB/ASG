@@ -108,7 +108,7 @@ def test_finishing_a_task_gives_cut_hours_back_after_asking(conn, sid):
     result = finish_task(conn, sid, essay, NINE, ask=lambda _p: "", show=shown.append)  # Enter = yes
     assert result["restored"] == {lab: 13}
     assert get_plan_cuts(conn, sid) == {}
-    assert any("'Lab' +3.25h" in l for l in shown)
+    assert any("'Lab' +3h 15m" in l for l in shown)
 
 
 def test_declining_the_restore_keeps_the_cut(conn, sid):
