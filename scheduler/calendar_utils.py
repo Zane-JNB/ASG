@@ -107,14 +107,14 @@ def dated_blocks_to_fixed_blocks(blocks: list[DatedBlock], plan_start_date: date
             continue
     return result
 
-def build_plan_inputs(patterns, dated_blocks, tasks, anchor: PlanAnchor):  # NEW
+def build_plan_inputs(patterns, dated_blocks, tasks, anchor: PlanAnchor):   
     """Expand saved, real-dated items into solver inputs for THIS anchor window."""
     fixed = expand_weekly_patterns(patterns, anchor.start_date, anchor.num_days)
     fixed += [b for b in dated_blocks_to_fixed_blocks(dated_blocks, anchor.start_date)
-              if b.day < anchor.num_days]  # NEW -- solver rejects blocks past the horizon
+              if b.day < anchor.num_days]  #  solver rejects blocks past the horizon
     return fixed, extracted_tasks_to_dynamic_tasks(tasks, anchor.start_date)
 
-def find_overlaps(blocks: list[FixedBlock]) -> list[tuple[FixedBlock, FixedBlock]]:  # NEW
+def find_overlaps(blocks: list[FixedBlock]) -> list[tuple[FixedBlock, FixedBlock]]:   
     """Pairs of fixed blocks whose time ranges overlap. Back-to-back (end == next start) is fine."""
     spans = sorted(((b.day * SLOTS_PER_DAY + b.start_slot, b.day * SLOTS_PER_DAY + b.end_slot, b)
                     for b in blocks), key=lambda x: (x[0], x[1]))

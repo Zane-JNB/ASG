@@ -47,7 +47,7 @@ def test_commute_can_cross_midnight():
     b = commute_to_block(recurring(start_time="23:30", length_minutes=60), 0)
     assert (b.start_slot, b.end_slot) == (94, 98)
 
-def test_overlap_is_reported_not_dropped():  # NEW
+def test_overlap_is_reported_not_dropped():   
     cls = FixedBlock(title="Class", day=0, start_slot=30, end_slot=40)  # 07:30-10:00
     blocks = [commute_to_block(recurring(), 0)]  # 07:00-07:45
     pairs = commute_overlaps([cls], blocks)
@@ -56,11 +56,11 @@ def test_overlap_is_reported_not_dropped():  # NEW
     assert w[0].kind == "commute_overlap" and w[0].severity == "soft"
     assert "Mon 05 Oct" in w[0].message and "Class" in w[0].message
 
-def test_back_to_back_is_not_an_overlap():  # NEW
+def test_back_to_back_is_not_an_overlap():   
     cls = FixedBlock(title="Class", day=0, start_slot=32, end_slot=40)
     assert commute_overlaps([cls], [commute_to_block(recurring(), 0)]) == []
 
-def test_commute_vs_commute_reported_once():  # NEW
+def test_commute_vs_commute_reported_once():   
     a = commute_to_block(recurring(), 0)
     b = commute_to_block(recurring(start_time="07:30"), 0)
     assert len(commute_overlaps([], [a, b])) == 1

@@ -1,13 +1,13 @@
-from scheduler.models import DropAction, DropProposal, DropReport, DynamicTask, MINUTES_PER_SLOT  # NEW
+from scheduler.models import DropAction, DropProposal, DropReport, DynamicTask, MINUTES_PER_SLOT   
 
 
-def _h(slots: int) -> str:  # NEW  -- 7 -> "1.75h"
+def _h(slots: int) -> str:  #    -- 7 -> "1.75h"
     h, m = divmod(slots * MINUTES_PER_SLOT, 60) 
     return " ".join(part for part in (f"{h}h" if h else "", f"{m}m" if m else "") if part) or "0m"  
 
 
-def _action_line(a: DropAction) -> str:  # NEW
-    if a.shrink:  # NEW
+def _action_line(a: DropAction) -> str:   
+    if a.shrink:   
         what = (f"Shorten '{a.title}' by {_h(a.slots_lost)} ({_h(a.slots_kept + a.slots_lost)} -> "
                 f"{_h(a.slots_kept)}, still one block)")
     elif a.is_full_drop:
@@ -41,14 +41,14 @@ def describe_proposal(n: int, p: DropProposal, new_task: DynamicTask) -> list[st
     return lines
 
 
-def _dont_add_fallback(new_task: DynamicTask, rank: int) -> DropProposal:  # NEW
+def _dont_add_fallback(new_task: DynamicTask, rank: int) -> DropProposal:   
     flags = ["Not verified: your existing tasks may still not all fit without it"]
     if new_task.deadline_day is not None:
         flags.append(f"'{new_task.title}' would not be done by its deadline")
     return DropProposal(rank=rank, actions=[], new_task_added=False, score=float("inf"),
                         slots_freed=0, sleep_sacrificed_slots=0, flags=flags, schedule=[])
 
-def _ranked_options(report: DropReport, new_task: DynamicTask, must_add: bool) -> list[DropProposal]:  # NEW
+def _ranked_options(report: DropReport, new_task: DynamicTask, must_add: bool) -> list[DropProposal]:   
     """Best first. Lifted out of choose_drop_proposal so automatic mode shares it."""
     options = [p for p in report.proposals if p.new_task_added or not must_add]
     if not must_add and not any(not p.new_task_added for p in options):
@@ -56,7 +56,7 @@ def _ranked_options(report: DropReport, new_task: DynamicTask, must_add: bool) -
     return options
 
 def choose_drop_proposal(report: DropReport, new_task: DynamicTask, must_add: bool = False,
-                         ask=input, show=print) -> DropProposal | None:  # NEW
+                         ask=input, show=print) -> DropProposal | None:   
     if report.fits_already:
         raise ValueError("everything already fits -- nothing to choose")
     options = [p for p in report.proposals if p.new_task_added or not must_add]
@@ -82,7 +82,7 @@ def choose_drop_proposal(report: DropReport, new_task: DynamicTask, must_add: bo
         show(f"Enter a number between 1 and {len(options)}.")
 
 def choose_automatic(report: DropReport, new_task: DynamicTask, must_add: bool = False,
-                     ask=input, show=print) -> DropProposal | None:  # NEW
+                     ask=input, show=print) -> DropProposal | None:   
     """Same signature as choose_drop_proposal: shows the single best plan, applies it only on a "y"."""
     if report.fits_already:
         raise ValueError("everything already fits -- nothing to choose")

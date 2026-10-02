@@ -88,7 +88,7 @@ def demo_reflection():
     print("\n--- Warnings ---")
     print_warnings(sleep_warnings(sleep_rules, items2) + task_warnings(unscheduled2))
 
-def demo_make_room():  # NEW
+def demo_make_room():  
     d, now = date(2026, 10, 5), datetime(2026, 10, 5, 9, 0)
     scripts = (("MANUAL", ["m", "1", "d", "s"]),
                ("SEMI-AUTOMATIC", ["s", "1"]),
@@ -113,7 +113,7 @@ def demo_make_room():  # NEW
         print("\n".join(format_plan(anchor, fixed, items, warnings)))
 
 
-def main():  # NEW
+def main():  
     demo_make_room()
     print("\n\n=============== REFLECTION (offline demo) ===============")
     demo_reflection()

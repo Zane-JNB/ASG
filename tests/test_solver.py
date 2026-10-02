@@ -353,13 +353,13 @@ def test_explicit_buffer_slots_overrides_settings():
     homework = [i for i in items if i.kind == "task"][0]
     assert homework.start_slot == block.end_slot + 1  # explicit arg wins, not the profile's 4
 
-def test_merge_fixed_spans_unions_overlaps_and_keeps_touching():  # NEW
+def test_merge_fixed_spans_unions_overlaps_and_keeps_touching():   
     a = FixedBlock(title="Commute", start_slot=28, end_slot=32, buffer_before=False)
     b = FixedBlock(title="Class", start_slot=30, end_slot=40)
     c = FixedBlock(title="Lab", start_slot=40, end_slot=48)  # touches, not merged
     assert merge_fixed_spans([b, a, c]) == [(28, 40, False), (40, 48, True)]
 
-def test_task_can_end_flush_against_commute():  # NEW
+def test_task_can_end_flush_against_commute():   
     commute = FixedBlock(title="Commute", start_slot=40, end_slot=44, buffer_before=False)
     task = DynamicTask(title="Read", duration_slots=4, priority=3,
                        earliest_start_day=0, earliest_start_slot=36, deadline_day=0, deadline_slot=40)
@@ -367,14 +367,14 @@ def test_task_can_end_flush_against_commute():  # NEW
     read = [i for i in items if i.kind == "task"][0]
     assert unscheduled == [] and read.end_slot == 40
 
-def test_normal_block_still_needs_buffer_before():  # NEW
+def test_normal_block_still_needs_buffer_before():   
     cls = FixedBlock(title="Class", start_slot=40, end_slot=44)  # buffer_before=True
     task = DynamicTask(title="Read", duration_slots=4, priority=3,
                        earliest_start_day=0, earliest_start_slot=36, deadline_day=0, deadline_slot=40)
     _, unscheduled = build_schedule([cls], [task], buffer_slots=2)
     assert [t.title for t in unscheduled] == ["Read"]
 
-def test_overlapping_commute_and_class_solve_without_error():  # NEW
+def test_overlapping_commute_and_class_solve_without_error():   
     cls = FixedBlock(title="Class", start_slot=30, end_slot=40)
     commute = FixedBlock(title="Commute", start_slot=28, end_slot=32, buffer_before=False)
     task = DynamicTask(title="Read", duration_slots=4, priority=3)

@@ -19,7 +19,7 @@ def _iso(dt: datetime) -> str:
 
 
 def finish_task(conn, student_id: int, task_id: int, now: datetime, ask=input, show=print,
-                time_limit_seconds: float = 5.0) -> dict:  # NEW
+                time_limit_seconds: float = 5.0) -> dict:   
     """Mark a task done (kept as history), free its time, and offer to give cut tasks their hours
     back. Returns {"restored": {task id: slots}} -- empty if nothing was restored."""
     task = dict(get_extracted_tasks(conn, student_id)).get(task_id)
@@ -46,7 +46,7 @@ def finish_task(conn, student_id: int, task_id: int, now: datetime, ask=input, s
     return {"restored": restores}
 
 
-def record_plan(conn, student_id: int, anchor: PlanAnchor, items, now: datetime) -> int:  # NEW
+def record_plan(conn, student_id: int, anchor: PlanAnchor, items, now: datetime) -> int:   
     """Remember when each task session of a plan is scheduled, so check-ins can tell which ones
     have passed. Call it after making a plan. Returns how many sessions were recorded."""
     ids = {}
@@ -66,13 +66,13 @@ def record_plan(conn, student_id: int, anchor: PlanAnchor, items, now: datetime)
 
 
 @dataclass
-class Checkin:  # NEW
+class Checkin:   
     task_id: int
     title: str
     ended: str  # ISO time the latest unanswered session ended
 
 
-def due_checkins(conn, student_id: int, now: datetime) -> list[Checkin]:  # NEW
+def due_checkins(conn, student_id: int, now: datetime) -> list[Checkin]:   
     """One entry per task whose scheduled time has passed, if the student wants reminders for it."""
     settings = load_settings(conn, student_id)
     tasks = dict(get_extracted_tasks(conn, student_id))
@@ -85,7 +85,7 @@ def due_checkins(conn, student_id: int, now: datetime) -> list[Checkin]:  # NEW
     return list(out.values())
 
 
-def run_checkin(conn, student_id: int, now: datetime, ask=input, show=print) -> int:  # NEW
+def run_checkin(conn, student_id: int, now: datetime, ask=input, show=print) -> int:   
     """Ask 'did you finish it?' for each task with passed time. Returns how many were asked."""
     checkins = due_checkins(conn, student_id, now)
     for c in checkins:

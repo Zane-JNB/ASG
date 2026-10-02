@@ -8,15 +8,15 @@ from scheduler.models import (
     DynamicTask, ExtractedTask, FixedBlock, MINUTES_PER_SLOT, PlanAnchor, ProfileSettings,
     SLOTS_PER_DAY, ScheduleWarning, ScheduleWarning, SleepRule, slot_to_time,)
 
-def planned_tasks(conn, student_id: int, anchor: PlanAnchor):  # NEW
+def planned_tasks(conn, student_id: int, anchor: PlanAnchor):   
     """[(saved task id, DynamicTask)] with plan cuts applied. Saved tasks are never changed."""
     cuts = get_plan_cuts(conn, student_id)
     session = load_settings(conn, student_id).default_max_session_slots
-     # NEW
+     
     result = []
     for task_id, saved in get_extracted_tasks(conn, student_id):
         if saved.completed_at:
-            continue  # NEW
+            continue   
         try:
             task = extracted_task_to_dynamic_task(saved, anchor.start_date, session)
         except ValueError:  # due before the plan starts
@@ -26,7 +26,7 @@ def planned_tasks(conn, student_id: int, anchor: PlanAnchor):  # NEW
             result.append((task_id, task.model_copy(update={"duration_slots": remaining})))
     return result
 
-def overlap_error(anchor: PlanAnchor, overlaps) -> str:  # NEW (moved here from plan_from_saved)
+def overlap_error(anchor: PlanAnchor, overlaps) -> str:    
     lines = []
     for a, b in overlaps[:5]:
         d = anchor.start_date + timedelta(days=a.day)
@@ -48,14 +48,14 @@ class FitInputs:
     warnings: list[ScheduleWarning] = field(default_factory=list)
 
 def with_commutes(conn, student_id: int, fixed: list[FixedBlock], anchor: PlanAnchor,
-                  after_slot: int = 0):  # NEW
+                  after_slot: int = 0):  
     """(fixed + commute blocks, soft overlap warnings). Commutes are never rejected for overlapping."""
     commutes = [c for _, c in get_commutes(conn, student_id)]
     blocks = [b for b in expand_commutes(commutes, anchor)
               if not (b.day == 0 and b.end_slot <= after_slot)]  # skip commutes already over
     return fixed + blocks, overlap_warnings(commute_overlaps(fixed, blocks), anchor)
     
-def next_slot(now: datetime) -> int:  # NEW
+def next_slot(now: datetime) -> int:   
     """First 15-minute slot that has not started yet, counted from midnight today (96 = tomorrow 00:00)."""
     seconds = now.hour * 3600 + now.minute * 60 + now.second + now.microsecond / 1e6
     return math.ceil(seconds / (MINUTES_PER_SLOT * 60))
@@ -65,7 +65,7 @@ def starts_from(task: DynamicTask, now: datetime) -> DynamicTask:
     return task.model_copy(update={"earliest_start_day": day, "earliest_start_slot": slot})
 
 def build_fit_inputs(conn, student_id: int, now: datetime,
-                     new_task: ExtractedTask | None = None, min_days: int = 1) -> FitInputs:  # NEW min_days
+                     new_task: ExtractedTask | None = None, min_days: int = 1) -> FitInputs:   
     """Everything the solver needs, from `now` until the last deadline in play. Nothing is placed
     in the past, weekly classes are expanded across the whole window, and the window reaches the
     LATEST deadline (not just the new task's) so later-deadline tasks have room to move."""
@@ -82,7 +82,7 @@ def build_fit_inputs(conn, student_id: int, now: datetime,
 
     tasks = [t for _, t in planned] + ([new_dyn] if new_dyn else [])
     last_deadline = max((t.deadline_day for t in tasks if t.deadline_day is not None), default=0)
-    num_days = max(min(last_deadline + 1, settings.plan_horizon_max_days), min_days)  # NEW min_days
+    num_days = max(min(last_deadline + 1, settings.plan_horizon_max_days), min_days)   
     # every task's start range must fit inside the window even when it is too late to finish
     num_days = max([num_days] + [math.ceil((next_slot(now) + t.duration_slots) / SLOTS_PER_DAY) for t in tasks])
     anchor = PlanAnchor(start_date=today, num_days=num_days)

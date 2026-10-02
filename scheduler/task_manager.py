@@ -6,8 +6,9 @@ from scheduler.db import (
 )
 from scheduler.models import DynamicTask, ExtractedTask, MINUTES_PER_SLOT   
 from scheduler.review import _confirm, _date, _describe, _hours
-from scheduler.completion import finish_task, run_checkin  # NEW
-from scheduler.task_filter import describe_reminders  # NEW
+from scheduler.completion import finish_task, run_checkin   
+from scheduler.task_filter import describe_reminders   
+from scheduler.commute_menu import run_commute_menu
 
 _DEFAULT = ExtractedTask(title="x", date="2000-01-01")  # only used to read the placeholder defaults
 _SESSION_CAP = DynamicTask.model_fields["max_session_slots"].default
@@ -57,7 +58,7 @@ def prompt_new_task(ask=input, show=print, today: date | None = None, session_ca
         if value is not None:
             fields[key] = value
         task = ExtractedTask(**fields)
-    if task.duration_slots > session_cap:  # NEW -- splitting only matters for tasks longer than one session
+    if task.duration_slots > session_cap:  #   -- splitting only matters for tasks longer than one session
         hours, cap = task.duration_slots * MINUTES_PER_SLOT / 60, session_cap * MINUTES_PER_SLOT / 60
         can = _confirm(ask, f"  {hours:g}h is longer than a {cap:g}h session. Can it be split across several sessions?", True)
         task = task.model_copy(update={"splittable": can})
@@ -65,10 +66,10 @@ def prompt_new_task(ask=input, show=print, today: date | None = None, session_ca
 
 
 def _sorted_tasks(conn, student_id):
-    open_tasks = [(i, t) for i, t in get_extracted_tasks(conn, student_id) if not t.completed_at]  # NEW -- done = history
+    open_tasks = [(i, t) for i, t in get_extracted_tasks(conn, student_id) if not t.completed_at]  #   -- done = history
     return sorted(open_tasks, key=lambda x: (x[1].date, x[1].title.lower()))
 
-def _ask_level(ask, show, prompt: str) -> int | None:  # NEW
+def _ask_level(ask, show, prompt: str) -> int | None:   
     while True:
         raw = ask(prompt).strip()
         if not raw:
@@ -78,7 +79,7 @@ def _ask_level(ask, show, prompt: str) -> int | None:  # NEW
         show("Enter a number from 1 to 5, or press Enter to ignore it.")
 
 
-def _reminder_settings(conn, student_id, ask, show) -> None:  # NEW
+def _reminder_settings(conn, student_id, ask, show) -> None:   
     settings = load_settings(conn, student_id)
     show(describe_reminders(settings))
     choice = ask("Change: [a]ll tasks  [c]ustom  [o]ff  (Enter to keep): ").strip().lower()
@@ -107,10 +108,10 @@ def _show_tasks(tasks, show, session_cap: int | None = None):
 def run_menu(conn, student_id, ask=input, show=print, today: date | None = None, 
              now: datetime | None = None) -> None:
     now = now or (datetime.combine(today, time(0, 0)) if today else datetime.now())
-    today = today or now.date()  # NEW
+    today = today or now.date()   
     run_checkin(conn, student_id, now, ask, show)
     while True:
-        choice = ask("Tasks: [a]dd  [l]ist  [d]elete one  [f]inished  [c]heck-in  [s]plit setting  session [t]ime  [r]eminders  [x] delete ALL  [q]uit: ").strip().lower()
+        choice = ask("Tasks: [a]dd  [l]ist  [d]elete one  [f]inished  [c]heck-in  [s]plit setting  session [t]ime  [r]eminders  [m]commutes [x] delete ALL  [q]uit: ").strip().lower()
         if choice == "q":
             return
         if choice == "a":
@@ -129,7 +130,7 @@ def run_menu(conn, student_id, ask=input, show=print, today: date | None = None,
                 show("Deleted.")
             elif raw:
                 show(f"Enter a number between 1 and {len(tasks)}.")
-        elif choice == "f":  # NEW -- manual "mark task done"
+        elif choice == "f":  #   -- manual "mark task done"
             tasks = _sorted_tasks(conn, student_id)
             _show_tasks(tasks, show, load_settings(conn, student_id).default_max_session_slots)
             if not tasks:
@@ -139,12 +140,12 @@ def run_menu(conn, student_id, ask=input, show=print, today: date | None = None,
                 finish_task(conn, student_id, tasks[int(raw) - 1][0], now, ask, show)
             elif raw:
                 show(f"Enter a number between 1 and {len(tasks)}.")
-        elif choice == "c":  # NEW
+        elif choice == "c":   
             if not run_checkin(conn, student_id, now, ask, show):
                 show("Nothing to check in on right now.")
-        elif choice == "r":  # NEW
+        elif choice == "r":   
             _reminder_settings(conn, student_id, ask, show)
-        elif choice == "s":  # NEW
+        elif choice == "s":   
             tasks = _sorted_tasks(conn, student_id)
             _show_tasks(tasks, show)
             if not tasks:
@@ -157,7 +158,7 @@ def run_menu(conn, student_id, ask=input, show=print, today: date | None = None,
                 show("Saved." if can else "Saved -- it will be planned as one block.")
             elif raw:
                 show(f"Enter a number between 1 and {len(tasks)}.")
-        elif choice == "t":  # NEW -- how long each session of a task lasts by default
+        elif choice == "t":  #   -- how long each session of a task lasts by default
             settings = load_settings(conn, student_id)
             now_h = settings.default_max_session_slots * MINUTES_PER_SLOT / 60
             raw = ask(f"Longest single session in hours [{now_h:g}] (Enter to keep): ").strip()
@@ -169,6 +170,8 @@ def run_menu(conn, student_id, ask=input, show=print, today: date | None = None,
                     continue
                 save_settings(conn, student_id, settings.model_copy(update={"default_max_session_slots": slots}))
                 show(f"Saved -- tasks are now planned in sessions of up to {slots * MINUTES_PER_SLOT / 60:g}h.")
+        elif choice == "m":   
+            run_commute_menu(conn, student_id, ask, show, today)
         elif choice == "x":
             count = len(get_extracted_tasks(conn, student_id))
             if count == 0:
@@ -179,4 +182,4 @@ def run_menu(conn, student_id, ask=input, show=print, today: date | None = None,
             else:
                 show("Cancelled -- nothing deleted.")
         else:
-            show("Choose a, l, d, f, c, s, t, r, x or q.")
+            show("Choose a, l, d, f, c, s, t, r, m, x or q.")

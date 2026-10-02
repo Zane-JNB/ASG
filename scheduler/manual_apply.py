@@ -1,12 +1,12 @@
-from scheduler.drop_review import _dont_add_fallback  # NEW
-from scheduler.dropping import _apply, _solve_all_fit, chunk_sizes, make_proposal  # NEW
-from scheduler.manual_cuts import NEW, CutState  # NEW
-from scheduler.manual_review import run_manual_edit  # NEW
-from scheduler.models import DropAction, DropProposal  # NEW
+from scheduler.drop_review import _dont_add_fallback   
+from scheduler.dropping import _apply, _solve_all_fit, chunk_sizes, make_proposal   
+from scheduler.manual_cuts import NEW, CutState   
+from scheduler.manual_review import run_manual_edit   
+from scheduler.models import DropAction, DropProposal   
 
 
 def choose_manual(fit, must_add: bool = False, ask=input, show=print,
-                  time_limit_seconds: float = 5.0) -> DropProposal | None:  # NEW
+                  time_limit_seconds: float = 5.0) -> DropProposal | None:   
     tasks = [t for _, t in fit.planned]  # index i == task_index in apply_drop_choice
     everyone = dict(enumerate(tasks)) | {NEW: fit.new_task}
 

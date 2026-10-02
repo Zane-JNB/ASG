@@ -13,7 +13,7 @@ def split_sizes(duration: int, max_session: int) -> list[int]:
 def hours(slots: int) -> str:  
     return f"{slots * MINUTES_PER_SLOT / 60:.2g}h"  
 
-def merge_fixed_spans(blocks: list[FixedBlock]) -> list[tuple[int, int, bool]]:  # NEW
+def merge_fixed_spans(blocks: list[FixedBlock]) -> list[tuple[int, int, bool]]:   
     """Union overlapping fixed spans on the absolute slot axis. Touching spans stay separate."""
     spans = sorted((b.day * SLOTS_PER_DAY + b.start_slot,
                     b.day * SLOTS_PER_DAY + b.end_slot, b.buffer_before) for b in blocks)
@@ -21,7 +21,7 @@ def merge_fixed_spans(blocks: list[FixedBlock]) -> list[tuple[int, int, bool]]: 
     for s, e, buf in spans:
         if merged and s < merged[-1][1]:
             ps, pe, pbuf = merged[-1]
-            merged[-1] = (ps, max(pe, e), pbuf or buf if s == ps else pbuf)  # NEW
+            merged[-1] = (ps, max(pe, e), pbuf or buf if s == ps else pbuf)   
         else:
             merged.append((s, e, buf))
     return merged
@@ -38,19 +38,19 @@ def build_schedule(fixed_blocks: list[FixedBlock], tasks: list[DynamicTask],
     intervals = []
 
     fixed_block_bounds = [] #(abs_start, abs_end) per fixed block, for the buffer-after rule below
-    flush_intervals = []  # NEW: spans a task may end flush against (buffer_before=False)
-    sleep_intervals = []  # NEW
+    flush_intervals = []  #  spans a task may end flush against (buffer_before=False)
+    sleep_intervals = []   
     for block in fixed_blocks:
         if block.day >= num_days:
             raise ValueError(
                 f"'{block.title}' is on day {block.day}, but the plan has {num_days} day(s)"
             )
 
-    fixed_block_bounds = []  # NEW: one (abs_start, abs_end) per MERGED span
-    for k, (start, end, buffer_before) in enumerate(merge_fixed_spans(fixed_blocks)):  # NEW
-        iv = model.NewFixedSizeIntervalVar(start, end - start, f"fixed_{k}")  # NEW
-        (intervals if buffer_before else flush_intervals).append(iv)  # NEW
-        fixed_block_bounds.append((start, end))  # NEW
+    fixed_block_bounds = []   
+    for k, (start, end, buffer_before) in enumerate(merge_fixed_spans(fixed_blocks)):   
+        iv = model.NewFixedSizeIntervalVar(start, end - start, f"fixed_{k}")   
+        (intervals if buffer_before else flush_intervals).append(iv)   
+        fixed_block_bounds.append((start, end))   
  
     # tasks: each becomes one or more chunks the solver places
     placed = []  # (task, is_present, [(start_expr, size), ...])
@@ -143,9 +143,9 @@ def build_schedule(fixed_blocks: list[FixedBlock], tasks: list[DynamicTask],
             base + rule.earliest_bed, base + rule.latest_bed + rule.length_slots,  
             f"sleep_end_{rule.night}",  
         )  
-        sleep_iv = model.NewIntervalVar(start, size, end, f"sleep_{rule.night}")  # NEW
-        intervals.append(sleep_iv)  # NEW
-        sleep_intervals.append(sleep_iv)  # NEW   
+        sleep_iv = model.NewIntervalVar(start, size, end, f"sleep_{rule.night}")   
+        intervals.append(sleep_iv)   
+        sleep_intervals.append(sleep_iv)      
  
         # how far below the minimum (0 if the minimum is met)
         shortfall = model.NewIntVar(0, rule.min_slots, f"sleep_short_{rule.night}")   

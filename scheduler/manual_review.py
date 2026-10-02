@@ -1,10 +1,10 @@
-from scheduler.drop_review import _h  # NEW
-from scheduler.manual_cuts import NEW, CutState  # NEW
+from scheduler.drop_review import _h   
+from scheduler.manual_cuts import NEW, CutState   
 from scheduler.models import MINUTES_PER_SLOT
-from scheduler.review import _hours  # NEW
+from scheduler.review import _hours   
 
 
-def ask_mode(ask=input, show=print) -> str | None:  # NEW  "m" / "s" / "a" / None (cancel)
+def ask_mode(ask=input, show=print) -> str | None:   
     while True:
         raw = ask("How do you want to make room? [m]anual  [s]emi-automatic  "
                   "[a]utomatic (Enter to cancel): ").strip().lower()
@@ -15,7 +15,7 @@ def ask_mode(ask=input, show=print) -> str | None:  # NEW  "m" / "s" / "a" / Non
         show("Choose m, s or a.")
 
 
-def _show_list(state: CutState, titles: dict, order: list, show) -> None:  # NEW
+def _show_list(state: CutState, titles: dict, order: list, show) -> None:   
     show("Your tasks (you can cut any of them, including the new one):")
     for n, i in enumerate(order, 1):
         left = state.remaining(i)
@@ -28,14 +28,14 @@ def _show_list(state: CutState, titles: dict, order: list, show) -> None:  # NEW
         show(f"  {n}. {titles[i]}{' (new)' if i == NEW else ''} -- {what}{was}")
 
 
-def _hours_or_error(text: str) -> int:  # NEW
+def _hours_or_error(text: str) -> int:   
     try:
         return _hours(text)
     except ValueError:
         raise ValueError("enter hours as a number, like 1.5 (at least 0.25)") from None
 
 
-def _edit_task(state: CutState, i: int, ask, show) -> bool:  # NEW  True if something changed
+def _edit_task(state: CutState, i: int, ask, show) -> bool:   
     left = state.remaining(i)
     if left == 0:
         show("  That task is already fully cut. Undo to bring it back.")
@@ -65,7 +65,7 @@ def _edit_task(state: CutState, i: int, ask, show) -> bool:  # NEW  True if some
 
 
 def run_manual_edit(state: CutState, titles: dict, fits, ask=input, show=print,
-                    must_add: bool = False) -> tuple[str, object]:  # NEW
+                    must_add: bool = False) -> tuple[str, object]:   
     """fits(lost) -> a verified proposal if everything fits after those cuts, else None.
     Returns ("save", proposal), ("dont_add", None) or ("cancel", None). Nothing is saved here."""
     order = sorted(i for i in state.durations if i != NEW) + [NEW]

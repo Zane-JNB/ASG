@@ -14,7 +14,7 @@ def _extraction(title="DS"):
     )
 
 
-KEEP_ALL = [""]  # NEW -- one review prompt: Enter accepts everything
+KEEP_ALL = [""]  #   -- one review prompt: Enter accepts everything
 
 
 class Recorder:

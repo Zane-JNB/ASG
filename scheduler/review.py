@@ -4,7 +4,7 @@ from pydantic import ValidationError
 from scheduler.models import ExtractedTask, ExtractionResult, WeeklyPattern, DatedBlock, MINUTES_PER_SLOT, time_to_slot 
 
 
-def hours_to_slots(hours: float) -> int:  # NEW
+def hours_to_slots(hours: float) -> int:   
     """1.5 -> 6. Rounds to the nearest 15 minutes (halves round up); minimum one slot."""
     slots = math.floor(hours * 60 / MINUTES_PER_SLOT + 0.5)
     if slots < 1:
@@ -12,7 +12,7 @@ def hours_to_slots(hours: float) -> int:  # NEW
     return slots
 
 
-def edit_extracted_task(task: ExtractedTask, hours: float | None = None,  # NEW
+def edit_extracted_task(task: ExtractedTask, hours: float | None = None,   
                         priority: int | None = None, difficulty: int | None = None) -> ExtractedTask:
     """Return a copy of task with the given placeholders replaced (None = keep as is)."""
     changes = {}
@@ -39,26 +39,26 @@ def _confirm(ask, prompt: str, default: bool) -> bool:
 _DAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
 
 
-def _time(s: str) -> str:  # NEW -- "9:00" -> "09:00"; ValueError if not a real time
+def _time(s: str) -> str:  #   -- "9:00" -> "09:00"; ValueError if not a real time
     return datetime.strptime(s, "%H:%M").strftime("%H:%M")
 
 
-def _date(s: str) -> str:  # NEW -- the models store dates as plain strings, so check them here
+def _date(s: str) -> str:  #   -- the models store dates as plain strings, so check them here
     return date.fromisoformat(s).isoformat()
 
 
-def _day(s: str) -> str:  # NEW -- "monday" -> "Mon"
+def _day(s: str) -> str:  #   -- "monday" -> "Mon"
     d = s.strip().capitalize()[:3]
     if d not in _DAYS:
         raise ValueError(f"day must be one of {', '.join(_DAYS)}")
     return d
 
 
-def _hours(s: str) -> int:  # NEW -- typed as hours, stored as slots
+def _hours(s: str) -> int:  #   -- typed as hours, stored as slots
     return hours_to_slots(float(s))
 
 
-# NEW -- what can be edited per item type: (prompt label, model field, parser)
+#   -- what can be edited per item type: (prompt label, model field, parser)
 _EDIT_FIELDS = {
     WeeklyPattern: [("title", "title", str), ("day", "day", _day),
                     ("start HH:MM", "start_time", _time), ("end HH:MM", "end_time", _time)],
@@ -70,15 +70,15 @@ _EDIT_FIELDS = {
 }
 
 
-def _current(item, key: str):  # NEW
+def _current(item, key: str):   
     value = getattr(item, key)
     return f"{value * MINUTES_PER_SLOT / 60:g}" if key == "duration_slots" else value
 
 
-def _describe(kind: str, item, session_cap: int | None = None) -> str:  # NEW
+def _describe(kind: str, item, session_cap: int | None = None) -> str:   
     if kind == "Task":
         hours = item.duration_slots * MINUTES_PER_SLOT / 60
-        if not item.splittable:  # NEW
+        if not item.splittable:   
             note = ", one block"
         elif session_cap and item.duration_slots > session_cap:
             note = ", can be split"
@@ -89,7 +89,7 @@ def _describe(kind: str, item, session_cap: int | None = None) -> str:  # NEW
     return f"{item.title} -- {when} {item.start_time}-{item.end_time}"
 
 
-def _edit_item(item, ask, show, session_cap: int | None):  # NEW
+def _edit_item(item, ask, show, session_cap: int | None):   
     """Ask for each field (Enter keeps the current value). Bad input shows why and re-asks."""
     while True:
         try:
@@ -98,7 +98,7 @@ def _edit_item(item, ask, show, session_cap: int | None):  # NEW
                 raw = ask(f"  {label} [{_current(item, key)}]: ").strip()
                 if raw:
                     changes[key] = parse(raw)
-            if isinstance(item, ExtractedTask) and session_cap:  # NEW -- only long tasks can be split
+            if isinstance(item, ExtractedTask) and session_cap:  #   -- only long tasks can be split
                 if changes.get("duration_slots", item.duration_slots) > session_cap:
                     cap_h = session_cap * MINUTES_PER_SLOT / 60
                     changes["splittable"] = _confirm(
@@ -109,13 +109,13 @@ def _edit_item(item, ask, show, session_cap: int | None):  # NEW
             show(f"  Invalid: {msg} -- try again.")
 
 
-def _parse_picks(text: str, count: int) -> list[int]:  # NEW
+def _parse_picks(text: str, count: int) -> list[int]:   
     picks = sorted({int(x) for x in text.replace(",", " ").split()})
     if any(n < 1 or n > count for n in picks):
         raise ValueError
     return picks
 
-def _overlap_notes(items) -> list[str]:  # NEW
+def _overlap_notes(items) -> list[str]:   
     """Numbered items that clash: weekly ones on the same weekday, sessions on the same date."""
     notes = []
     for i, (kind_a, a) in enumerate(items):
@@ -131,7 +131,7 @@ def _overlap_notes(items) -> list[str]:  # NEW
        
     
         
-def review_extraction(result: ExtractionResult, ask=input, show=print, session_cap: int | None = None) -> ExtractionResult:  # NEW
+def review_extraction(result: ExtractionResult, ask=input, show=print, session_cap: int | None = None) -> ExtractionResult:   
     """Show everything found, then ONE prompt: Enter accepts all, or pick numbers to edit/delete."""
     items = ([("Weekly", p) for p in result.weekly_patterns]
              + [("Session", b) for b in result.dated_blocks]
@@ -148,7 +148,7 @@ def review_extraction(result: ExtractionResult, ask=input, show=print, session_c
              + "; ".join(clashes))
     if result.tasks:
         show("Task hours/priority/difficulty are placeholder guesses -- fix any that are off.")
-        if session_cap and any(t.duration_slots > session_cap for t in result.tasks):  # NEW
+        if session_cap and any(t.duration_slots > session_cap for t in result.tasks):   
             cap_h = session_cap * MINUTES_PER_SLOT / 60
             show(f"Tasks longer than {cap_h:g}h are marked 'can be split' into sessions -- "
                  "pick one and edit it to make it a single block instead.")

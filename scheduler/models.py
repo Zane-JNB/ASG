@@ -75,16 +75,16 @@ class ProfileSettings(BaseModel):
     default_earliest_bed: int = Field(default=84, ge=0, lt=2 * SLOTS_PER_DAY)  #  21:00
     default_latest_bed: int = Field(default=100, ge=0, lt=2 * SLOTS_PER_DAY)  #  01:00
     default_preferred_bed: int = Field(default=92, ge=0, lt=2 * SLOTS_PER_DAY)  #  23:00
-    drop_priority_weight: int = Field(default=10, ge=0)  # NEW  cost per lost slot, per priority point
-    drop_difficulty_weight: int = Field(default=2, ge=0)  # NEW
-    drop_deadline_multiplier: int = Field(default=3, ge=1)  # NEW  losing time on a deadline task costs 3x
-    drop_sleep_weight: int = Field(default=40, ge=0)  # NEW  per slot of sleep below target
-    drop_hard_flag_penalty: int = Field(default=5_000, ge=0)  # NEW  per hard flag
+    drop_priority_weight: int = Field(default=10, ge=0)  #    cost per lost slot, per priority point
+    drop_difficulty_weight: int = Field(default=2, ge=0)  #  
+    drop_deadline_multiplier: int = Field(default=3, ge=1)  #    losing time on a deadline task costs 3x
+    drop_sleep_weight: int = Field(default=40, ge=0)  #    per slot of sleep below target
+    drop_hard_flag_penalty: int = Field(default=5_000, ge=0)  #    per hard flag
     plan_horizon_max_days: int = Field(default=28, gt=0)
     shrink_steps: list[float] = Field(default_factory=lambda: [0.25, 0.5, 0.75])
     reminders_enabled: bool = True
-    reminder_min_difficulty: int | None = Field(default=None, ge=1, le=5)  # NEW  None = ignore difficulty
-    reminder_min_priority: int | None = Field(default=None, ge=1, le=5)  # NEW  None = ignore priority
+    reminder_min_difficulty: int | None = Field(default=None, ge=1, le=5)  #    None = ignore difficulty
+    reminder_min_priority: int | None = Field(default=None, ge=1, le=5)  #    None = ignore priority
 
     def default_sleep_rule(self, night: int, **overrides) -> "SleepRule":  
         """Build a SleepRule for one night using this profile's defaults, with any field overridden."""  
@@ -182,9 +182,9 @@ class ExtractedTask(BaseModel):
     priority: int = Field(default=3, ge=1, le=5)  # placeholder: medium
     difficulty: int = Field(default=3, ge=1, le=5)  # placeholder: medium
     splittable: SkipJsonSchema[bool] = True  # placeholder: can be split into sessions
-    reminders_enabled: bool = True  # NEW
-    reminder_min_difficulty: int | None = Field(default=None, ge=1, le=5)  # NEW  None = ignore difficulty
-    reminder_min_priority: int | None = Field(default=None, ge=1, le=5)  # NEW  None = ignore priority
+    reminders_enabled: bool = True   
+    reminder_min_difficulty: int | None = Field(default=None, ge=1, le=5)  #    None = ignore difficulty
+    reminder_min_priority: int | None = Field(default=None, ge=1, le=5)  #    None = ignore priority
     completed_at: SkipJsonSchema[str | None] = None
 
 
@@ -216,7 +216,7 @@ class ExtractionResult(BaseModel):
     dated_blocks: list[DatedBlock] = Field(default_factory=list)
     tasks: list[ExtractedTask] = Field(default_factory=list)
 
-class Commute(BaseModel):  # NEW (whole class)
+class Commute(BaseModel):   
     title: str = "Commute"
     start_time: str  # "HH:MM", 24-hour
     length_minutes: int = Field(gt=0, le=720)
@@ -259,7 +259,7 @@ class PlanAnchor(BaseModel):
     def end_date(self) -> date:  # last day INCLUDED in the plan
         return self.start_date + timedelta(days=self.num_days - 1)
 
-class DropAction(BaseModel):  # NEW  (whole class)
+class DropAction(BaseModel):   
     task_index: int
     title: str
     chunks_cut: int
@@ -275,7 +275,7 @@ class DropAction(BaseModel):  # NEW  (whole class)
     def is_full_drop(self) -> bool:
         return self.slots_kept == 0
 
-class DropProposal(BaseModel):  # NEW
+class DropProposal(BaseModel):   
     rank: int = 0
     actions: list[DropAction]
     new_task_added: bool  # False = "don't add the new task"
@@ -286,7 +286,7 @@ class DropProposal(BaseModel):  # NEW
     schedule: list[ScheduledItem]  # already solved
     new_task_slots_cut: int = 0
 
-class DropReport(BaseModel):  # NEW
+class DropReport(BaseModel):  
     new_task_title: str
     fits_already: bool
     proposals: list[DropProposal]  # best first

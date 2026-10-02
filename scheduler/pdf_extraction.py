@@ -52,7 +52,7 @@ def _merge(results: list[ExtractionResult]) -> ExtractionResult:
         tasks=[t for r in results for t in r.tasks],
     )
 
-def _is_reflection_fallback(raw: dict) -> bool:  # NEW
+def _is_reflection_fallback(raw: dict) -> bool:   
     """call_llm's Groq backend soft-degrades a malformed tool call into a REFLECTION-shaped
     stub ({"summary": ..., "proposals": []}) -- correct for reflections but wrong for
     extraction: no weekly_patterns/dated_blocks/tasks keys, so it silently looks like
@@ -114,7 +114,7 @@ def extract_schedule_from_pdf(file_bytes: bytes, call_text_llm=None, call_vision
                 try:
                     results.append(extract_text_page(text, call_text_llm))
                     continue
-                except ValueError:  # NEW -- text extraction failed; try the image instead
+                except ValueError:  #   -- text extraction failed; try the image instead
                     # of giving up, before falling through to the render+vision path below
                     pass
             image_bytes = _render_page(file_bytes, i)

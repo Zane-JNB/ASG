@@ -7,7 +7,7 @@ from scheduler.fit_check import build_fit_inputs, starts_from
 
 
 def plan_restores(conn, student_id: int, now: datetime, time_limit_seconds: float = 5.0,
-                  steps: tuple[float, ...] = (1.0, 0.75, 0.5, 0.25)) -> dict[int, int]:  # NEW
+                  steps: tuple[float, ...] = (1.0, 0.75, 0.5, 0.25)) -> dict[int, int]:   
     """{saved task id: slots that can be given back}. Cut tasks are tried highest priority first;
     each gets back as much of its cut as the solver can still fit with everything else, so
     every amount returned is verified before the student sees it."""

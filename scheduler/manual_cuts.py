@@ -1,7 +1,7 @@
-NEW = -1  # NEW  index that stands for the new task (same convention as propose_drops)
+NEW = -1  #    index that stands for the new task (same convention as propose_drops)
 
 
-class CutState:  # NEW  (whole class)
+class CutState:   
     """durations: {task index: planned slots}. sizes_fn(index, remaining_slots) -> chunk sizes."""
 
     def __init__(self, durations: dict[int, int], sizes_fn):

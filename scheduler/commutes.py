@@ -46,7 +46,7 @@ def commute_overlaps(others: list[FixedBlock], commute_blocks: list[FixedBlock])
                 pairs.append((c, o))
     return pairs
 
-def _clock(b: FixedBlock) -> str:  # NEW
+def _clock(b: FixedBlock) -> str:   
     return f"{slot_to_time(b.start_slot)}-{slot_to_time(b.end_slot % SLOTS_PER_DAY)}"
 
 def overlap_warnings(pairs, anchor: PlanAnchor) -> list[ScheduleWarning]: 

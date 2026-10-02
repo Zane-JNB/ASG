@@ -104,7 +104,7 @@ def test_search_stopped_note_is_shown():
     _, shown = _run(report, new, [""])
     assert any("search stopped" in l for l in shown)
 
-def test_higher_priority_new_task_beats_not_adding_when_cutting_a_lower_priority_one():  # NEW
+def test_higher_priority_new_task_beats_not_adding_when_cutting_a_lower_priority_one():   
     fixed, tasks, new, rules = busy_day()  # Essay is priority 4, Big project priority 2
     report = propose_drops(fixed, tasks, new, 1, rules)
     assert report.proposals[0].new_task_added

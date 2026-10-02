@@ -244,68 +244,68 @@ def delete_exam(conn: sqlite3.Connection, student_id: int, exam_id: int) -> bool
 def clear_exams(conn: sqlite3.Connection, student_id: int) -> int:
     return _clear_items(conn, "exams", student_id)
 
-def add_weekly_pattern(conn, student_id: int, item: WeeklyPattern) -> int:  # NEW
+def add_weekly_pattern(conn, student_id: int, item: WeeklyPattern) -> int:   
     return _add_item(conn, "weekly_patterns", student_id, item)
 
-def get_weekly_patterns(conn, student_id: int) -> list[tuple[int, WeeklyPattern]]:  # NEW
+def get_weekly_patterns(conn, student_id: int) -> list[tuple[int, WeeklyPattern]]:   
     return _get_items(conn, "weekly_patterns", student_id, WeeklyPattern)
 
-def delete_weekly_pattern(conn, student_id: int, item_id: int) -> bool:  # NEW
+def delete_weekly_pattern(conn, student_id: int, item_id: int) -> bool:   
     return _delete_item(conn, "weekly_patterns", student_id, item_id)
 
-def clear_weekly_patterns(conn, student_id: int) -> int:  # NEW
+def clear_weekly_patterns(conn, student_id: int) -> int:   
     return _clear_items(conn, "weekly_patterns", student_id)
 
-def add_dated_block(conn, student_id: int, item: DatedBlock) -> int:  # NEW
+def add_dated_block(conn, student_id: int, item: DatedBlock) -> int:   
     return _add_item(conn, "dated_blocks", student_id, item)
 
-def get_dated_blocks(conn, student_id: int) -> list[tuple[int, DatedBlock]]:  # NEW
+def get_dated_blocks(conn, student_id: int) -> list[tuple[int, DatedBlock]]:   
     return _get_items(conn, "dated_blocks", student_id, DatedBlock)
 
-def delete_dated_block(conn, student_id: int, item_id: int) -> bool:  # NEW
+def delete_dated_block(conn, student_id: int, item_id: int) -> bool:   
     return _delete_item(conn, "dated_blocks", student_id, item_id)
 
-def clear_dated_blocks(conn, student_id: int) -> int:  # NEW
+def clear_dated_blocks(conn, student_id: int) -> int:   
     return _clear_items(conn, "dated_blocks", student_id)
 
 
-def add_extracted_task(conn, student_id: int, item: ExtractedTask) -> int:  # NEW
+def add_extracted_task(conn, student_id: int, item: ExtractedTask) -> int:   
     return _add_item(conn, "extracted_tasks", student_id, item)
 
-def get_extracted_tasks(conn, student_id: int) -> list[tuple[int, ExtractedTask]]:  # NEW
+def get_extracted_tasks(conn, student_id: int) -> list[tuple[int, ExtractedTask]]:   
     return _get_items(conn, "extracted_tasks", student_id, ExtractedTask)
 
-def update_extracted_task(conn, student_id: int, item_id: int, item: ExtractedTask) -> bool:  # NEW
+def update_extracted_task(conn, student_id: int, item_id: int, item: ExtractedTask) -> bool:   
     cur = conn.execute("UPDATE extracted_tasks SET data_json = ? WHERE id = ? AND student_id = ?",
                        (item.model_dump_json(), item_id, student_id))
     conn.commit()
     return cur.rowcount > 0
 
-def delete_extracted_task(conn, student_id: int, item_id: int) -> bool:  # NEW
+def delete_extracted_task(conn, student_id: int, item_id: int) -> bool:   
     return _delete_item(conn, "extracted_tasks", student_id, item_id)
 
-def clear_extracted_tasks(conn, student_id: int) -> int:  # NEW
+def clear_extracted_tasks(conn, student_id: int) -> int:   
     return _clear_items(conn, "extracted_tasks", student_id)
 
-def add_commute(conn, student_id: int, item: Commute) -> int:  # NEW
+def add_commute(conn, student_id: int, item: Commute) -> int:   
     return _add_item(conn, "commutes", student_id, item)
 
-def get_commutes(conn, student_id: int) -> list[tuple[int, Commute]]:  # NEW
+def get_commutes(conn, student_id: int) -> list[tuple[int, Commute]]:   
     return _get_items(conn, "commutes", student_id, Commute)
 
-def update_commute(conn, student_id: int, item_id: int, item: Commute) -> bool:  # NEW
+def update_commute(conn, student_id: int, item_id: int, item: Commute) -> bool:   
     cur = conn.execute("UPDATE commutes SET data_json = ? WHERE id = ? AND student_id = ?",
                        (item.model_dump_json(), item_id, student_id))
     conn.commit()
     return cur.rowcount > 0
 
-def delete_commute(conn, student_id: int, item_id: int) -> bool:  # NEW
+def delete_commute(conn, student_id: int, item_id: int) -> bool:   
     return _delete_item(conn, "commutes", student_id, item_id)
 
-def clear_commutes(conn, student_id: int) -> int:  # NEW
+def clear_commutes(conn, student_id: int) -> int:   
     return _clear_items(conn, "commutes", student_id)
 
-def skip_commute_date(conn, student_id: int, item_id: int, day: str) -> bool:  # NEW
+def skip_commute_date(conn, student_id: int, item_id: int, day: str) -> bool:   
     date.fromisoformat(day)  # raises ValueError on a bad date
     found = {i: c for i, c in get_commutes(conn, student_id)}.get(item_id)
     if found is None or not found.recurring:
@@ -315,7 +315,7 @@ def skip_commute_date(conn, student_id: int, item_id: int, day: str) -> bool:  #
         update_commute(conn, student_id, item_id, found)
     return True
 
-def replace_extraction(conn, student_id: int, result: ExtractionResult) -> dict:  # NEW
+def replace_extraction(conn, student_id: int, result: ExtractionResult) -> dict:   
     """Save a reviewed import, all-or-nothing. Fixed blocks are REPLACED, tasks are ADDED:
     weekly patterns and dated blocks are each replaced only if the import contains some
     (so an exam sheet can't wipe your classes); tasks are appended, skipping exact repeats
@@ -333,14 +333,14 @@ def replace_extraction(conn, student_id: int, result: ExtractionResult) -> dict:
     try:
         for table, key, items in (("weekly_patterns", "weekly", result.weekly_patterns),
                                   ("dated_blocks", "dated", result.dated_blocks)):
-            if items:  # NEW -- an import with none of this type leaves the old ones alone
+            if items:  #   -- an import with none of this type leaves the old ones alone
                 conn.execute(f"DELETE FROM {table} WHERE student_id = ?", (student_id,))
                 for item in items:
                     insert(table, item)
                 summary[key] = len(items)
 
         seen = {(t.title.strip().lower(), t.date) for _, t in get_extracted_tasks(conn, student_id)}
-        for task in result.tasks:  # NEW -- tasks are appended, never replaced
+        for task in result.tasks:  #   -- tasks are appended, never replaced
             key = (task.title.strip().lower(), task.date)
             if key in seen:
                 summary["tasks_skipped"] += 1
@@ -354,11 +354,11 @@ def replace_extraction(conn, student_id: int, result: ExtractionResult) -> dict:
         raise
     return summary
 
-def _own_task(conn, student_id: int, task_id: int) -> bool:  # NEW
+def _own_task(conn, student_id: int, task_id: int) -> bool:   
     return conn.execute("SELECT 1 FROM extracted_tasks WHERE id = ? AND student_id = ?",
                         (task_id, student_id)).fetchone() is not None
 
-def _upsert_cut(conn, student_id: int, task_id: int, slots: int) -> None:  # NEW
+def _upsert_cut(conn, student_id: int, task_id: int, slots: int) -> None:   
     if slots < 1:
         raise ValueError("a cut must be at least one slot")
     if not _own_task(conn, student_id, task_id):
@@ -369,7 +369,7 @@ def _upsert_cut(conn, student_id: int, task_id: int, slots: int) -> None:  # NEW
                                               updated_at = excluded.updated_at""",
         (task_id, student_id, slots, _now()))
 
-def add_plan_cut(conn, student_id: int, task_id: int, slots: int) -> None:  # NEW
+def add_plan_cut(conn, student_id: int, task_id: int, slots: int) -> None:   
     try:
         _upsert_cut(conn, student_id, task_id, slots)
         conn.commit()
@@ -377,23 +377,23 @@ def add_plan_cut(conn, student_id: int, task_id: int, slots: int) -> None:  # NE
         conn.rollback()
         raise
 
-def get_plan_cuts(conn, student_id: int) -> dict[int, int]:  # NEW
+def get_plan_cuts(conn, student_id: int) -> dict[int, int]:   
     rows = conn.execute("SELECT task_id, slots_cut FROM plan_cuts WHERE student_id = ?",
                         (student_id,)).fetchall()
     return {r[0]: r[1] for r in rows}
 
-def clear_plan_cut(conn, student_id: int, task_id: int) -> bool:  # NEW  -- gives the time back
+def clear_plan_cut(conn, student_id: int, task_id: int) -> bool:  #   -- gives the time back
     cur = conn.execute("DELETE FROM plan_cuts WHERE task_id = ? AND student_id = ?", (task_id, student_id))
     conn.commit()
     return cur.rowcount > 0
 
-def clear_plan_cuts(conn, student_id: int) -> int:  # NEW
+def clear_plan_cuts(conn, student_id: int) -> int:   
     cur = conn.execute("DELETE FROM plan_cuts WHERE student_id = ?", (student_id,))
     conn.commit()
     return cur.rowcount
 
 def apply_plan_changes(conn, student_id: int, cuts: dict[int, int],
-                       new_task: ExtractedTask | None = None, new_task_cut: int = 0) -> int | None:  # NEW new_task_cut
+                       new_task: ExtractedTask | None = None, new_task_cut: int = 0) -> int | None:  
     """Save a chosen drop proposal all-or-nothing: the cuts plus (optionally) the new task.
     Returns the new task's id, or None if no task was added."""
     try:
@@ -404,7 +404,7 @@ def apply_plan_changes(conn, student_id: int, cuts: dict[int, int],
             new_id = conn.execute(
                 "INSERT INTO extracted_tasks (student_id, data_json, created_at) VALUES (?, ?, ?)",
                 (student_id, new_task.model_dump_json(), _now())).lastrowid
-            if new_task_cut > 0:  # NEW -- saved at full hours; the shortening is plan-only, like any cut
+            if new_task_cut > 0:  #   -- saved at full hours; the shortening is plan-only, like any cut
                 _upsert_cut(conn, student_id, new_id, new_task_cut)
         conn.commit()
         return new_id
@@ -412,7 +412,7 @@ def apply_plan_changes(conn, student_id: int, cuts: dict[int, int],
         conn.rollback()
         raise
 
-def record_plan_sessions(conn, student_id: int, now_iso: str, sessions: list[tuple[int, str, str]]) -> None:  # NEW
+def record_plan_sessions(conn, student_id: int, now_iso: str, sessions: list[tuple[int, str, str]]) -> None:   
     """Replace the not-yet-finished sessions of the previous plan with the new plan's. Sessions that
     already ended stay until the student has been asked about them."""
     conn.execute("DELETE FROM plan_sessions WHERE student_id = ? AND end_at > ?", (student_id, now_iso))
@@ -421,22 +421,22 @@ def record_plan_sessions(conn, student_id: int, now_iso: str, sessions: list[tup
         [(student_id, t, s, e) for t, s, e in sessions])
     conn.commit()
 
-def due_sessions(conn, student_id: int, now_iso: str) -> list[tuple[int, str, str]]:  # NEW
+def due_sessions(conn, student_id: int, now_iso: str) -> list[tuple[int, str, str]]:   
     """[(task id, start, end)] of sessions that ended and have not been asked about yet."""
     return conn.execute("SELECT task_id, start_at, end_at FROM plan_sessions "
                         "WHERE student_id = ? AND asked = 0 AND end_at <= ? ORDER BY end_at",
                         (student_id, now_iso)).fetchall()
 
-def mark_sessions_asked(conn, student_id: int, task_id: int, now_iso: str) -> None:  # NEW
+def mark_sessions_asked(conn, student_id: int, task_id: int, now_iso: str) -> None:   
     conn.execute("UPDATE plan_sessions SET asked = 1 WHERE student_id = ? AND task_id = ? AND end_at <= ?",
                  (student_id, task_id, now_iso))
     conn.commit()
 
-def clear_task_sessions(conn, student_id: int, task_id: int) -> None:  # NEW
+def clear_task_sessions(conn, student_id: int, task_id: int) -> None:   
     conn.execute("DELETE FROM plan_sessions WHERE student_id = ? AND task_id = ?", (student_id, task_id))
     conn.commit()
 
-def reduce_plan_cut(conn, student_id: int, task_id: int, slots: int) -> None:  # NEW  -- give time back
+def reduce_plan_cut(conn, student_id: int, task_id: int, slots: int) -> None:  #    -- give time back
     # delete first when the whole cut is given back: the table forbids a cut of 0
     conn.execute("DELETE FROM plan_cuts WHERE task_id = ? AND student_id = ? AND slots_cut <= ?",
                  (task_id, student_id, slots))
