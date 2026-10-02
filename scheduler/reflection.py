@@ -1,17 +1,12 @@
+from dataclasses import fields
 from typing import Literal
 
 import annotated_types
 from pydantic import BaseModel, Field, ValidationError, model_validator
 
 from scheduler.models import ProfileSettings
-
-# Fields the reflection loop is allowed to touch, and how much each magnitude bucket moves
-# them by. The LLM never chooses an exact number -- only a field, a direction, and a bucket.
-# Anything not listed here is locked and never even offered to the LLM as an option.
-# Deliberately excluded: presence_bonus, sleep_min_penalty, default_sleep_min_slots,
-# default_earliest_bed, default_latest_bed -- these protect hard constraints (deadlines,
-# minimum sleep) and are never adjusted by a reflection.
 from scheduler.preference_policy import MODEL_DELTAS  # NEW
+
 ADJUSTABLE_FIELDS: dict[str, dict[str, int]] = MODEL_DELTAS  # NEW (derived; old name kept so nothing else breaks)
 
 
@@ -30,11 +25,9 @@ class PreferenceChangeProposal(BaseModel):
             )
         return self
 
-
 class ReflectionResult(BaseModel):
     summary: str
     proposals: list[PreferenceChangeProposal] = Field(default_factory=list)
-
 
 def _lower_bound(field_name: str) -> int:
     """The smallest value ProfileSettings' own Field(...) constraint allows for this field."""
@@ -45,26 +38,27 @@ def _lower_bound(field_name: str) -> int:
             return constraint.ge
     return 0
 
-
 def apply_proposal(settings: ProfileSettings, proposal: PreferenceChangeProposal) -> ProfileSettings:
     """Apply one proposal's bounded delta, clamped to this field's valid range."""
     delta = ADJUSTABLE_FIELDS[proposal.field][proposal.magnitude]
     current = getattr(settings, proposal.field)
     new_value = current + delta if proposal.direction == "increase" else current - delta
     new_value = max(new_value, _lower_bound(proposal.field))
+    upper = _upper_bound(proposal.field)
+    if upper is not None:
+        new_value = min(new_value, upper)
 
     data = settings.model_dump()
     data[proposal.field] = new_value
     return ProfileSettings(**data)
-
 
 def apply_all(settings: ProfileSettings, proposals: list[PreferenceChangeProposal]) -> ProfileSettings:
     for proposal in proposals:
         settings = apply_proposal(settings, proposal)
     return settings
 
-
-def build_system_prompt() -> str:
+def build_system_prompt(fields: list[str] | None = None) -> str:
+    shown = ADJUSTABLE_FIELDS if fields is None else {n: ADJUSTABLE_FIELDS[n] for n in fields}
     field_lines = "\n".join(
         f"- {name} (deltas: small={d['small']}, medium={d['medium']}, large={d['large']})"
         for name, d in ADJUSTABLE_FIELDS.items()
@@ -90,8 +84,13 @@ def build_system_prompt() -> str:
         'Never use "change", "size", "amount", or any other alternate name for these keys.'
     )
 
+def _tool_schema(fields):  
+    schema = ReflectionResult.model_json_schema()
+    if fields is not None:
+        schema["$defs"]["PreferenceChangeProposal"]["properties"]["field"]["enum"] = list(fields)
+    return schema
 
-def propose_preference_changes(reflection_text: str, client=None) -> ReflectionResult:
+def propose_preference_changes(reflection_text: str, client=None, allowed_fields = None) -> ReflectionResult:
     """Ask the LLM to propose bounded preference changes from a reflection.
 
     client is an optional Anthropic-SDK-shaped override (exposing .messages.create(...)),
@@ -99,16 +98,19 @@ def propose_preference_changes(reflection_text: str, client=None) -> ReflectionR
     which reads LLM_BACKEND from the environment -- defaulting to a free offline stub so
     development doesn't require an API key at all (see llm_backends.py).
     """
+    if allowed_fields is not None and not allowed_fields:  # nothing learnable -> skip the API call
+        return ReflectionResult(summary="", proposals=[])
+    
     if client is not None:
         tool = {
             "name": "propose_preference_changes",
             "description": "Propose bounded changes to the student's schedule preferences.",
-            "input_schema": ReflectionResult.model_json_schema(),
+            "input_schema": _tool_schema(allowed_fields),
         }
         response = client.messages.create(
             model="claude-sonnet-5",
             max_tokens=1024,
-            system=build_system_prompt(),
+            system=build_system_prompt(allowed_fields),
             tools=[tool],
             tool_choice={"type": "tool", "name": "propose_preference_changes"},
             messages=[{"role": "user", "content": reflection_text}],
@@ -118,10 +120,10 @@ def propose_preference_changes(reflection_text: str, client=None) -> ReflectionR
     else:
         from scheduler.llm_backends import call_llm
         raw = call_llm(
-            system_prompt=build_system_prompt(),
+            system_prompt=build_system_prompt(allowed_fields),
             user_message=reflection_text,
             tool_name="propose_preference_changes",
-            tool_schema=ReflectionResult.model_json_schema(),
+            tool_schema=_tool_schema(allowed_fields)
         )
 
     # validate each proposal individually -- one hallucinated/locked field shouldn't
@@ -134,3 +136,12 @@ def propose_preference_changes(reflection_text: str, client=None) -> ReflectionR
             continue
 
     return ReflectionResult(summary=raw.get("summary", ""), proposals=proposals)
+    
+def _upper_bound(field_name: str) -> int | None:  # NEW
+    for constraint in ProfileSettings.model_fields[field_name].metadata:
+        if isinstance(constraint, annotated_types.Lt):
+            return constraint.lt - 1
+        if isinstance(constraint, annotated_types.Le):
+            return constraint.le
+    return None
+    

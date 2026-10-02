@@ -2,7 +2,7 @@ import sqlite3
 from datetime import date, datetime, timezone
 
 from pydantic import BaseModel
-
+from scheduler.preference_policy import POLICY, Tier
 from scheduler.models import ProfileSettings, FixedBlock, DynamicTask, Exam, WeeklyPattern, DatedBlock, ExtractedTask, ExtractionResult,Commute
 
 SCHEMA = """
@@ -92,13 +92,35 @@ CREATE TABLE IF NOT EXISTS commutes (  -- NEW
     data_json TEXT NOT NULL,
     created_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS preference_tiers (  -- NEW (3.6)
+    student_id INTEGER NOT NULL REFERENCES students(id),
+    field TEXT NOT NULL,
+    tier TEXT NOT NULL,
+    PRIMARY KEY (student_id, field)
+);
+
+CREATE TABLE IF NOT EXISTS preference_evidence (  -- NEW (3.6)
+    student_id INTEGER NOT NULL REFERENCES students(id),
+    field TEXT NOT NULL,
+    score INTEGER NOT NULL,      -- signed: + = increase, - = decrease
+    magnitude TEXT NOT NULL,     -- smallest bucket seen in the current streak
+    PRIMARY KEY (student_id, field)
+);
 """
+
+def _migrate(conn: sqlite3.Connection) -> None:  
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(reflections)")}
+    if "outcome" not in cols:
+        conn.execute("ALTER TABLE reflections ADD COLUMN outcome TEXT") 
+        conn.commit()
 
 def connect(path: str) -> sqlite3.Connection:
     """Open (and initialize, if new) the database at path. ':memory:' works for tests."""
     conn = sqlite3.connect(path)
     conn.execute("PRAGMA foreign_keys = ON")
     conn.executescript(SCHEMA)
+    _migrate(conn)
     return conn
 
 def _now() -> str:
@@ -127,7 +149,7 @@ def load_settings(conn: sqlite3.Connection, student_id: int) -> ProfileSettings:
         raise ValueError(f"no settings found for student_id={student_id}")
     return ProfileSettings.model_validate_json(row[0])
 
-def save_settings(conn: sqlite3.Connection, student_id: int, settings: ProfileSettings) -> None:
+def save_settings(conn: sqlite3.Connection, student_id: int, settings: ProfileSettings, commit: bool = True) -> None:
     """Insert or overwrite a student's settings."""
     conn.execute(
         """
@@ -139,8 +161,45 @@ def save_settings(conn: sqlite3.Connection, student_id: int, settings: ProfileSe
         """,
         (student_id, settings.model_dump_json(), _now()),
     )
-    conn.commit()
+    if commit:
+        conn.commit()
 
+def load_tiers(conn, student_id) -> dict[str, Tier]:  # NEW
+    conn.executemany(  # lazy backfill: INSERT OR IGNORE never overwrites a user's choice
+        "INSERT OR IGNORE INTO preference_tiers (student_id, field, tier) VALUES (?, ?, ?)",
+        [(student_id, name, p.default_tier.value) for name, p in POLICY.items()],
+    )
+    conn.commit()
+    rows = conn.execute("SELECT field, tier FROM preference_tiers WHERE student_id = ?",
+                        (student_id,)).fetchall()
+    return {f: Tier(t) for f, t in rows if f in POLICY}
+
+def set_tier(conn, student_id, field, tier: Tier, commit=True) -> None:  # NEW
+    conn.execute("""INSERT INTO preference_tiers (student_id, field, tier) VALUES (?, ?, ?)
+                    ON CONFLICT(student_id, field) DO UPDATE SET tier = excluded.tier""",
+                 (student_id, field, tier.value))
+    if commit: conn.commit()
+
+def load_evidence(conn, student_id) -> dict[str, tuple[int, str]]:  # NEW
+    rows = conn.execute("SELECT field, score, magnitude FROM preference_evidence "
+                        "WHERE student_id = ?", (student_id,)).fetchall()
+    return {f: (score, mag) for f, score, mag in rows}
+
+def save_evidence(conn, student_id, field, score, magnitude, commit=True) -> None:  # NEW
+    conn.execute("""INSERT INTO preference_evidence (student_id, field, score, magnitude)
+                    VALUES (?, ?, ?, ?) ON CONFLICT(student_id, field) DO UPDATE SET
+                    score = excluded.score, magnitude = excluded.magnitude""",
+                 (student_id, field, score, magnitude))
+    if commit: conn.commit()
+
+def clear_evidence(conn, student_id, field=None, commit=True) -> None:  # NEW (None = all)
+    if field is None:
+        conn.execute("DELETE FROM preference_evidence WHERE student_id = ?", (student_id,))
+    else:
+        conn.execute("DELETE FROM preference_evidence WHERE student_id = ? AND field = ?",
+                     (student_id, field))
+    if commit: conn.commit()
+    
 def log_reflection(conn: sqlite3.Connection, student_id: int, reflection_text: str,
                    before: ProfileSettings, after: ProfileSettings, applied: bool) -> int:
     """Record a reflection and the settings snapshot before/after it. Returns the new row's id."""
@@ -161,7 +220,7 @@ def get_reflections(conn: sqlite3.Connection, student_id: int) -> list[dict]:
     """Return this student's reflection history, oldest first."""
     rows = conn.execute(
         """
-        SELECT id, created_at, reflection_text, settings_before_json, settings_after_json, applied
+        SELECT id, created_at, reflection_text, settings_before_json, settings_after_json, applied, outcome
         FROM reflections WHERE student_id = ? ORDER BY id ASC
         """,
         (student_id,),
@@ -174,6 +233,7 @@ def get_reflections(conn: sqlite3.Connection, student_id: int) -> list[dict]:
             "settings_before": ProfileSettings.model_validate_json(r[3]),
             "settings_after": ProfileSettings.model_validate_json(r[4]),
             "applied": bool(r[5]),
+            "outcome": r[6]
         }
         for r in rows
     ]
