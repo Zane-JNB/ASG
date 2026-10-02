@@ -2,8 +2,7 @@ import math
 from ortools.sat.python import cp_model
 from scheduler.models import (
     DynamicTask,Exam, FixedBlock, MINUTES_PER_SLOT, ProfileSettings, ScheduledItem, ScheduleWarning,
-    SleepRule, SLOTS_PER_DAY, slot_to_time, StudyPlanRule, 
-)
+    SleepRule, SLOTS_PER_DAY, slot_to_time, StudyPlanRule, )
 
 def split_sizes(duration: int, max_session: int) -> list[int]:
     """Fewest, most even chunks that are each <= max_session."""
@@ -13,6 +12,19 @@ def split_sizes(duration: int, max_session: int) -> list[int]:
 
 def hours(slots: int) -> str:  
     return f"{slots * MINUTES_PER_SLOT / 60:.2g}h"  
+
+def merge_fixed_spans(blocks: list[FixedBlock]) -> list[tuple[int, int, bool]]:  # NEW
+    """Union overlapping fixed spans on the absolute slot axis. Touching spans stay separate."""
+    spans = sorted((b.day * SLOTS_PER_DAY + b.start_slot,
+                    b.day * SLOTS_PER_DAY + b.end_slot, b.buffer_before) for b in blocks)
+    merged = []
+    for s, e, buf in spans:
+        if merged and s < merged[-1][1]:
+            ps, pe, pbuf = merged[-1]
+            merged[-1] = (ps, max(pe, e), pbuf or buf if s == ps else pbuf)  # NEW
+        else:
+            merged.append((s, e, buf))
+    return merged
 
 def build_schedule(fixed_blocks: list[FixedBlock], tasks: list[DynamicTask],
                 buffer_slots: int | None = None , num_days: int = 1,
@@ -26,15 +38,19 @@ def build_schedule(fixed_blocks: list[FixedBlock], tasks: list[DynamicTask],
     intervals = []
 
     fixed_block_bounds = [] #(abs_start, abs_end) per fixed block, for the buffer-after rule below
+    flush_intervals = []  # NEW: spans a task may end flush against (buffer_before=False)
+    sleep_intervals = []  # NEW
     for block in fixed_blocks:
         if block.day >= num_days:
             raise ValueError(
                 f"'{block.title}' is on day {block.day}, but the plan has {num_days} day(s)"
             )
-        length = block.end_slot - block.start_slot
-        start = block.day * SLOTS_PER_DAY + block.start_slot
-        intervals.append(model.NewFixedSizeIntervalVar(start, length, block.title))
-        fixed_block_bounds.append((start, start + length))
+
+    fixed_block_bounds = []  # NEW: one (abs_start, abs_end) per MERGED span
+    for k, (start, end, buffer_before) in enumerate(merge_fixed_spans(fixed_blocks)):  # NEW
+        iv = model.NewFixedSizeIntervalVar(start, end - start, f"fixed_{k}")  # NEW
+        (intervals if buffer_before else flush_intervals).append(iv)  # NEW
+        fixed_block_bounds.append((start, end))  # NEW
  
     # tasks: each becomes one or more chunks the solver places
     placed = []  # (task, is_present, [(start_expr, size), ...])
@@ -127,7 +143,9 @@ def build_schedule(fixed_blocks: list[FixedBlock], tasks: list[DynamicTask],
             base + rule.earliest_bed, base + rule.latest_bed + rule.length_slots,  
             f"sleep_end_{rule.night}",  
         )  
-        intervals.append(model.NewIntervalVar(start, size, end, f"sleep_{rule.night}"))   
+        sleep_iv = model.NewIntervalVar(start, size, end, f"sleep_{rule.night}")  # NEW
+        intervals.append(sleep_iv)  # NEW
+        sleep_intervals.append(sleep_iv)  # NEW   
  
         # how far below the minimum (0 if the minimum is met)
         shortfall = model.NewIntVar(0, rule.min_slots, f"sleep_short_{rule.night}")   
@@ -148,6 +166,7 @@ def build_schedule(fixed_blocks: list[FixedBlock], tasks: list[DynamicTask],
                 model.Add(start >= be + buffer_slots).OnlyEnforceIf([is_present, after_block])
                 model.Add(start + size <= bs).OnlyEnforceIf([is_present, after_block.Not()])
     model.AddNoOverlap(intervals)
+    model.AddNoOverlap(flush_intervals + sleep_intervals)
  
     # goal: fit as many high-priority tasks as possible, and place them early
     model.Maximize(
