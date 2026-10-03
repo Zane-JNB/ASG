@@ -4,7 +4,12 @@ from scheduler.db import connect, get_or_create_student, load_settings, get_refl
 from scheduler.reflection import ReflectionResult, PreferenceChangeProposal
 from scheduler.reflection_cycle import get_proposals, apply_and_log, rerun_schedule
 from scheduler.models import DynamicTask, ProfileSettings
-
+from types import SimpleNamespace
+from scheduler.db import connect, get_or_create_student
+from scheduler.preferences import Actor, change_tier
+from scheduler.preference_policy import Tier
+from scheduler.reflection import build_system_prompt
+from scheduler.reflection_cycle import reflect_and_record
 
 @pytest.fixture
 def conn():
@@ -122,3 +127,19 @@ def test_rerun_schedule_picks_up_a_settings_change_made_between_calls(conn, stud
 def _gap_between(items):
     task_items = sorted((i for i in items if i.kind == "task"), key=lambda i: i.start_slot)
     return task_items[1].start_slot - task_items[0].end_slot
+
+def test_prompt_lists_only_allowed_fields():  
+    p = build_system_prompt(["buffer_slots"])
+    assert "buffer_slots (deltas" in p and "bedtime_penalty (deltas" not in p
+
+def test_user_owned_field_is_not_shown_to_the_model():  
+    conn = connect(":memory:"); sid = get_or_create_student(conn, "Zane")
+    change_tier(conn, sid, "buffer_slots", Tier.USER, Actor.USER)
+    seen = {}
+    def create(**kw):
+        seen["system"] = kw["system"]
+        block = SimpleNamespace(type="tool_use", input={"summary": "", "proposals": []})
+        return SimpleNamespace(content=[block])
+    client = SimpleNamespace(messages=SimpleNamespace(create=create))
+    reflect_and_record(conn, sid, "felt rushed", client=client)
+    assert "buffer_slots (deltas" not in seen["system"] and "bedtime_penalty (deltas" in seen["system"]

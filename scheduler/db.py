@@ -103,17 +103,28 @@ CREATE TABLE IF NOT EXISTS preference_tiers (  -- NEW (3.6)
 CREATE TABLE IF NOT EXISTS preference_evidence (  -- NEW (3.6)
     student_id INTEGER NOT NULL REFERENCES students(id),
     field TEXT NOT NULL,
-    score INTEGER NOT NULL,      -- signed: + = increase, - = decrease
-    magnitude TEXT NOT NULL,     -- smallest bucket seen in the current streak
+    score INTEGER NOT NULL,     
+    magnitude TEXT NOT NULL,  
+    updated_at TEXT,  
     PRIMARY KEY (student_id, field)
+);
+
+CREATE TABLE IF NOT EXISTS preference_settings (  -- NEW (3.6): per-student learning options
+    student_id INTEGER PRIMARY KEY REFERENCES students(id),
+    approval_mode TEXT NOT NULL DEFAULT 'auto'     -- 'auto' | 'ask'
 );
 """
 
-def _migrate(conn: sqlite3.Connection) -> None:  
+def _migrate(conn: sqlite3.Connection) -> None:
     cols = {row[1] for row in conn.execute("PRAGMA table_info(reflections)")}
     if "outcome" not in cols:
-        conn.execute("ALTER TABLE reflections ADD COLUMN outcome TEXT") 
+        conn.execute("ALTER TABLE reflections ADD COLUMN outcome TEXT")
         conn.commit()
+    ev_cols = {row[1] for row in conn.execute("PRAGMA table_info(preference_evidence)")}  
+    if "updated_at" not in ev_cols:                                                       
+        conn.execute("ALTER TABLE preference_evidence ADD COLUMN updated_at TEXT")
+    conn.execute("UPDATE preference_evidence SET updated_at = ? WHERE updated_at IS NULL", (_now(),))  
+    conn.commit()
 
 def connect(path: str) -> sqlite3.Connection:
     """Open (and initialize, if new) the database at path. ':memory:' works for tests."""
@@ -164,7 +175,7 @@ def save_settings(conn: sqlite3.Connection, student_id: int, settings: ProfileSe
     if commit:
         conn.commit()
 
-def load_tiers(conn, student_id) -> dict[str, Tier]:  # NEW
+def load_tiers(conn, student_id) -> dict[str, Tier]:  
     conn.executemany(  # lazy backfill: INSERT OR IGNORE never overwrites a user's choice
         "INSERT OR IGNORE INTO preference_tiers (student_id, field, tier) VALUES (?, ?, ?)",
         [(student_id, name, p.default_tier.value) for name, p in POLICY.items()],
@@ -174,47 +185,65 @@ def load_tiers(conn, student_id) -> dict[str, Tier]:  # NEW
                         (student_id,)).fetchall()
     return {f: Tier(t) for f, t in rows if f in POLICY}
 
-def set_tier(conn, student_id, field, tier: Tier, commit=True) -> None:  # NEW
+def set_tier(conn, student_id, field, tier: Tier, commit=True) -> None:  
     conn.execute("""INSERT INTO preference_tiers (student_id, field, tier) VALUES (?, ?, ?)
                     ON CONFLICT(student_id, field) DO UPDATE SET tier = excluded.tier""",
                  (student_id, field, tier.value))
     if commit: conn.commit()
 
-def load_evidence(conn, student_id) -> dict[str, tuple[int, str]]:  # NEW
+def load_evidence(conn, student_id) -> dict[str, tuple[int, str]]:  
     rows = conn.execute("SELECT field, score, magnitude FROM preference_evidence "
                         "WHERE student_id = ?", (student_id,)).fetchall()
     return {f: (score, mag) for f, score, mag in rows}
 
-def save_evidence(conn, student_id, field, score, magnitude, commit=True) -> None:  # NEW
-    conn.execute("""INSERT INTO preference_evidence (student_id, field, score, magnitude)
-                    VALUES (?, ?, ?, ?) ON CONFLICT(student_id, field) DO UPDATE SET
-                    score = excluded.score, magnitude = excluded.magnitude""",
-                 (student_id, field, score, magnitude))
+def save_evidence(conn, student_id, field, score, magnitude, commit=True, at=None) -> None:   
+    conn.execute("""INSERT INTO preference_evidence (student_id, field, score, magnitude, updated_at)
+                    VALUES (?, ?, ?, ?, ?) ON CONFLICT(student_id, field) DO UPDATE SET
+                    score = excluded.score, magnitude = excluded.magnitude,
+                    updated_at = excluded.updated_at""",
+                 (student_id, field, score, magnitude, at or _now()))
     if commit: conn.commit()
 
-def clear_evidence(conn, student_id, field=None, commit=True) -> None:  # NEW (None = all)
+def load_evidence_times(conn, student_id) -> dict[str, str | None]:  
+    rows = conn.execute("SELECT field, updated_at FROM preference_evidence WHERE student_id = ?",
+                        (student_id,)).fetchall()
+    return {f: t for f, t in rows}
+
+def load_approval_mode(conn, student_id) -> str:  
+    row = conn.execute("SELECT approval_mode FROM preference_settings WHERE student_id = ?",
+                       (student_id,)).fetchone()
+    return row[0] if row else "auto"
+
+def save_approval_mode(conn, student_id, mode, commit=True) -> None:  
+    conn.execute("""INSERT INTO preference_settings (student_id, approval_mode) VALUES (?, ?)
+                    ON CONFLICT(student_id) DO UPDATE SET approval_mode = excluded.approval_mode""",
+                 (student_id, mode))
+    if commit: conn.commit()
+
+def clear_evidence(conn, student_id, field=None, commit=True) -> None:   
     if field is None:
         conn.execute("DELETE FROM preference_evidence WHERE student_id = ?", (student_id,))
     else:
         conn.execute("DELETE FROM preference_evidence WHERE student_id = ? AND field = ?",
                      (student_id, field))
     if commit: conn.commit()
-    
+
 def log_reflection(conn: sqlite3.Connection, student_id: int, reflection_text: str,
-                   before: ProfileSettings, after: ProfileSettings, applied: bool) -> int:
+                   before: ProfileSettings, after: ProfileSettings, applied: bool,
+                   outcome: str | None = None, commit: bool = True) -> int:  
     """Record a reflection and the settings snapshot before/after it. Returns the new row's id."""
     cur = conn.execute(
         """
         INSERT INTO reflections
-            (student_id, created_at, reflection_text, settings_before_json, settings_after_json, applied)
-        VALUES (?, ?, ?, ?, ?, ?)
-        """,
+            (student_id, created_at, reflection_text, settings_before_json, settings_after_json, applied, outcome)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,   
         (student_id, _now(), reflection_text,
-         before.model_dump_json(), after.model_dump_json(), int(applied)),
+         before.model_dump_json(), after.model_dump_json(), int(applied), outcome)
     )
-    conn.commit()
+    if commit:  
+        conn.commit()
     return cur.lastrowid
-
 
 def get_reflections(conn: sqlite3.Connection, student_id: int) -> list[dict]:
     """Return this student's reflection history, oldest first."""

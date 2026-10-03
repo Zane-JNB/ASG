@@ -4,11 +4,7 @@ from scheduler.db import load_settings, save_settings, log_reflection
 from scheduler.reflection import ReflectionResult, apply_all, propose_preference_changes
 from scheduler.solver import build_schedule
 from scheduler.models import DynamicTask, FixedBlock, SleepRule
-
-
-def get_proposals(reflection_text: str, client=None) -> ReflectionResult:
-    """Ask the LLM for proposals. Pure -- no db access, nothing saved."""
-    return propose_preference_changes(reflection_text, client=client)
+from scheduler.preferences import ReflectionOutcome, learnable_fields, process_reflection
 
 
 def apply_and_log(conn: sqlite3.Connection, student_id: int, reflection_text: str,
@@ -51,3 +47,11 @@ def rerun_schedule(conn, student_id, fixed_blocks, tasks, sleep_rules=None, num_
         fixed_blocks, tasks, num_days=num_days, sleep_rules=sleep_rules,
         time_limit_seconds=time_limit_seconds, settings=settings,
     )
+
+def get_proposals(reflection_text, client=None, allowed_fields=None) -> ReflectionResult:   
+    return propose_preference_changes(reflection_text, client=client, allowed_fields=allowed_fields)  
+
+def reflect_and_record(conn, student_id, reflection_text, client=None):  
+    allowed = learnable_fields(conn, student_id)       # prompt filter only; process_reflection re-checks
+    result = get_proposals(reflection_text, client=client, allowed_fields=allowed)
+    return process_reflection(conn, student_id, reflection_text, result), result.summary

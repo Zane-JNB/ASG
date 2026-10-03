@@ -2,12 +2,12 @@ from dataclasses import dataclass
 from enum import Enum
 from scheduler.models import ProfileSettings
 
-class Tier(str, Enum):  # NEW
+class Tier(str, Enum):  
     LOCKED = "locked"
     USER = "user"
     MODEL_LEARNED = "model_learned"
 
-@dataclass(frozen=True)  # NEW
+@dataclass(frozen=True)  
 class FieldPolicy:
     default_tier: Tier
     label: str
@@ -17,7 +17,7 @@ class FieldPolicy:
     user_claimable: bool = False
     deltas: dict[str, int] | None = None
 
-    def __post_init__(self):  # NEW: contradictory policies can't be constructed
+    def __post_init__(self):  #   contradictory policies can't be constructed
         if self.model_learnable != (self.deltas is not None):
             raise ValueError("deltas must be set if and only if model_learnable")
         if self.user_claimable and not (self.model_learnable and self.user_editable):
@@ -30,21 +30,21 @@ class FieldPolicy:
         if self.default_tier == Tier.MODEL_LEARNED and not self.model_learnable:
             raise ValueError("a model_learned-tier field must be model_learnable")
 
-def _locked(label, description):  # NEW
+def _locked(label, description):  
     return FieldPolicy(Tier.LOCKED, label, description)
 
-def _user_only(label, description):  # NEW  (student edits; model never learns; can't change tier)
+def _user_only(label, description):  
     return FieldPolicy(Tier.USER, label, description, user_editable=True)
 
-def _internal(label, description, deltas):  # NEW  (model learns; student can't edit/claim)
+def _internal(label, description, deltas):  
     return FieldPolicy(Tier.MODEL_LEARNED, label, description, model_learnable=True, deltas=deltas)
 
-def _claimable(label, description, deltas, default_tier=Tier.MODEL_LEARNED):  # NEW
+def _claimable(label, description, deltas, default_tier=Tier.MODEL_LEARNED):  
     return FieldPolicy(default_tier, label, description, model_learnable=True,
                        user_editable=True, user_claimable=True, deltas=deltas)
 
-S, M, L = "small", "medium", "large"  # NEW
-POLICY: dict[str, FieldPolicy] = {  # NEW
+S, M, L = "small", "medium", "large"  
+POLICY: dict[str, FieldPolicy] = {  
     "buffer_slots": _claimable("Break time", "Gap after tasks/classes (15-min slots).", {S: 1, M: 2, L: 4}),
     "default_max_session_slots": _claimable("Longest study session", "Session cap (15-min slots).", {S: 2, M: 4, L: 8}, Tier.USER),
     "default_sleep_length_slots": _claimable("Sleep target", "Sleep you aim for (15-min slots).", {S: 2, M: 4, L: 8}),
@@ -69,4 +69,4 @@ POLICY: dict[str, FieldPolicy] = {  # NEW
     "shrink_steps": _locked("Shrink steps", "Fractions tried when fitting a task."),
 }
 
-MODEL_DELTAS = {n: dict(p.deltas) for n, p in POLICY.items() if p.model_learnable}  # NEW
+MODEL_DELTAS = {n: dict(p.deltas) for n, p in POLICY.items() if p.model_learnable}  

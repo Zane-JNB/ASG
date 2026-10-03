@@ -1,10 +1,20 @@
 import os
 
+from scheduler.preferences import pending_approvals, resolve_pending 
+from scheduler.settings_menu import describe_pending 
 from scheduler.db import connect, get_or_create_student
-from scheduler.reflection_cycle import get_proposals, apply_and_log
+from scheduler.reflection_cycle import get_proposals, apply_and_log, reflect_and_record
 
 DB_PATH = "scheduler.db"
 
+_STATUS = {                                                    
+    "learned_update_applied": "Settings updated.",
+    "approval_needed": "Enough evidence -- this needs your approval.",
+    "evidence_recorded": "Evidence recorded -- no settings changed yet.",
+    "threshold_at_limit": "Enough evidence, but the setting is already at its limit -- no change.",
+    "proposal_ignored": "Nothing changed.",
+    "no_proposals": "No changes proposed.",
+}
 
 def main():
     backend = os.environ.get("LLM_BACKEND", "fake")
@@ -22,23 +32,17 @@ def main():
     student_id = get_or_create_student(conn, name)
 
     reflection_text = input("How did it go? ").strip()
-    result = get_proposals(reflection_text)
+    outcome, summary = reflect_and_record(conn, student_id, reflection_text)   
 
-    print(f"\n{result.summary}\n")
-    if not result.proposals:
-        apply_and_log(conn, student_id, reflection_text, result, accepted=[])
-        print("No changes proposed.")
-        return
+    if summary:
+        print(f"\n{summary}\n")
+    for r in outcome.results:                                                   
+        print(f"- {r.message}")
+    print(_STATUS[outcome.outcome])                                             
 
-    accepted = []
-    for p in result.proposals:
-        print(f"- {p.field}: {p.direction} ({p.magnitude}) -- {p.reason}")
-        answer = input("  Apply this change? [y/N] ").strip().lower()
-        accepted.append(answer == "y")
-
-    apply_and_log(conn, student_id, reflection_text, result, accepted)
-    print(f"\nApplied {sum(accepted)}/{len(accepted)} change(s). Settings saved.")
-
+    for p in pending_approvals(conn, student_id):                         
+        answer = input(f"  Apply this change? {describe_pending(p)} [y/N] ").strip().lower()
+        print(f"- {resolve_pending(conn, student_id, p.field, answer == 'y').message}")
 
 if __name__ == "__main__":
     main()

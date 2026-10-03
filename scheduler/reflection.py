@@ -5,9 +5,9 @@ import annotated_types
 from pydantic import BaseModel, Field, ValidationError, model_validator
 
 from scheduler.models import ProfileSettings
-from scheduler.preference_policy import MODEL_DELTAS  # NEW
+from scheduler.preference_policy import MODEL_DELTAS  
 
-ADJUSTABLE_FIELDS: dict[str, dict[str, int]] = MODEL_DELTAS  # NEW (derived; old name kept so nothing else breaks)
+ADJUSTABLE_FIELDS: dict[str, dict[str, int]] = MODEL_DELTAS   
 
 
 class PreferenceChangeProposal(BaseModel):
@@ -61,7 +61,7 @@ def build_system_prompt(fields: list[str] | None = None) -> str:
     shown = ADJUSTABLE_FIELDS if fields is None else {n: ADJUSTABLE_FIELDS[n] for n in fields}
     field_lines = "\n".join(
         f"- {name} (deltas: small={d['small']}, medium={d['medium']}, large={d['large']})"
-        for name, d in ADJUSTABLE_FIELDS.items()
+        for name, d in shown.items()
     )
     return (
         "You help tune a student's schedule-generation preferences based on their reflection "
@@ -137,7 +137,7 @@ def propose_preference_changes(reflection_text: str, client=None, allowed_fields
 
     return ReflectionResult(summary=raw.get("summary", ""), proposals=proposals)
     
-def _upper_bound(field_name: str) -> int | None:  # NEW
+def _upper_bound(field_name: str) -> int | None:  
     for constraint in ProfileSettings.model_fields[field_name].metadata:
         if isinstance(constraint, annotated_types.Lt):
             return constraint.lt - 1

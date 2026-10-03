@@ -9,6 +9,7 @@ from scheduler.review import _confirm, _date, _describe, _hours
 from scheduler.completion import finish_task, run_checkin   
 from scheduler.task_filter import describe_reminders   
 from scheduler.commute_menu import run_commute_menu
+from scheduler.settings_menu import run_settings_menu
 
 _DEFAULT = ExtractedTask(title="x", date="2000-01-01")  # only used to read the placeholder defaults
 _SESSION_CAP = DynamicTask.model_fields["max_session_slots"].default
@@ -172,6 +173,8 @@ def run_menu(conn, student_id, ask=input, show=print, today: date | None = None,
                 show(f"Saved -- tasks are now planned in sessions of up to {slots * MINUTES_PER_SLOT / 60:g}h.")
         elif choice == "m":   
             run_commute_menu(conn, student_id, ask, show, today)
+        elif choice == "p":                                        
+            run_settings_menu(conn, student_id, ask, show)
         elif choice == "x":
             count = len(get_extracted_tasks(conn, student_id))
             if count == 0:
