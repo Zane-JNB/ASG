@@ -18,7 +18,8 @@ def main():
         print(e)
         return
     print("\n".join(format_plan(anchor, fixed, items, warnings)))
-    record_plan(conn, student_id, anchor, items, now)  #  check-ins know which sessions have passed
+    #  check-ins know which sessions have passed
+    record_plan(conn, student_id, anchor, items, now)  
 
 
 if __name__ == "__main__":

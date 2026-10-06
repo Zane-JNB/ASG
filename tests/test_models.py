@@ -31,7 +31,7 @@ def test_sleep_rule_preferred_bed_must_be_in_window():
         SleepRule(earliest_bed=88, preferred_bed=80, latest_bed=100)  
 
 def test_study_plan_rule_bands_by_difficulty():
-    rule = StudyPlanRule()
+    rule = StudyPlanRule()  
     assert rule.band_for(1) is rule.easy
     assert rule.band_for(2) is rule.easy
     assert rule.band_for(3) is rule.medium

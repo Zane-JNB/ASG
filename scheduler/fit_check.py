@@ -39,10 +39,11 @@ def overlap_error(anchor: PlanAnchor, overlaps) -> str:
 
 @dataclass
 class FitInputs: 
-    anchor: PlanAnchor
+    anchor: PlanAnchor #stores all relevant dates, start_date, num_dates
     fixed: list[FixedBlock]
-    planned: list[tuple[int, DynamicTask]]  # (saved task id, task) with plan cuts applied
-    new_task: DynamicTask | None
+    #planned: (saved task id, task) which also ensure that when space is freed up for a task that was cut, it is properly reallocated
+    planned: list[tuple[int, DynamicTask]] 
+    new_task: DynamicTask | None 
     sleep_rules: list[SleepRule]
     settings: ProfileSettings
     warnings: list[ScheduleWarning] = field(default_factory=list)
@@ -60,6 +61,7 @@ def next_slot(now: datetime) -> int:
     seconds = now.hour * 3600 + now.minute * 60 + now.second + now.microsecond / 1e6
     return math.ceil(seconds / (MINUTES_PER_SLOT * 60))
 
+#ensures the earliest start ate for a task is not before or after today.
 def starts_from(task: DynamicTask, now: datetime) -> DynamicTask:
     day, slot = divmod(next_slot(now), SLOTS_PER_DAY)
     return task.model_copy(update={"earliest_start_day": day, "earliest_start_slot": slot})
@@ -70,8 +72,8 @@ def build_fit_inputs(conn, student_id: int, now: datetime,
     in the past, weekly classes are expanded across the whole window, and the window reaches the
     LATEST deadline (not just the new task's) so later-deadline tasks have room to move."""
     settings = load_settings(conn, student_id)
-    today = now.date()
-    day0 = PlanAnchor(start_date=today, num_days=1)
+    today = now.date() #makes day 0 = today
+    day0 = PlanAnchor(start_date=today, num_days=1) #anchor's plan with today's date.
     start_day, start_slot = divmod(next_slot(now), SLOTS_PER_DAY)
 
     def from_now(t: DynamicTask) -> DynamicTask:

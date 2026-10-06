@@ -4,6 +4,7 @@ from scheduler.models import (
     DynamicTask,Exam, FixedBlock, MINUTES_PER_SLOT, ProfileSettings, ScheduledItem, ScheduleWarning,
     SleepRule, SLOTS_PER_DAY, slot_to_time, StudyPlanRule, )
 
+#Splits tasks into chunks no larger than the student's preference.
 def split_sizes(duration: int, max_session: int) -> list[int]:
     """Fewest, most even chunks that are each <= max_session."""
     n = math.ceil(duration / max_session)
@@ -29,7 +30,7 @@ def merge_fixed_spans(blocks: list[FixedBlock]) -> list[tuple[int, int, bool]]:
 def build_schedule(fixed_blocks: list[FixedBlock], tasks: list[DynamicTask],
                 buffer_slots: int | None = None , num_days: int = 1,
                 sleep_rules: list[SleepRule] | None = None,
-                time_limit_seconds: float | None = 30.0,
+                time_limit_seconds: float | None = 30.0, #Optimal->Use it. Time up, but feasible plan found. Else RunTime Error.
                 settings: ProfileSettings | None = None): 
     
     settings = settings or ProfileSettings()
@@ -46,7 +47,6 @@ def build_schedule(fixed_blocks: list[FixedBlock], tasks: list[DynamicTask],
                 f"'{block.title}' is on day {block.day}, but the plan has {num_days} day(s)"
             )
 
-    fixed_block_bounds = []   
     for k, (start, end, buffer_before) in enumerate(merge_fixed_spans(fixed_blocks)):   
         iv = model.NewFixedSizeIntervalVar(start, end - start, f"fixed_{k}")   
         (intervals if buffer_before else flush_intervals).append(iv)   

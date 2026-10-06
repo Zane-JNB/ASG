@@ -10,7 +10,7 @@ from scheduler.planner import plan_from_saved, format_plan
 
 MONDAY = date(2026, 9, 28)
 
-
+#Creates a brand new empty database with a new student, adding 1 fixed block, 1 fixed task and one dated block.
 def _setup(tasks=None, blocks=None, patterns=None):
     conn = connect(":memory:")
     sid = get_or_create_student(conn, "Z")
@@ -24,7 +24,7 @@ def _setup(tasks=None, blocks=None, patterns=None):
     ))
     return conn, sid
 
-
+#has to use MONDAY instead of today's date to prevent determinism in the assertion.
 def test_end_to_end_uses_real_dates_and_meets_deadline():
     conn, sid = _setup()
     anchor, fixed, items, warnings = plan_from_saved(conn, sid, 7, start_date=MONDAY, time_limit_seconds=10)
