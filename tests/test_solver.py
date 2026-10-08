@@ -31,6 +31,19 @@ def test_solver_leaves_a_buffer_after_tasks():
     first, second = items[0], items[1]
     assert second.start_slot - first.end_slot >= 1
 
+def test_long_split_task_that_fits_is_not_dropped_over_a_long_horizon():
+    # many late chunks add up a large "start early" cost; it must never outweigh fitting the task
+    days = 28
+    classes = [FixedBlock(title="Class", day=d, start_slot=32, end_slot=68) for d in range(days)]
+    sleep = [SleepRule(night=d) for d in range(days)]
+    task = DynamicTask(title="Thesis", duration_slots=240, priority=1, max_session_slots=8,
+                       deadline_day=days - 1)
+    items, unscheduled = build_schedule(classes, [task], num_days=days, sleep_rules=sleep,
+                                        time_limit_seconds=20)
+    assert unscheduled == []
+    assert sum(i.end_slot - i.start_slot for i in items if i.kind == "task") == 240
+
+
 def test_split_sizes():
     assert split_sizes(12, 6) == [6, 6]
     assert split_sizes(13, 6) == [5, 4, 4]

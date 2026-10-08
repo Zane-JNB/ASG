@@ -1,4 +1,3 @@
-import re
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta
 
@@ -7,7 +6,6 @@ from scheduler.db import (
     mark_sessions_asked, record_plan_sessions, reduce_plan_cut, update_extracted_task,
 )
 from scheduler.drop_review import _h
-from scheduler.fit_check import planned_tasks
 from scheduler.models import MINUTES_PER_SLOT, PlanAnchor, SLOTS_PER_DAY
 from scheduler.restore import plan_restores
 from scheduler.review import _confirm
@@ -49,13 +47,10 @@ def finish_task(conn, student_id: int, task_id: int, now: datetime, ask=input, s
 def record_plan(conn, student_id: int, anchor: PlanAnchor, items, now: datetime) -> int:   
     """Remember when each task session of a plan is scheduled, so check-ins can tell which ones
     have passed. Call it after making a plan. Returns how many sessions were recorded."""
-    ids = {}
-    for tid, task in planned_tasks(conn, student_id, PlanAnchor(start_date=anchor.start_date, num_days=1)):
-        ids.setdefault(task.title, tid)
     origin = datetime.combine(anchor.start_date, time(0))
     rows = []
     for it in items:
-        tid = ids.get(re.sub(r" \(\d+/\d+\)$", "", it.title)) if it.kind == "task" else None
+        tid = it.saved_id if it.kind == "task" else None  # by id, so same-titled tasks stay apart
         if tid is None:
             continue
         start = origin + timedelta(minutes=MINUTES_PER_SLOT * (it.day * SLOTS_PER_DAY + it.start_slot))

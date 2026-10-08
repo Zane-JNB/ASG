@@ -23,7 +23,7 @@ def planned_tasks(conn, student_id: int, anchor: PlanAnchor):
             continue
         remaining = task.duration_slots - cuts.get(task_id, 0)
         if remaining > 0:
-            result.append((task_id, task.model_copy(update={"duration_slots": remaining})))
+            result.append((task_id, task.model_copy(update={"duration_slots": remaining, "saved_id": task_id})))
     return result
 
 def overlap_error(anchor: PlanAnchor, overlaps) -> str:    
@@ -104,4 +104,9 @@ def build_fit_inputs(conn, student_id: int, now: datetime,
     wake = min([wake] + [b.start_slot for b in fixed if b.day == 0])
     if start_day == 0 and wake > start_slot:  # still morning-sleep hours: keep them free
         fixed = fixed + [FixedBlock(title="Sleep (night before)", day=0, start_slot=0, end_slot=wake)]
+    # tonight's bedtime cannot be earlier than now
+    bed = max(rule0.earliest_bed, next_slot(now))
+    sleep_rules[0] = rule0.model_copy(update={"earliest_bed": bed,
+                                              "preferred_bed": max(rule0.preferred_bed, bed),
+                                              "latest_bed": max(rule0.latest_bed, bed)})
     return FitInputs(anchor, fixed, planned, new_dyn, sleep_rules, settings, commute_warnings)  

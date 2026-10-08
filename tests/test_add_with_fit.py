@@ -71,6 +71,16 @@ def test_nothing_is_planned_before_now(conn, sid):
     assert tasks and all(i.day * 96 + i.start_slot >= next_slot(now) for i in tasks)
 
 
+@pytest.mark.parametrize("now", [datetime(2026, 10, 8, 23, 30), datetime(2026, 10, 8, 23, 50)])
+def test_tonights_sleep_never_starts_before_now(conn, sid, now):
+    # preferred bedtime is 23:00, but at 23:30 that time has already passed
+    fit = build_fit_inputs(conn, sid, now)
+    items, _ = build_schedule(fit.fixed, [], num_days=fit.anchor.num_days,
+                              sleep_rules=fit.sleep_rules, settings=fit.settings)
+    sleep = [i for i in items if i.kind == "sleep" and i.day * 96 + i.start_slot < 96 + 48]
+    assert sleep and sleep[0].day * 96 + sleep[0].start_slot >= next_slot(now)
+
+
 def test_near_deadline_task_shuffles_a_later_one_instead_of_cutting_it(conn, sid):
     _class_all_day(conn, sid)
     add_extracted_task(conn, sid, _task("Report", 6, 3, D + timedelta(days=3)))

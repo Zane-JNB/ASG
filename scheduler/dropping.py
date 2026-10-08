@@ -1,5 +1,6 @@
 import functools
-import itertools   
+import heapq
+import itertools
 from scheduler.models import (  
     DropAction, DropProposal, DropReport, DynamicTask, FixedBlock,
     ProfileSettings, SleepRule,
@@ -66,6 +67,17 @@ def _dominated(cuts, feasible):
     """True if an already-working plan cuts no more than this one, so this one is wasteful."""
     return any(all(cuts.get(i, 0) >= k for i, k in f.items()) for f in feasible)
 
+def _cheapest_first(make_combos, k):
+    """Yield make_combos() cheapest first (ties keep their order), like a full sort, but only ever
+    holding the k cheapest in memory. If all k get used, the next batch is found by doubling k."""
+    done = 0
+    while True:
+        batch = heapq.nsmallest(k, make_combos(), key=lambda c: c[0])  # same as sorted(...)[:k]
+        yield from batch[done:]
+        if len(batch) < k:
+            return
+        done, k = k, 2 * k
+
 def _solve_all_fit(fixed, tasks, num_days, sleep_rules, settings, limit):   
     """(items, sleep_warnings) if EVERY task gets placed, else None."""
     try:
@@ -124,29 +136,28 @@ def propose_drops(fixed_blocks, tasks, new_task, num_days=1, sleep_rules=None,
         if r:
             found.append(make((), False, 0, *r))    
 
-    # options: cut existing tasks. Build every combo, cheapest first.
-       # options: cut existing tasks and/or shorten the new one, cheapest-looking first
+    # options: cut existing tasks and/or shorten the new one, cheapest-looking first
     opts = _options(tasks, settings)
     new_cuts = [0] + (_shrink_amounts(new_task.duration_slots, settings)  #   -- a one-block new task can be shortened
                       if len(chunk_sizes(new_task)) == 1 else [])
     deficit = sum(t.duration_slots for t in base[1])
     sleep_flex = sum(r.length_slots - r.min_slots for r in sleep_rules if not r.skip)
-    combos = []
-    for n in range(0, max_actions + 1):  #   -- 0 = only shorten the new task
-        for idxs in itertools.combinations(range(len(tasks)), n):
-            for pick in itertools.product(*(opts[i] for i in idxs)):
-                for new_cut in new_cuts:
-                    if not pick and not new_cut:
-                        continue  # that is the plan that already failed
-                    if sum(a.slots_lost for a in pick) + new_cut < deficit - sleep_flex:
-                        continue  # cannot possibly free enough room
-                    cost = (sum(loss_cost(tasks[a.task_index], a.slots_lost, settings) for a in pick)
-                            + loss_cost(new_task, new_cut, settings))
-                    combos.append((cost, pick, new_cut))
-    combos.sort(key=lambda c: c[0])
+
+    def combos():
+        for n in range(0, max_actions + 1):  #   -- 0 = only shorten the new task
+            for idxs in itertools.combinations(range(len(tasks)), n):
+                for pick in itertools.product(*(opts[i] for i in idxs)):
+                    for new_cut in new_cuts:
+                        if not pick and not new_cut:
+                            continue  # that is the plan that already failed
+                        if sum(a.slots_lost for a in pick) + new_cut < deficit - sleep_flex:
+                            continue  # cannot possibly free enough room
+                        cost = (sum(loss_cost(tasks[a.task_index], a.slots_lost, settings) for a in pick)
+                                + loss_cost(new_task, new_cut, settings))
+                        yield cost, pick, new_cut
 
     feasible_cuts, exhausted = [], True
-    for cost, pick, new_cut in combos:
+    for cost, pick, new_cut in _cheapest_first(combos, 4 * max_checks):
         cuts = {a.task_index: a.slots_lost for a in pick}
         if new_cut:
             cuts[-1] = new_cut  # -1 stands for the new task

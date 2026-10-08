@@ -13,8 +13,8 @@ def apply_and_log(conn: sqlite3.Connection, student_id: int, reflection_text: st
     reflection (before/after snapshot + an overall applied flag).
 
     accepted must have one bool per result.proposals, in the same order (the caller's
-    y/N answers). Rejected proposals are dropped silently -- only chosen ones reach
-    apply_all. Returns the settings actually saved (== before, unchanged, if nothing
+    y/N answers). Rejected proposals are dropped silently -- only chosen ones are
+    applied. Returns the settings actually saved (== before, unchanged, if nothing
     was accepted or every accepted proposal net out to a no-op).
 
     Legacy direct path (the demo's y/N prompt is the student's consent, so no evidence

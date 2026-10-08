@@ -168,15 +168,15 @@ def build_schedule(fixed_blocks: list[FixedBlock], tasks: list[DynamicTask],
     model.AddNoOverlap(intervals)
     model.AddNoOverlap(flush_intervals + sleep_intervals)
  
-    # goal: fit as many high-priority tasks as possible, and place them early
+    # goal: fit as many high-priority tasks as possible, and place them early.
+    # "early" is averaged per chunk (everything else is scaled by the most chunks any task has),
+    # so a task with many late chunks never costs more than fitting it is worth
+    scale = max([len(chunks) for _, _, chunks in placed], default=1)
     model.Maximize(
-        sum(
-            task.priority * settings.presence_bonus * present
-            - task.priority * sum(start for start, _ in chunks)
-            for task, present, chunks in placed
-        )
-        - sum(sleep_cost)   
-        - sum(spread_cost)
+        scale * sum(task.priority * settings.presence_bonus * present for task, present, _ in placed)
+        - sum(task.priority * sum(start for start, _ in chunks) for task, _, chunks in placed)
+        - scale * sum(sleep_cost)
+        - scale * sum(spread_cost)
     )
  
     solver = cp_model.CpSolver()
@@ -233,6 +233,7 @@ def build_schedule(fixed_blocks: list[FixedBlock], tasks: list[DynamicTask],
                     end_slot=offset + size,
                     kind="task",
                     day=day,
+                    saved_id=task.saved_id,
                 )
             )
  

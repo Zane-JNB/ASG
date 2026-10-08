@@ -42,8 +42,9 @@ class DynamicTask(BaseModel):
     earliest_start_slot: int = Field(default=0, ge=0, lt=SLOTS_PER_DAY)
     max_daily_slots: int | None = Field(default=None, gt=0)
     completed_at: SkipJsonSchema[str | None] = None
+    saved_id: SkipJsonSchema[int | None] = None  # id of the saved task this came from, if any
 
-class SleepRule(BaseModel):  # 
+class SleepRule(BaseModel):  #
     """One night of sleep. Night 0 starts on the evening of day 0.""" 
     night: int = Field(default=0, ge=0)  
     length_slots: int = Field(default=32, gt=0) 
@@ -110,6 +111,7 @@ class ScheduledItem(BaseModel):
     end_slot: int  # exclusive
     kind: str      # "fixed" or "task"
     day: int = 0
+    saved_id: int | None = None  # task items: the saved task's id, if it has one
 
 class Exam(BaseModel):
     title: str

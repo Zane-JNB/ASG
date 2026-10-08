@@ -165,6 +165,15 @@ def test_record_plan_maps_split_sessions_back_to_the_saved_task(conn, sid):
     assert [c.task_id for c in due_checkins(conn, sid, later)] == [tid]  # one entry per task, not per session
 
 
+def test_record_plan_keeps_same_titled_tasks_apart(conn, sid):
+    first = add_extracted_task(conn, sid, _task("Homework", due=D + timedelta(days=1)))
+    second = add_extracted_task(conn, sid, _task("Homework", due=D + timedelta(days=5)))
+    anchor, _, items, _ = plan_from_saved(conn, sid, now=NINE, time_limit_seconds=10)
+    record_plan(conn, sid, anchor, items, NINE)
+    later = NINE + timedelta(days=7)
+    assert sorted(c.task_id for c in due_checkins(conn, sid, later)) == sorted([first, second])
+
+
 def test_nothing_is_due_before_the_sessions_end(conn, sid):
     _, anchor, items = _planned_student(conn, sid)
     record_plan(conn, sid, anchor, items, NINE)

@@ -1,5 +1,5 @@
 import pytest
-from scheduler.dropping import chunk_sizes, cut_task, loss_cost, propose_drops
+from scheduler.dropping import _cheapest_first, chunk_sizes, cut_task, loss_cost, propose_drops
 from scheduler.models import DynamicTask, FixedBlock, ProfileSettings, SleepRule
 from scheduler.solver import build_schedule
 
@@ -13,6 +13,25 @@ def busy_day():
     ]
     new = DynamicTask(title="Essay", duration_slots=16, priority=4, difficulty=3)
     return fixed, tasks, new, [SleepRule(night=0)]
+
+
+@pytest.mark.parametrize("k", [1, 3, 7, 100])
+def test_cheapest_first_matches_a_full_sort_including_ties(k):
+    combos = [(c, f"combo{i}", 0) for i, c in enumerate([5, 1, 3, 1, 9, 3, 0, 5, 1, 2, 7, 3])]
+    assert list(_cheapest_first(lambda: iter(combos), k)) == sorted(combos, key=lambda c: c[0])
+
+
+def test_cheapest_first_stops_early_when_the_caller_stops():
+    made = []
+    def combos():
+        made.append(1)
+        yield from [(c, c, 0) for c in range(100)]
+    first_two = []
+    for c in _cheapest_first(combos, 4):
+        first_two.append(c[0])
+        if len(first_two) == 2:
+            break
+    assert first_two == [0, 1] and len(made) == 1  # one pass, no extra batches
 
 
 def test_cut_task_removes_whole_sessions():
