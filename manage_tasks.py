@@ -1,7 +1,7 @@
 from scheduler.db import connect, get_or_create_student
 from scheduler.task_manager import run_menu
 
-DB_PATH = "scheduler.db"
+from scheduler.paths import DB_PATH  # repo root, whatever folder you run from
 
 
 def main():

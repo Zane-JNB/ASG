@@ -4,7 +4,7 @@ from scheduler.completion import record_plan
 from scheduler.db import connect, get_or_create_student
 from scheduler.planner import plan_from_saved, format_plan
 
-DB_PATH = "scheduler.db"
+from scheduler.paths import DB_PATH  # repo root, whatever folder you run from
 
 
 def main():

@@ -1,4 +1,4 @@
-from scheduler.commute_menu import _ask, _pick                      
+from scheduler.menu_input import ask_until, pick                      
 from scheduler.models import MINUTES_PER_SLOT, SLOTS_PER_DAY, slot_to_time, time_to_slot
 from scheduler.preference_policy import POLICY, Tier
 from scheduler.preferences import (APPROVAL_ASK, APPROVAL_AUTO, Actor, PreferenceError, _check_may_edit,  
@@ -101,7 +101,7 @@ def _edit(conn, student_id, name, ask, show):
     except PreferenceError as e:
         show(str(e)); return
     parse, fmt, hint = _UI[name]
-    value = _ask(ask, show, f"New value for {POLICY[name].label} ({hint}; Enter to cancel)", parse, default=_CANCEL)
+    value = ask_until(ask, show, f"New value for {POLICY[name].label} ({hint}; Enter to cancel)", parse, default=_CANCEL)
     if value is _CANCEL:
         return
     before = getattr(get_effective(conn, student_id), name)
@@ -136,7 +136,7 @@ def run_settings_menu(conn, student_id, ask=input, show=print):
             _approval(conn, student_id, ask, show)
         elif choice in ("e", "m", "a"):
             show_settings(conn, student_id, show)
-            item = _pick(ask, show, fields, "Number (Enter to cancel): ")
+            item = pick(ask, show, fields, "Number (Enter to cancel): ")
             if item is None: continue
             if choice == "e": _edit(conn, student_id, item, ask, show)
             else: _switch(conn, student_id, item, Tier.USER if choice == "m" else Tier.MODEL_LEARNED, show)

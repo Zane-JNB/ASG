@@ -125,7 +125,9 @@ def _migrate(conn: sqlite3.Connection) -> None:
     ev_cols = {row[1] for row in conn.execute("PRAGMA table_info(preference_evidence)")}  
     if "updated_at" not in ev_cols:                                                       
         conn.execute("ALTER TABLE preference_evidence ADD COLUMN updated_at TEXT")
-    conn.execute("UPDATE preference_evidence SET updated_at = ? WHERE updated_at IS NULL", (_now(),))  
+    # Any row still without a time (pre-column data, or a DB whose column was added without a
+    # backfill) gets "now" once, so it can expire. A NULL time would never expire (preferences.py).
+    conn.execute("UPDATE preference_evidence SET updated_at = ? WHERE updated_at IS NULL", (_now(),))
     conn.commit()
 
 # Accepts a filepath as a string, which is then connected to sqlite and stored in the 'conn' variable.

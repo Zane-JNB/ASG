@@ -264,3 +264,120 @@ def test_groq_vision_call_is_deterministic_and_sends_the_image(monkeypatch):
     image_part = seen["messages"][1]["content"][1]
     assert image_part["image_url"]["url"] == "data:image/png;base64,QUJD"
     assert seen["tool_choice"]["function"]["name"] == "extract"  # forces structured output
+
+def test_model_ids_have_defaults_and_env_overrides(monkeypatch):
+    from scheduler import llm_backends as lb
+    for var in ("GROQ_MODEL", "GROQ_VISION_MODEL", "ANTHROPIC_MODEL"):
+        monkeypatch.delenv(var, raising=False)
+    assert (lb.groq_model(), lb.groq_vision_model(), lb.anthropic_model()) == (
+        "openai/gpt-oss-120b", "qwen/qwen3.8-27b", "claude-sonnet-5")
+    monkeypatch.setenv("GROQ_MODEL", "g"); monkeypatch.setenv("GROQ_VISION_MODEL", "v")
+    monkeypatch.setenv("ANTHROPIC_MODEL", "a")
+    assert (lb.groq_model(), lb.groq_vision_model(), lb.anthropic_model()) == ("g", "v", "a")
+
+
+def test_injected_client_paths_use_the_central_anthropic_model(monkeypatch):
+    """reflection and schedule_extraction take an Anthropic-shaped client; it must get the
+    model from llm_backends, not a hardcoded ID. No real call: the client is a stub."""
+    from types import SimpleNamespace
+    from scheduler.reflection import propose_preference_changes
+    from scheduler.schedule_extraction import extract_schedule
+    monkeypatch.setenv("ANTHROPIC_MODEL", "test-model")
+    seen = []
+    def client_returning(data):
+        def create(**kwargs):
+            seen.append(kwargs["model"])
+            return SimpleNamespace(content=[SimpleNamespace(type="tool_use", input=data)])
+        return SimpleNamespace(messages=SimpleNamespace(create=create))
+    propose_preference_changes("fine", client=client_returning({"summary": "", "proposals": []}))
+    extract_schedule(b"x", "image/png", client=client_returning({}))
+    assert seen == ["test-model", "test-model"]
+
+
+class _StatusError(Exception):
+    """Duck-types an openai APIStatusError: just a status_code."""
+    def __init__(self, status_code):
+        super().__init__(f"status {status_code}")
+        self.status_code = status_code
+        self.body = None
+
+
+def _groq_raising(monkeypatch, status_code):
+    class FakeCompletions:
+        def create(self, **kwargs):
+            raise _StatusError(status_code)
+    class FakeClient:
+        def __init__(self, *a, **kw):
+            self.chat = type("Chat", (), {"completions": FakeCompletions()})()
+    monkeypatch.setenv("LLM_BACKEND", "groq")
+    monkeypatch.setenv("GROQ_API_KEY", "fake-key-for-test")
+    monkeypatch.setattr("openai.OpenAI", FakeClient)
+
+
+def test_groq_vision_wraps_decommissioned_model_error(monkeypatch):
+    from scheduler.llm_backends import call_vision_llm
+    _groq_raising(monkeypatch, 404)
+    monkeypatch.setenv("GROQ_VISION_MODEL", "retired-vision")
+    with pytest.raises(RuntimeError, match="retired-vision.*GROQ_VISION_MODEL"):
+        call_vision_llm("system", "text", "QUJD", "image/png", "extract", SCHEMA)
+
+
+@pytest.mark.parametrize("vision", [False, True])
+def test_groq_rate_limit_is_a_clear_runtime_error(monkeypatch, vision):
+    from scheduler.llm_backends import call_vision_llm
+    _groq_raising(monkeypatch, 429)
+    with pytest.raises(RuntimeError, match="rate limit"):
+        if vision:
+            call_vision_llm("system", "text", "QUJD", "image/png", "extract", SCHEMA)
+        else:
+            call_llm("system", "text", "tool", SCHEMA)
+
+
+def test_groq_missing_key_is_a_clear_runtime_error(monkeypatch):
+    monkeypatch.setenv("LLM_BACKEND", "groq")
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    with pytest.raises(RuntimeError, match="GROQ_API_KEY"):
+        call_llm("system", "text", "tool", SCHEMA)
+
+
+def _groq_replying(monkeypatch, tool_calls):
+    from types import SimpleNamespace
+    class FakeCompletions:
+        def create(self, **kwargs):
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(tool_calls=tool_calls))])
+    class FakeClient:
+        def __init__(self, *a, **kw):
+            self.chat = SimpleNamespace(completions=FakeCompletions())
+    monkeypatch.setenv("LLM_BACKEND", "groq")
+    monkeypatch.setenv("GROQ_API_KEY", "fake-key-for-test")
+    monkeypatch.setattr("openai.OpenAI", FakeClient)
+
+
+@pytest.mark.parametrize("tool_calls", [None, []])
+@pytest.mark.parametrize("vision", [False, True])
+def test_groq_reply_without_a_tool_call_is_a_clear_runtime_error(monkeypatch, tool_calls, vision):
+    from scheduler.llm_backends import call_vision_llm
+    _groq_replying(monkeypatch, tool_calls)
+    env_var = "GROQ_VISION_MODEL" if vision else "GROQ_MODEL"
+    with pytest.raises(RuntimeError, match=f"structured answer.*{env_var}"):
+        if vision:
+            call_vision_llm("system", "text", "QUJD", "image/png", "extract", SCHEMA)
+        else:
+            call_llm("system", "text", "tool", SCHEMA)
+
+
+def test_groq_error_body_with_a_string_error_still_maps_to_a_clear_message(monkeypatch):
+    class StringBodyError(Exception):
+        status_code = 429
+        body = {"error": "Rate limit exceeded"}  # not a dict: must not crash the handler
+    class FakeCompletions:
+        def create(self, **kwargs):
+            raise StringBodyError("429")
+    class FakeClient:
+        def __init__(self, *a, **kw):
+            self.chat = type("Chat", (), {"completions": FakeCompletions()})()
+    monkeypatch.setenv("LLM_BACKEND", "groq")
+    monkeypatch.setenv("GROQ_API_KEY", "fake-key-for-test")
+    monkeypatch.setattr("openai.OpenAI", FakeClient)
+    with pytest.raises(RuntimeError, match="rate limit"):
+        call_llm("system", "text", "tool", SCHEMA)

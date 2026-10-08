@@ -234,3 +234,27 @@ def test_round_trip_preserves_all_fields(conn):
     add_exam(conn, sid, exam)  
     _, reloaded_exam = get_exams(conn, sid)[0]  
     assert reloaded_exam == exam  
+
+def test_migration_backfills_old_evidence_rows_once(tmp_path):
+    import sqlite3
+    path = str(tmp_path / "old.db")
+    old = sqlite3.connect(path)  # a database from before updated_at existed
+    old.execute("CREATE TABLE preference_evidence (student_id INTEGER NOT NULL, field TEXT NOT NULL, "
+                "score INTEGER NOT NULL, magnitude TEXT NOT NULL, PRIMARY KEY (student_id, field))")
+    old.execute("INSERT INTO preference_evidence VALUES (1, 'buffer_slots', 2, 'small')")
+    old.commit(); old.close()
+    first = connect(path).execute("SELECT updated_at FROM preference_evidence").fetchone()[0]
+    assert first is not None
+    second = connect(path).execute("SELECT updated_at FROM preference_evidence").fetchone()[0]
+    assert second == first  # a later connect leaves it alone
+
+def test_migration_stamps_null_evidence_times_even_when_the_column_exists(tmp_path):
+    import sqlite3
+    path = str(tmp_path / "half.db")
+    half = sqlite3.connect(path)  # column already added, but by a version that never backfilled
+    half.execute("CREATE TABLE preference_evidence (student_id INTEGER NOT NULL, field TEXT NOT NULL, "
+                 "score INTEGER NOT NULL, magnitude TEXT NOT NULL, updated_at TEXT, "
+                 "PRIMARY KEY (student_id, field))")
+    half.execute("INSERT INTO preference_evidence VALUES (1, 'buffer_slots', 2, 'small', NULL)")
+    half.commit(); half.close()
+    assert connect(path).execute("SELECT updated_at FROM preference_evidence").fetchone()[0] is not None

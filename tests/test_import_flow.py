@@ -137,6 +137,34 @@ def test_extractor_value_error_is_reported_not_raised(env, tmp_path):
                           extractor=groq_style, cache_path=cache)
     assert any("Extraction failed" in s for s in shown)
 
+@pytest.mark.parametrize("name", ["missing.json", "missing.png"])
+def test_missing_file_is_reported_not_raised(env, tmp_path, name):
+    conn, sid, _, cache = env
+    shown = []
+    assert not run_import(conn, sid, str(tmp_path / name), ask=Recorder([]), show=shown.append,
+                          cache_path=cache)
+    assert any("Could not read" in s for s in shown)
+
+
+@pytest.mark.parametrize("text", ["{not json", '{"weekly_patterns": [{"title": 5}]}'])
+def test_bad_json_replay_is_reported_not_raised(env, tmp_path, text):
+    conn, sid, _, cache = env
+    bad = tmp_path / "bad.json"; bad.write_text(text, encoding="utf-8")
+    shown = []
+    assert not run_import(conn, sid, str(bad), ask=Recorder([]), show=shown.append, cache_path=cache)
+    assert any("not a valid saved extraction" in s for s in shown)
+
+
+def test_extractor_runtime_error_is_reported_not_raised(env):
+    conn, sid, img, cache = env
+    def groq_style(data, media_type):
+        raise RuntimeError("Groq model was decommissioned")
+    shown = []
+    assert not run_import(conn, sid, str(img), ask=Recorder([]), show=shown.append,
+                          extractor=groq_style, cache_path=cache)
+    assert any("Extraction failed" in s for s in shown)
+
+
 def test_summary_message_says_what_was_replaced_and_what_was_added(env):
     conn, sid, img, cache = env
     shown = []
@@ -190,3 +218,64 @@ def test_pdf_cost_prompt_mentions_page_count(env, monkeypatch, tmp_path):
     ask = Recorder([""])  # decline (Enter = default No)
     run_import(conn, sid, str(pdf_path), ask=ask, show=lambda _: None, cache_path=cache)
     assert "2 page(s)" in ask.prompts[0]
+
+def test_data_files_live_in_the_repo_root_whatever_the_cwd():
+    import os
+    from scheduler import import_flow, paths
+    root = os.path.dirname(os.path.dirname(os.path.abspath(import_flow.__file__)))
+    assert import_flow.CACHE_PATH == paths.CACHE_PATH == os.path.join(root, "last_extraction.json")
+    assert paths.DB_PATH == os.path.join(root, "scheduler.db")  # same folder as the cache
+
+
+class _ApiStatusError(Exception):
+    """Duck-types an SDK API error (e.g. a Groq 500): just a status_code."""
+    status_code = 500
+
+
+@pytest.mark.parametrize("error", [ConnectionError("network is down"), _ApiStatusError("server error"),
+                                   ImportError("No module named 'anthropic'")])
+def test_any_backend_failure_is_reported_not_raised(env, error):
+    conn, sid, img, cache = env
+    def failing(data, media_type):
+        raise error
+    shown = []
+    assert not run_import(conn, sid, str(img), ask=Recorder([]), show=shown.append,
+                          extractor=failing, cache_path=cache)
+    assert any("Extraction failed" in s for s in shown)
+
+
+def test_broken_pdf_on_a_real_backend_is_reported_not_raised(env, monkeypatch, tmp_path):
+    conn, sid, _, cache = env
+    bad = tmp_path / "broken.pdf"; bad.write_bytes(b"not really a pdf")
+    monkeypatch.setenv("LLM_BACKEND", "groq")
+    shown = []
+    assert not run_import(conn, sid, str(bad), ask=Recorder([]), show=shown.append, cache_path=cache)
+    assert any("could not be opened as a PDF" in s for s in shown)
+
+
+def test_unwritable_cache_still_reviews_and_saves(env, tmp_path):
+    conn, sid, img, _ = env
+    shown = []
+    ok = run_import(conn, sid, str(img), ask=Recorder(KEEP_ALL), show=shown.append,
+                    extractor=lambda d, m: _extraction(), cache_path=str(tmp_path))  # a folder
+    assert ok and _titles(conn, sid) == (["DS"], ["Lab"], ["HW"])
+    assert any("couldn't save a replay copy" in s for s in shown)
+
+
+@pytest.mark.parametrize("bug", [TypeError("bad arg"), AttributeError("no attr"), IndexError("empty")])
+def test_a_bug_in_our_own_code_is_not_hidden(env, bug):
+    conn, sid, img, cache = env
+    def buggy(data, media_type):
+        raise bug
+    with pytest.raises(type(bug)):
+        run_import(conn, sid, str(img), ask=Recorder([]), show=lambda _: None,
+                   extractor=buggy, cache_path=cache)
+    assert _titles(conn, sid) == ([], [], [])
+
+
+def test_json_replay_saved_with_a_bom_still_loads(env, tmp_path):
+    conn, sid, _, cache = env
+    saved = tmp_path / "bom.json"
+    saved.write_bytes(b"\xef\xbb\xbf" + _extraction().model_dump_json().encode("utf-8"))
+    assert run_import(conn, sid, str(saved), ask=Recorder(KEEP_ALL), show=lambda _: None, cache_path=cache)
+    assert _titles(conn, sid) == (["DS"], ["Lab"], ["HW"])

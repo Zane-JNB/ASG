@@ -122,6 +122,43 @@ def test_ask_mode_no_leaves_value_unchanged(monkeypatch, conn):
     _reflect(monkeypatch); _reflect(monkeypatch); _reflect(monkeypatch, ["n"])
     assert load_settings(conn, sid).buffer_slots == 1 and load_evidence(conn, sid) == {}
 
-def test_every_reflection_outcome_has_a_status_line():   
+def _fail_first(monkeypatch, error, times=1):
+    """Make reflect_and_record raise `error` for the first `times` calls, then work normally."""
+    calls = []
+    def flaky(conn, sid, text):
+        calls.append(text)
+        if len(calls) <= times:
+            raise error
+        return reflect_and_record(conn, sid, text)
+    monkeypatch.setattr(reflect, "reflect_and_record", flaky)
+    return calls
+
+def test_backend_failure_can_be_retried_with_the_same_text(monkeypatch, capsys, conn):
+    monkeypatch.delenv("LLM_BACKEND", raising=False)
+    calls = _fail_first(monkeypatch, RuntimeError("Groq rate limit reached"))
+    feed_inputs(monkeypatch, ["Zane", "felt rushed today, no breaks", "y"])
+    reflect.main()
+    out = capsys.readouterr().out
+    assert "Could not process your reflection: Groq rate limit reached" in out
+    assert calls == ["felt rushed today, no breaks"] * 2 and "Evidence recorded" in out
+    assert len(get_reflections(conn, get_or_create_student(conn, "Zane"))) == 1
+
+def test_giving_up_after_a_backend_failure_shows_the_text_and_saves_nothing(monkeypatch, capsys, conn):
+    monkeypatch.delenv("LLM_BACKEND", raising=False)
+    _fail_first(monkeypatch, RuntimeError("GROQ_API_KEY is not set"))
+    feed_inputs(monkeypatch, ["Zane", "felt rushed today", ""])  # Enter = default No
+    reflect.main()
+    out = capsys.readouterr().out
+    assert "Nothing was saved. Your reflection was:\nfelt rushed today" in out
+    assert get_reflections(conn, get_or_create_student(conn, "Zane")) == []
+
+def test_a_real_bug_still_raises(monkeypatch, conn):
+    monkeypatch.delenv("LLM_BACKEND", raising=False)
+    _fail_first(monkeypatch, TypeError("'NoneType' object is not subscriptable"))
+    feed_inputs(monkeypatch, ["Zane", "felt rushed today"])
+    with pytest.raises(TypeError):
+        reflect.main()
+
+def test_every_reflection_outcome_has_a_status_line():
     assert {OUTCOME_APPLIED, OUTCOME_PENDING, OUTCOME_EVIDENCE,
             OUTCOME_AT_LIMIT, OUTCOME_IGNORED, OUTCOME_NONE} <= set(reflect._STATUS)

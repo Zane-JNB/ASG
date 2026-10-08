@@ -1,12 +1,14 @@
 import os
 
+from pydantic import ValidationError
+
 from scheduler.db import replace_extraction, load_settings
+from scheduler.llm_backends import is_backend_failure
 from scheduler.models import ExtractionResult
+from scheduler.paths import CACHE_PATH
 from scheduler.review import _confirm, review_extraction
 from scheduler.schedule_extraction import extract_schedule
 from scheduler.pdf_extraction import extract_schedule_from_pdf
-
-CACHE_PATH = "last_extraction.json"  #   -- last raw extraction, so the review can be replayed free
 
 MEDIA_TYPES = {
     ".png": "image/png",
@@ -19,17 +21,25 @@ MEDIA_TYPES = {
 def _load_result(source_path, ask, show, extractor, cache_path):   
     """Get an ExtractionResult from a saved .json (free) or a real image/PDF (LLM call).
     Returns None if the student declines the cost prompt or the call fails."""
-    if source_path.lower().endswith(".json"):
-        with open(source_path, encoding="utf-8") as f:
-            return ExtractionResult.model_validate_json(f.read())
-
     ext = os.path.splitext(source_path)[1].lower()
-    if ext not in MEDIA_TYPES:
+    if ext != ".json" and ext not in MEDIA_TYPES:
         show(f"Unsupported file type '{ext}'. Use png, jpg, jpeg, pdf, or a saved .json.")
         return None
 
-    with open(source_path, "rb") as f:  #   -- read once, reused below for the page count too
-        file_bytes = f.read()
+    try:
+        with open(source_path, "rb") as f:  #   -- read once, reused below for the page count too
+            file_bytes = f.read()
+    except OSError as e:  # missing file, no permission, a folder...
+        show(f"Could not read '{source_path}': {e.strerror or e}")
+        return None
+
+    if ext == ".json":
+        try:
+            # Notepad/PowerShell can save UTF-8 with a BOM; JSON parsers reject it, so drop it
+            return ExtractionResult.model_validate_json(file_bytes.removeprefix(b"\xef\xbb\xbf"))
+        except ValidationError:  # bad JSON or wrong shape
+            show(f"'{source_path}' is not a valid saved extraction.")
+            return None
 
     backend = os.environ.get("LLM_BACKEND", "fake")
     if backend != "fake":
@@ -38,8 +48,12 @@ def _load_result(source_path, ask, show, extractor, cache_path):
         if ext == ".pdf":  #   -- each page can be its own call (text or rendered-image)
             import io
             import pdfplumber
-            with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:  #   -- from bytes, matches
-                num_pages = len(pdf.pages)                        # extract_schedule_from_pdf exactly
+            try:
+                with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:  #   -- from bytes, matches
+                    num_pages = len(pdf.pages)                        # extract_schedule_from_pdf exactly
+            except Exception:  # pdfplumber/pdfminer raise their own types for a broken or fake PDF
+                show(f"'{source_path}' could not be opened as a PDF.")
+                return None
             page_note = f" This PDF has {num_pages} page(s); each may use its own call."
         if not _confirm(ask, f"LLM_BACKEND={backend} ({cost_note}).{page_note} Continue?", default=False):
             show("Aborted.")
@@ -49,12 +63,17 @@ def _load_result(source_path, ask, show, extractor, cache_path):
             result = extract_schedule_from_pdf(file_bytes)   # Groq's vision model rejecting PDFs
         else:
             result = extractor(file_bytes, MEDIA_TYPES[ext])
-    except ValueError as e:
-        show(f"Extraction failed: {e}")
+    except Exception as e:
+        if not is_backend_failure(e):
+            raise  # a bug in our own code: keep the traceback
+        show(f"Extraction failed: {e}")  # report it, save nothing, don't crash
         return None
 
-    with open(cache_path, "w", encoding="utf-8") as f:  #   -- saved before review
-        f.write(result.model_dump_json(indent=2))
+    try:
+        with open(cache_path, "w", encoding="utf-8") as f:  #   -- saved before review
+            f.write(result.model_dump_json(indent=2))
+    except OSError as e:  # the replay copy is a convenience; don't lose the extraction over it
+        show(f"Note: couldn't save a replay copy to '{cache_path}': {e.strerror or e}")
     return result
 
 

@@ -56,32 +56,11 @@ def extract_schedule(file_bytes: bytes, media_type: str, client=None) -> Extract
     user_text = ("Extract the recurring weekly class schedule, any one-off dated sessions, "
                 "and any dated tasks/deadlines from this document.")
 
-    if client is not None:
-        content = [{"type": "text", "text": user_text}]
-        block_type = "document" if media_type == "application/pdf" else "image"
-        content.insert(0, {"type": block_type,
-                           "source": {"type": "base64", "media_type": media_type, "data": image_base64}})
-        response = client.messages.create(
-            model="claude-sonnet-5",
-            max_tokens=2048,
-            system=build_extraction_system_prompt(),
-            tools=[{"name": "extract_schedule", "description": "Extract schedule information.",
-                    "input_schema": schema}],
-            tool_choice={"type": "tool", "name": "extract_schedule"},
-            messages=[{"role": "user", "content": content}],
-        )
-        tool_use_block = next(b for b in response.content if b.type == "tool_use")
-        raw = tool_use_block.input
-    else:
-        from scheduler.llm_backends import call_vision_llm
-        raw = call_vision_llm(
-            system_prompt=build_extraction_system_prompt(),
-            user_text=user_text,
-            image_base64=image_base64,
-            media_type=media_type,
-            tool_name="extract_schedule",
-            tool_schema=schema,
-        )
+    from scheduler.llm_backends import _anthropic_vision_call, call_vision_llm
+    args = dict(system_prompt=build_extraction_system_prompt(), user_text=user_text,
+                image_base64=image_base64, media_type=media_type,
+                tool_name="extract_schedule", tool_schema=schema)
+    raw = _anthropic_vision_call(**args, client=client) if client is not None else call_vision_llm(**args)
 
     # validate each item individually -- one malformed entry (bad time format, ambiguous
     # date) shouldn't discard every other, otherwise valid, item the model found

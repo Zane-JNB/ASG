@@ -48,7 +48,9 @@ The project uses Python 3.14 in `.venv` (Windows). Run everything from the repo 
 All LLM access goes through `scheduler/llm_backends.py` (`call_llm` for text and `call_vision_llm` for images/PDFs). The `LLM_BACKEND` env var picks the backend:
 - `fake` (default): offline, free, deterministic keyword heuristics. Tests rely on it, so never call a real LLM or make a test depend on a real backend.
 - `groq`: needs `GROQ_API_KEY`. `GROQ_MODEL` and `GROQ_VISION_MODEL` override the models. It does not accept PDFs through vision.
-- `anthropic`: needs `ANTHROPIC_API_KEY`. This backend is paid.
+- `anthropic`: needs `ANTHROPIC_API_KEY`. `ANTHROPIC_MODEL` overrides the model. This backend is paid.
+
+Backend failures (missing key, retired model, rate limit, no tool call) raise a clear `RuntimeError`. Entry points report them using `llm_backends.is_backend_failure` instead of crashing; real code bugs still raise.
 
 Every backend uses forced tool-calling with a JSON schema that comes from the pydantic models, so the output is structured, not free text.
 
@@ -74,23 +76,29 @@ Every backend uses forced tool-calling with a JSON schema that comes from the py
 - Every `ProfileSettings` field needs a `POLICY` entry (a test fails otherwise). Tiers: `LOCKED` (nobody), `USER` (student only), `MODEL_LEARNED` (reflections); students can claim a field.
 - The LLM never picks values or thresholds. Reflections return direction + magnitude only. One reflection never changes a setting; it needs repeated evidence across separate reflections (`EVIDENCE_THRESHOLD`, `EVIDENCE_TTL_DAYS`).
 - Penalty fields and `drop_deadline_multiplier` are never user-editable.
-- Write settings via `preferences.set_values` / `user_edit` (they enforce tiers). Legacy paths that skip tier checks via `db.save_settings`: `reflection_cycle.apply_and_log`, two places in `task_manager.py`.
+- Write settings via `preferences.set_values` / `user_edit` (they enforce tiers). Legacy path that skips tier checks via `db.save_settings`: `reflection_cycle.apply_and_log` only (the demo's y/N is the student's consent).
 
 ## Known issues (Zane will review and correct each)
 
-1. `requirements.txt` is UTF-16 encoded and lacks `openai`, `anthropic`, `pdfplumber`, `pypdfium2` (and `httpx`, which `openai` pulls in). This causes 7 failures in `tests/test_llm_backends.py` on a clean install.
-2. Two test files are not collected by pytest: `tests/test_settings_menu` (no `.py`) and `tests/tet_commute_menu.py` (typo).
+1. FIXED (`robustness-and-deps`): `requirements.txt` is now UTF-8 and a full `pip freeze` of the tested `.venv`. `anthropic` is listed but commented out until PRD E2; install and pin it then.
+2. FIXED: `tests/test_settings_menu.py` and `tests/test_commute_menu.py` are collected.
 3. `README.md` is stale ("V1 in progress").
 4. `scheduler/sample_timetables/` contains real classmates' timetables in a public repo. Data hygiene is NOT done: needs synthetic replacements and a git-history scrub (back up and make the repo private first).
-5. `task_manager.run_menu` prompt omits the `[p]` settings option.
-6. `commute_menu.py` defines `_describe`, `_sorted`, `_show_list`, `_pick` twice.
-7. `llm_backends.py` hardcodes `model="claude-sonnet-5"`. Verify against current Anthropic model IDs before any paid use. Groq model names churn (earlier ones were decommissioned); override with env vars.
-8. `plan_from_saved` may still use a fixed-length window instead of the "now"-based window used by the fit check. Verify.
+5. FIXED: `task_manager.run_menu` prompt shows `[p] settings`.
+6. FIXED (`robustness-and-deps`): duplicates removed; the shared prompt helpers live in `scheduler/menu_input.py`.
+7. Model IDs live only in `llm_backends.py` (`DEFAULT_*`), overridable via `GROQ_MODEL`, `GROQ_VISION_MODEL`, `ANTHROPIC_MODEL`. `claude-sonnet-5` is a valid ID (checked Oct 2026). The newer `claude-sonnet-5-5` rejects the forced `tool_choice` the backends use, so E2 needs a code change before trying it. Groq model names churn.
+8. FIXED (verified): `plan_from_saved` uses the same "now"-based window as the fit check by default; a fixed window only when `start_date` is passed.
 9. Known extraction misreads (rotated images, `kayleigh_timetable.pdf`) are possibly a vision-model quality issue, deferred to the model comparison. Not a pipeline bug.
 10. No CI yet. Merges to master should go through a PR with green tests.
+11. `PRD.md` is referenced here but is not in the repo.
+12. `anthropic` is commented out of `requirements.txt` until PRD E2, but `LLM_BACKEND=anthropic` is still selectable. Without the package, reflect and import report "No module named anthropic".
+13. `DB_PATH` and `CACHE_PATH` are fixed to the repo root (`scheduler/paths.py`). A `scheduler.db` made by running scripts from another folder is not picked up; no migration (only Zane uses the app).
+14. `requirements.txt` is a full pip freeze of the Windows/Python 3.14 `.venv`, including indirect packages. Before CI, split it into direct dependencies plus a lock file.
 
 ## Roadmap pointer (order only; details in PRD.md)
 
 README + CI + data hygiene -> 3.7 -> 3.8 -> 4.0 provider-agnostic LLM client with usage logging, ruff/mypy -> 4.1 eval harness and model comparison (Haiku, Llama via Groq, Sonnet) -> 4.2 to 4.5 extraction and routing -> API layer -> cost gating -> frontend -> deployment -> v1.0. Then v1.1 re-planning agent, then learning from history and later features.
+
+Future improvement: the solver and drop search find a *feasible* schedule (`max_checks` cuts the drop search short). A more efficient way to find the *optimal* schedule is planned.
 
 Planned, not decided: Docker, Azure, LangGraph. Recommended, awaiting Zane's confirmation: FastAPI backend with a Streamlit v1.0 frontend (PRD section 12).

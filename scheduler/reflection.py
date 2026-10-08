@@ -101,30 +101,10 @@ def propose_preference_changes(reflection_text: str, client=None, allowed_fields
     if allowed_fields is not None and not allowed_fields:  # nothing learnable -> skip the API call
         return ReflectionResult(summary="", proposals=[])
     
-    if client is not None:
-        tool = {
-            "name": "propose_preference_changes",
-            "description": "Propose bounded changes to the student's schedule preferences.",
-            "input_schema": _tool_schema(allowed_fields),
-        }
-        response = client.messages.create(
-            model="claude-sonnet-5",
-            max_tokens=1024,
-            system=build_system_prompt(allowed_fields),
-            tools=[tool],
-            tool_choice={"type": "tool", "name": "propose_preference_changes"},
-            messages=[{"role": "user", "content": reflection_text}],
-        )
-        tool_use_block = next(b for b in response.content if b.type == "tool_use")
-        raw = tool_use_block.input
-    else:
-        from scheduler.llm_backends import call_llm
-        raw = call_llm(
-            system_prompt=build_system_prompt(allowed_fields),
-            user_message=reflection_text,
-            tool_name="propose_preference_changes",
-            tool_schema=_tool_schema(allowed_fields)
-        )
+    from scheduler.llm_backends import _anthropic_call, call_llm
+    args = dict(system_prompt=build_system_prompt(allowed_fields), user_message=reflection_text,
+                tool_name="propose_preference_changes", tool_schema=_tool_schema(allowed_fields))
+    raw = _anthropic_call(**args, client=client) if client is not None else call_llm(**args)
 
     # validate each proposal individually -- one hallucinated/locked field shouldn't
     # discard every other, otherwise valid, proposal in the same response

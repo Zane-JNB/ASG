@@ -6,7 +6,7 @@ from scheduler.calendar_utils import build_plan_inputs, extracted_task_to_dynami
 from scheduler.db import get_commutes, get_dated_blocks, get_weekly_patterns, load_settings, get_plan_cuts, get_extracted_tasks
 from scheduler.models import (
     DynamicTask, ExtractedTask, FixedBlock, MINUTES_PER_SLOT, PlanAnchor, ProfileSettings,
-    SLOTS_PER_DAY, ScheduleWarning, ScheduleWarning, SleepRule, slot_to_time,)
+    SLOTS_PER_DAY, ScheduleWarning, SleepRule, slot_to_time,)
 
 def planned_tasks(conn, student_id: int, anchor: PlanAnchor):   
     """[(saved task id, DynamicTask)] with plan cuts applied. Saved tasks are never changed."""

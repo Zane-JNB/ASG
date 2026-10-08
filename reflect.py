@@ -3,9 +3,10 @@ import os
 from scheduler.preferences import pending_approvals, resolve_pending 
 from scheduler.settings_menu import describe_pending 
 from scheduler.db import connect, get_or_create_student
+from scheduler.llm_backends import is_backend_failure
 from scheduler.reflection_cycle import get_proposals, apply_and_log, reflect_and_record
 
-DB_PATH = "scheduler.db"
+from scheduler.paths import DB_PATH  # repo root, whatever folder you run from
 
 _STATUS = {                                                    
     "learned_update_applied": "Settings updated.",
@@ -32,7 +33,17 @@ def main():
     student_id = get_or_create_student(conn, name)
 
     reflection_text = input("How did it go? ").strip()
-    outcome, summary = reflect_and_record(conn, student_id, reflection_text)   
+    while True:  # a backend failure (rate limit, retired model, no key...) must not lose the text
+        try:
+            outcome, summary = reflect_and_record(conn, student_id, reflection_text)
+            break
+        except Exception as e:
+            if not is_backend_failure(e):
+                raise  # a real bug: keep the traceback
+            print(f"Could not process your reflection: {e}")
+            if input("Try again? Your text is kept. [y/N] ").strip().lower() != "y":
+                print(f"Nothing was saved. Your reflection was:\n{reflection_text}")
+                return
 
     if summary:
         print(f"\n{summary}\n")
