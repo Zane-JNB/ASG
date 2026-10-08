@@ -80,14 +80,9 @@ Every backend uses forced tool-calling with a JSON schema that comes from the py
 
 ## Known issues (Zane will review and correct each)
 
-1. FIXED (`robustness-and-deps`): `requirements.txt` is now UTF-8 and a full `pip freeze` of the tested `.venv`. `anthropic` is listed but commented out until PRD E2; install and pin it then.
-2. FIXED: `tests/test_settings_menu.py` and `tests/test_commute_menu.py` are collected.
-3. `README.md` is stale ("V1 in progress").
+1. `README.md` is stale ("V1 in progress").
 4. `scheduler/sample_timetables/` contains real classmates' timetables in a public repo. Data hygiene is NOT done: needs synthetic replacements and a git-history scrub (back up and make the repo private first).
-5. FIXED: `task_manager.run_menu` prompt shows `[p] settings`.
-6. FIXED (`robustness-and-deps`): duplicates removed; the shared prompt helpers live in `scheduler/menu_input.py`.
 7. Model IDs live only in `llm_backends.py` (`DEFAULT_*`), overridable via `GROQ_MODEL`, `GROQ_VISION_MODEL`, `ANTHROPIC_MODEL`. `claude-sonnet-5` is a valid ID (checked Oct 2026). The newer `claude-sonnet-5-5` rejects the forced `tool_choice` the backends use, so E2 needs a code change before trying it. Groq model names churn.
-8. FIXED (verified): `plan_from_saved` uses the same "now"-based window as the fit check by default; a fixed window only when `start_date` is passed.
 9. Known extraction misreads (rotated images, `kayleigh_timetable.pdf`) are possibly a vision-model quality issue, deferred to the model comparison. Not a pipeline bug.
 10. No CI yet. Merges to master should go through a PR with green tests.
 11. `PRD.md` is referenced here but is not in the repo.
