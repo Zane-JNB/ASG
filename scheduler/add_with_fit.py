@@ -1,5 +1,4 @@
 from datetime import datetime
-
 from scheduler.db import add_extracted_task
 from scheduler.drop_apply import apply_drop_choice
 from scheduler.drop_review import _h, choose_drop_proposal, choose_automatic
@@ -16,9 +15,10 @@ def add_task_with_fit(conn, student_id: int, new_task: ExtractedTask, now: datet
     Returns {"cuts": {...}, "new_task_id": id or None}, or None if nothing was saved."""
     try:
         fit = build_fit_inputs(conn, student_id, now, new_task)
+        # is the verdict itself, not just constraints
         report = propose_drops(fit.fixed, [t for _, t in fit.planned], fit.new_task, fit.anchor.num_days,
                                fit.sleep_rules, settings=fit.settings, must_add=must_add, search = False)
-    except (ValueError, RuntimeError) as e:
+    except (ValueError, RuntimeError) as e: #shows the specific error value for a fit that could not be checked
         show(f"Could not check the fit: {e}")
         show("Nothing saved.")
         return None
@@ -53,7 +53,7 @@ def add_task_with_fit(conn, student_id: int, new_task: ExtractedTask, now: datet
         for a in choice.actions:
             show(f"  For this plan only: '{a.title}' -{_h(a.slots_lost)} (its saved hours are unchanged)")
         if choice.new_task_slots_cut:   
-            full = new_task.duration_slots
-            show(f"  For this plan only: '{new_task.title}' is planned at {_h(full - choice.new_task_slots_cut)} "
-                 f"(saved as {_h(full)})")
+            full_slots = new_task.duration_slots
+            show(f"  For this plan only: '{new_task.title}' is planned at {_h(full_slots - choice.new_task_slots_cut)} "
+                 f"(saved as {_h(full_slots)})")
     return summary

@@ -1,7 +1,5 @@
 from datetime import date, datetime, timedelta
-
 import pytest
-
 from scheduler.add_with_fit import add_task_with_fit
 from scheduler.db import (
     add_dated_block, add_extracted_task, add_weekly_pattern, connect, get_extracted_tasks,
@@ -15,16 +13,13 @@ from scheduler.solver import build_schedule
 D = date(2026, 10, 5)  # a Monday
 NINE_AM = datetime(2026, 10, 5, 9, 0)
 
-
 @pytest.fixture
 def conn():
     return connect(":memory:")
 
-
 @pytest.fixture
 def sid(conn):
     return get_or_create_student(conn, "Zane")
-
 
 def _task(title, hours, priority, due, difficulty=3):
     return ExtractedTask(title=title, date=due.isoformat(), duration_slots=int(hours * 4),
@@ -82,7 +77,6 @@ def test_near_deadline_task_shuffles_a_later_one_instead_of_cutting_it(conn, sid
     result, shown = _run(conn, sid, _task("Quiz prep", 4, 5, D), [])  # no answers: must not ask
     assert shown == ["Added."]
     assert result["cuts"] == {} and get_plan_cuts(conn, sid) == {}
-
 
 def _tight_day(conn, sid):
     _class_all_day(conn, sid)
