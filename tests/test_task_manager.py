@@ -65,7 +65,7 @@ def test_delete_all_needs_the_word_yes():
     assert len(_saved(conn, sid)) == 2 and shown.count("Cancelled -- nothing deleted.") == 2
     ask, shown = scripted(["x", "yes", "q"])
     run_menu(conn, sid, ask, shown.append, today=TODAY)
-    assert _saved(conn, sid) == [] and "Deleted 2 task(s)." in shown
+    assert _saved(conn, sid) == [] and "Deleted 2 open task(s)." in shown
 
 def test_delete_all_only_touches_tasks_not_classes():
     conn, sid = _conn()
@@ -87,7 +87,47 @@ def test_menu_handles_junk_and_empty_states():
     conn, sid = _conn()
     ask, shown = scripted(["zzz", "l", "d", "x", "q"])
     run_menu(conn, sid, ask, shown.append, today=TODAY)
-    assert "Choose a, l, d, f, c, s, t, r, m, x or q." in shown and shown.count("No tasks saved.") == 3
+    assert "Choose a, l, d, f, c, s, t, r, m, p, x or q." in shown
+    assert shown.count("No tasks saved.") == 2 and shown.count("No open tasks saved.") == 1
+
+def test_delete_all_keeps_completed_tasks_as_history():
+    conn, sid = _conn()
+    replace_extraction(conn, sid, ExtractionResult(tasks=[
+        ExtractedTask(title="Open", date="2026-10-01"),
+        ExtractedTask(title="Done", date="2026-10-02", completed_at="2026-09-29T10:00:00")]))
+    ask, shown = scripted(["x", "yes", "q"])
+    run_menu(conn, sid, ask, shown.append, today=TODAY)
+    assert [t.title for t in _saved(conn, sid)] == ["Done"]
+    assert "Deleted 1 open task(s)." in shown
+
+def test_menu_prompt_offers_settings():
+    conn, sid = _conn()
+    prompts = []
+    def ask(prompt):
+        prompts.append(prompt)
+        return "q"
+    run_menu(conn, sid, ask, lambda _: None, today=TODAY)
+    assert "[p] settings" in prompts[-1]
+
+def test_session_time_goes_through_the_tier_check_and_audit_log():
+    from scheduler.db import load_settings
+    conn, sid = _conn()
+    ask, shown = scripted(["t", "1", "q"])
+    run_menu(conn, sid, ask, shown.append, today=TODAY)
+    assert load_settings(conn, sid).default_max_session_slots == 4
+    assert conn.execute("SELECT COUNT(*) FROM reflections WHERE student_id = ?", (sid,)).fetchone()[0] == 1
+
+def test_session_time_is_refused_when_the_model_owns_the_field():
+    from scheduler.db import load_settings, load_tiers
+    conn, sid = _conn()
+    load_tiers(conn, sid)  # backfill the tier rows
+    conn.execute("UPDATE preference_tiers SET tier = 'model_learned' WHERE student_id = ? AND field = ?",
+                 (sid, "default_max_session_slots"))
+    conn.commit()
+    ask, shown = scripted(["t", "1", "q"])
+    run_menu(conn, sid, ask, shown.append, today=TODAY)
+    assert load_settings(conn, sid).default_max_session_slots == 8
+    assert any("managed automatically" in line for line in shown)
 
 def test_added_task_reaches_the_plan():
     conn, sid = _conn()

@@ -1,10 +1,10 @@
 import sqlite3
 
 from scheduler.db import load_settings, save_settings, log_reflection
-from scheduler.reflection import ReflectionResult, apply_all, propose_preference_changes
+from scheduler.reflection import ReflectionResult, apply_proposal, propose_preference_changes
 from scheduler.solver import build_schedule
 from scheduler.models import DynamicTask, FixedBlock, SleepRule
-from scheduler.preferences import ReflectionOutcome, learnable_fields, process_reflection
+from scheduler.preferences import PreferenceError, ReflectionOutcome, _validated, learnable_fields, process_reflection
 
 
 def apply_and_log(conn: sqlite3.Connection, student_id: int, reflection_text: str,
@@ -16,6 +16,10 @@ def apply_and_log(conn: sqlite3.Connection, student_id: int, reflection_text: st
     y/N answers). Rejected proposals are dropped silently -- only chosen ones reach
     apply_all. Returns the settings actually saved (== before, unchanged, if nothing
     was accepted or every accepted proposal net out to a no-op).
+
+    Legacy direct path (the demo's y/N prompt is the student's consent, so no evidence
+    threshold). It still honours ownership and validity: proposals for fields the student
+    owns (not learnable) or whose result is invalid (e.g. sleep below its minimum) are skipped.
     """
     if len(accepted) != len(result.proposals):
         raise ValueError(
@@ -23,8 +27,16 @@ def apply_and_log(conn: sqlite3.Connection, student_id: int, reflection_text: st
         )
 
     before = load_settings(conn, student_id)
-    chosen = [p for p, ok in zip(result.proposals, accepted) if ok]
-    after = apply_all(before, chosen)
+    allowed = learnable_fields(conn, student_id)
+    after = before
+    for proposal, ok in zip(result.proposals, accepted):
+        if not ok or proposal.field not in allowed:
+            continue
+        value = getattr(apply_proposal(after, proposal), proposal.field)
+        try:
+            after = _validated(after, {proposal.field: value})
+        except PreferenceError:
+            continue
 
     applied = after != before
     if applied:

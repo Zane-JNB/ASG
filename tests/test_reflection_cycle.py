@@ -143,3 +143,22 @@ def test_user_owned_field_is_not_shown_to_the_model():
     client = SimpleNamespace(messages=SimpleNamespace(create=create))
     reflect_and_record(conn, sid, "felt rushed", client=client)
     assert "buffer_slots (deltas" not in seen["system"] and "bedtime_penalty (deltas" in seen["system"]
+
+def test_apply_and_log_skips_fields_the_student_owns(conn, student_id):
+    change_tier(conn, student_id, "buffer_slots", Tier.USER, Actor.USER)  # student claims it
+    result = make_result(PreferenceChangeProposal(field="buffer_slots", direction="increase",
+                                                  magnitude="small", reason="a"))
+    before = load_settings(conn, student_id)
+    after = apply_and_log(conn, student_id, "rushed", result, accepted=[True])
+    assert after == before
+
+
+def test_apply_and_log_skips_a_proposal_that_would_make_settings_invalid(conn, student_id, monkeypatch):
+    import scheduler.reflection_cycle as rc
+    bad = make_result(PreferenceChangeProposal(field="buffer_slots", direction="increase",
+                                               magnitude="small", reason="a"))
+    def to_invalid(settings, proposal):  # pretend the bucket produced an out-of-range value
+        return settings.model_copy(update={"buffer_slots": -5})
+    monkeypatch.setattr(rc, "apply_proposal", to_invalid)
+    before = load_settings(conn, student_id)
+    assert apply_and_log(conn, student_id, "x", bad, accepted=[True]) == before

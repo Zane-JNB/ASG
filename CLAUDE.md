@@ -4,7 +4,25 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-Auto Schedule Generator: students enter a fixed timetable, tasks (deadline, difficulty, priority) and sleep needs; the app builds a plan that fits everything while protecting sleep,with everything else being negotiable. The plan improves over time from the student's own daily/weekly reflections. V1 is the scheduler engine. It is a CLI-only Python app, with no web UI yet.
+Auto Schedule Generator: students enter a fixed timetable, tasks (deadline, difficulty, priority) and sleep needs; the app builds a plan that fits everything while protecting sleep, with everything else being negotiable. The plan improves over time from the student's own daily/weekly reflections. V1 is the scheduler engine. It is a CLI-only Python app, with no web UI yet.
+
+## How to work on this repo
+- Ask before coding when ANYTHING is unclear. For non-trivial work, plan first and wait for approval.
+- Walk Zane through each change in plain steps: what changed, why, how it connects. Line-by-line only when he asks.
+- Small, reviewable diffs. No whole-file rewrites unless asked. He reviews with `/diff`.
+- Run the tests yourself before presenting work. Add or update tests with every change.
+- If a change affects an entry script (`main.py`, `manage_tasks.py`, etc.), update it and notify Zane.
+- After each roadmap item, give a short flow test if necessary: which entry script to run, what to type, what he should see. He runs it and explains it back to another model which has repo access.
+- One branch per task. Remind him when to commit and when to merge to master.
+- Never touch or add real personal timetables or data. Use synthetic samples only.
+- Never commit `.env` files or API keys (the repo is public).
+- Keep deterministic logic (solver, fit check, drop ranking, evidence) out of the LLM's hands.
+- Keep answers short.
+- Update CLAUDE.md with progress after a section is complete and notify Zane before making the adjustments.
+
+## Cost rule (important)
+
+Never run anything that makes a real Anthropic call, without asking Zane first. Groq is valid since it is set up as an environment variable. Groq free tier is the only real backend in use right now. Anthropic is not to be used until the model comparison (PRD E2).
 
 ## Commands
 
@@ -17,18 +35,18 @@ The project uses Python 3.14 in `.venv` (Windows). Run everything from the repo 
 .venv\Scripts\python.exe -m pytest -k "drop and not manual"         # by keyword
 ```
 
-- Tests: `pytest -q` (must stay green; never call a real LLM in tests).
+- Tests: `pytest -q` (must stay green).
 - Demo (in-memory DB, not an app): `python main.py`
 - There is no linter, formatter or build step configured.
 
-## Cost rule (important)
+## Conventions
 
-Never run anything that makes a real Anthropic call, without asking Zane first. Groq is valid since it is set up as an environment variable. Groq free tier is the only real backend in use right now. Anthropic is not to be used until the model comparison (PRD E2).
+- Interactive functions take `ask=input, show=print` (and often `now`/`today`) as injectable parameters. Tests drive them with scripted answer lists and fixed datetimes, so keep this pattern and never call `input()`, `print()` or `datetime.now()` deep inside the logic.
 
 ## LLM backends
 
 All LLM access goes through `scheduler/llm_backends.py` (`call_llm` for text and `call_vision_llm` for images/PDFs). The `LLM_BACKEND` env var picks the backend:
-- `fake` (default): offline, free, deterministic keyword heuristics. Tests rely on it, so never make a test depend on a real backend.
+- `fake` (default): offline, free, deterministic keyword heuristics. Tests rely on it, so never call a real LLM or make a test depend on a real backend.
 - `groq`: needs `GROQ_API_KEY`. `GROQ_MODEL` and `GROQ_VISION_MODEL` override the models. It does not accept PDFs through vision.
 - `anthropic`: needs `ANTHROPIC_API_KEY`. This backend is paid.
 
@@ -69,25 +87,10 @@ Every backend uses forced tool-calling with a JSON schema that comes from the py
 7. `llm_backends.py` hardcodes `model="claude-sonnet-5"`. Verify against current Anthropic model IDs before any paid use. Groq model names churn (earlier ones were decommissioned); override with env vars.
 8. `plan_from_saved` may still use a fixed-length window instead of the "now"-based window used by the fit check. Verify.
 9. Known extraction misreads (rotated images, `kayleigh_timetable.pdf`) are possibly a vision-model quality issue, deferred to the model comparison. Not a pipeline bug.
-10. No CI yet. Merges to master should go through a PR with green tests. 
-
-## Conventions
-
-- Interactive functions take `ask=input, show=print` (and often `now`/`today`) as injectable parameters. Tests drive them with scripted answer lists and fixed datetimes, so keep this pattern and never call `input()`, `print()` or `datetime.now()` deep inside the logic.
-
-## How to work on this repo
-- Ask before coding when ANYTHING is unclear. For non-trivial work, plan first and wait for approval.
-- Walk Zane through each change in plain steps: what changed, why, how it connects. Line-by-line only when he asks.
-- Small, reviewable diffs. No whole-file rewrites unless asked. He reviews with `/diff`.
-- Run the tests yourself before presenting work. Add or update tests with every change.
-- If a change affects an entry script (`main.py`, `manage_tasks.py`, etc.), update it and notify Zane.
-- After each roadmap item, give a short flow test if necessary: which entry script to run, what to type, what he should see. He runs it and explains it back to another model which has repo access.
-- One branch per task. Remind him when to commit and when to merge to master.
-- Never touch or add real personal timetables or data. Use synthetic samples only.
-- Keep deterministic logic (solver, fit check, drop ranking, evidence) out of the LLM's hands.
-- Keep answers short.
-- Update CLAUDE.md with progress after a section is complete and notify Zane before making the adjustments.
+10. No CI yet. Merges to master should go through a PR with green tests.
 
 ## Roadmap pointer (order only; details in PRD.md)
+
 README + CI + data hygiene -> 3.7 -> 3.8 -> 4.0 provider-agnostic LLM client with usage logging, ruff/mypy -> 4.1 eval harness and model comparison (Haiku, Llama via Groq, Sonnet) -> 4.2 to 4.5 extraction and routing -> API layer -> cost gating -> frontend -> deployment -> v1.0. Then v1.1 re-planning agent, then learning from history and later features.
+
 Planned, not decided: Docker, Azure, LangGraph. Recommended, awaiting Zane's confirmation: FastAPI backend with a Streamlit v1.0 frontend (PRD section 12).

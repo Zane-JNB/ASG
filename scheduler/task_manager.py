@@ -1,8 +1,8 @@
 from datetime import date, datetime, time
 from scheduler.add_with_fit import add_task_with_fit
 from scheduler.db import (
-    add_extracted_task, clear_extracted_tasks, delete_extracted_task, get_extracted_tasks,
-    update_extracted_task, load_settings, save_settings, update_extracted_task
+    delete_extracted_task, get_extracted_tasks,
+    update_extracted_task, load_settings
 )
 from scheduler.models import DynamicTask, ExtractedTask, MINUTES_PER_SLOT   
 from scheduler.review import _confirm, _date, _describe, _hours
@@ -10,6 +10,7 @@ from scheduler.completion import finish_task, run_checkin
 from scheduler.task_filter import describe_reminders   
 from scheduler.commute_menu import run_commute_menu
 from scheduler.settings_menu import run_settings_menu
+from scheduler.preferences import Actor, PreferenceError, set_values
 
 _DEFAULT = ExtractedTask(title="x", date="2000-01-01")  # only used to read the placeholder defaults
 _SESSION_CAP = DynamicTask.model_fields["max_session_slots"].default
@@ -43,8 +44,8 @@ def prompt_new_task(ask=input, show=print, today: date | None = None, session_ca
 
     def future_date(s: str) -> str:
         d = _date(s)
-        if date.fromisoformat(d) < today:  # plans start tomorrow, so an earlier date is never planned
-            raise ValueError("due date must be today     or later")
+        if date.fromisoformat(d) < today:  # plans start from today, so an earlier date is never planned
+            raise ValueError("due date must be today or later")
         return d
 
     title = _ask_field(ask, show, "title", str)
@@ -58,7 +59,7 @@ def prompt_new_task(ask=input, show=print, today: date | None = None, session_ca
         value = _ask_field(ask, show, label, parse, default)
         if value is not None:
             fields[key] = value
-        task = ExtractedTask(**fields)
+    task = ExtractedTask(**fields)
     if task.duration_slots > session_cap:  #   -- splitting only matters for tasks longer than one session
         hours, cap = task.duration_slots * MINUTES_PER_SLOT / 60, session_cap * MINUTES_PER_SLOT / 60
         can = _confirm(ask, f"  {hours:g}h is longer than a {cap:g}h session. Can it be split across several sessions?", True)
@@ -96,8 +97,11 @@ def _reminder_settings(conn, student_id, ask, show) -> None:
         if choice:
             show("Choose a, c or o.")
         return
-    settings = settings.model_copy(update=update)
-    save_settings(conn, student_id, settings)
+    try:
+        settings = set_values(conn, student_id, update, Actor.USER)
+    except PreferenceError as e:
+        show(str(e))
+        return
     show(describe_reminders(settings))
 
 def _show_tasks(tasks, show, session_cap: int | None = None):
@@ -112,12 +116,12 @@ def run_menu(conn, student_id, ask=input, show=print, today: date | None = None,
     today = today or now.date()   
     run_checkin(conn, student_id, now, ask, show)
     while True:
-        choice = ask("Tasks: [a]dd  [l]ist  [d]elete one  [f]inished  [c]heck-in  [s]plit setting  session [t]ime  [r]eminders  [m]commutes [x] delete ALL  [q]uit: ").strip().lower()
+        choice = ask("Tasks: [a]dd  [l]ist  [d]elete one  [f]inished  [c]heck-in  [s]plit setting  session [t]ime  [r]eminders  [m] commutes  [p] settings  [x] delete ALL open  [q]uit: ").strip().lower()
         if choice == "q":
             return
         if choice == "a":
-           cap = load_settings(conn, student_id).default_max_session_slots
-           add_task_with_fit(conn, student_id, prompt_new_task(ask, show, today, cap), now, ask, show)
+            cap = load_settings(conn, student_id).default_max_session_slots
+            add_task_with_fit(conn, student_id, prompt_new_task(ask, show, today, cap), now, ask, show)
         elif choice == "l":
             _show_tasks(_sorted_tasks(conn, student_id), show)
         elif choice == "d":
@@ -169,20 +173,26 @@ def run_menu(conn, student_id, ask=input, show=print, today: date | None = None,
                 except ValueError as e:
                     show(f"Invalid: {e}")
                     continue
-                save_settings(conn, student_id, settings.model_copy(update={"default_max_session_slots": slots}))
+                try:
+                    set_values(conn, student_id, {"default_max_session_slots": slots}, Actor.USER)
+                except PreferenceError as e:
+                    show(str(e))
+                    continue
                 show(f"Saved -- tasks are now planned in sessions of up to {slots * MINUTES_PER_SLOT / 60:g}h.")
         elif choice == "m":   
             run_commute_menu(conn, student_id, ask, show, today)
         elif choice == "p":                                        
             run_settings_menu(conn, student_id, ask, show)
         elif choice == "x":
-            count = len(get_extracted_tasks(conn, student_id))
+            open_tasks = _sorted_tasks(conn, student_id)  #   -- completed tasks stay as history
+            count = len(open_tasks)
             if count == 0:
-                show("No tasks saved.")
-            elif ask(f"Delete ALL {count} task(s)? Type yes to confirm: ").strip().lower() == "yes":
-                clear_extracted_tasks(conn, student_id)
-                show(f"Deleted {count} task(s).")
+                show("No open tasks saved.")
+            elif ask(f"Delete ALL {count} open task(s)? Completed ones are kept. Type yes to confirm: ").strip().lower() == "yes":
+                for task_id, _ in open_tasks:
+                    delete_extracted_task(conn, student_id, task_id)
+                show(f"Deleted {count} open task(s).")
             else:
                 show("Cancelled -- nothing deleted.")
         else:
-            show("Choose a, l, d, f, c, s, t, r, m, x or q.")
+            show("Choose a, l, d, f, c, s, t, r, m, p, x or q.")

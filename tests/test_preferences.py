@@ -133,3 +133,11 @@ def test_students_are_isolated(conn, sid):
     user_edit(conn, sid, "buffer_slots", 4)
     assert tier(conn, other, "buffer_slots") == Tier.MODEL_LEARNED
     assert load_settings(conn, other).buffer_slots == 1
+
+def test_live_evidence_accepts_naive_and_aware_now(conn, sid):
+    from datetime import datetime, timezone
+    from scheduler.db import save_evidence
+    from scheduler.preferences import live_evidence
+    save_evidence(conn, sid, "buffer_slots", 1, 1, at=datetime(2026, 9, 1, tzinfo=timezone.utc).isoformat())
+    assert live_evidence(conn, sid, datetime(2026, 9, 2)) == live_evidence(
+        conn, sid, datetime(2026, 9, 2, tzinfo=timezone.utc)) != {}
