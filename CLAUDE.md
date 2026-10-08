@@ -60,6 +60,7 @@ Every backend uses forced tool-calling with a JSON schema that comes from the py
 - 15-minute slots, 96/day, one continuous multi-day axis (`day * 96 + slot`). Day 0 = `PlanAnchor.start_date`: rolling, rebuilt every run, never stored. Sleep/bedtime may run past 96 (`end_slot` exclusive, max 192) to cross midnight. Use `time_to_slot` / `slot_to_time`.
 - Two layers: stored calendar-based (`WeeklyPattern`, `DatedBlock`, `ExtractedTask`, `Commute`) vs solver-facing day-indexed (`FixedBlock`, `DynamicTask`, `SleepRule`). Convert only via `calendar_utils.build_plan_inputs` / `commutes.expand_commutes`.
 - Every DB query is scoped by `student_id`. Schema changes are additive via `SCHEMA` + `_migrate`. Never drop or rewrite student data.
+- `plan_from_saved` uses the same "now"-based window as the fit check (`build_fit_inputs`) by default; a fixed window only when `start_date` is passed. Verified; don't re-fix.
 
 **Scheduling rules**
 - Buffers: mandatory between task-task, task-block, block-task; not between two fixed blocks. After a commute: normal buffer. Before a commute: none.
@@ -83,12 +84,12 @@ Every backend uses forced tool-calling with a JSON schema that comes from the py
 1. `README.md` is stale ("V1 in progress").
 2. `scheduler/sample_timetables/` contains real classmates' timetables in a public repo. Data hygiene is NOT done: needs synthetic replacements and a git-history scrub (back up and make the repo private first).
 3. Model IDs live only in `llm_backends.py` (`DEFAULT_*`), overridable via `GROQ_MODEL`, `GROQ_VISION_MODEL`, `ANTHROPIC_MODEL`. `claude-sonnet-5` is a valid ID (checked Oct 2026). The newer `claude-sonnet-5-5` rejects the forced `tool_choice` the backends use, so E2 needs a code change before trying it. Groq model names churn.
-4. Known extraction misreads (rotated images, `kayleigh_timetable.pdf`) are possibly a vision-model quality issue, deferred to the model comparison. Not a pipeline bug.
+4. Known extraction misreads (rotated images, one of the sample PDFs) are possibly a vision-model quality issue, deferred to the model comparison. Not a pipeline bug.
 5. No CI yet. Merges to master should go through a PR with green tests.
 6. `PRD.md` is referenced here but is not in the repo.
-7. `anthropic` is commented out of `requirements.txt` until PRD E2, but `LLM_BACKEND=anthropic` is still selectable. Without the package, reflect and import report "No module named anthropic".
+7. `anthropic` is commented out of `requirements.txt` until PRD E2, but `LLM_BACKEND=anthropic` is still selectable. Without the package, reflect and import report "No module named anthropic". At E2, install it and pin its exact version in `requirements.txt`.
 8. `DB_PATH` and `CACHE_PATH` are fixed to the repo root (`scheduler/paths.py`). A `scheduler.db` made by running scripts from another folder is not picked up; no migration (only Zane uses the app).
-9. `requirements.txt` is a full pip freeze of the Windows/Python 3.14 `.venv`, including indirect packages. Before CI, split it into direct dependencies plus a lock file.
+9. `requirements.txt` is a full pip freeze of the Windows/Python 3.14 `.venv`, including indirect packages. Before CI, split it into direct dependencies plus a lock file. Keep it UTF-8: in PowerShell 5.1, `pip freeze > requirements.txt` writes UTF-16 and breaks `pip install -r`. Use `pip freeze | Out-File -Encoding utf8 requirements.txt` or run it from Git Bash.
 
 ## Roadmap pointer (order only; details in PRD.md)
 
