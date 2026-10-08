@@ -381,3 +381,10 @@ def test_groq_error_body_with_a_string_error_still_maps_to_a_clear_message(monke
     monkeypatch.setattr("openai.OpenAI", FakeClient)
     with pytest.raises(RuntimeError, match="rate limit"):
         call_llm("system", "text", "tool", SCHEMA)
+
+
+def test_tests_run_offline_whatever_the_shell_has():
+    """conftest forces this, so a real LLM_BACKEND/GROQ_API_KEY in the shell can never reach a test."""
+    import os
+    assert os.environ["LLM_BACKEND"] == "fake"
+    assert "GROQ_API_KEY" not in os.environ and "ANTHROPIC_API_KEY" not in os.environ
