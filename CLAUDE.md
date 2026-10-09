@@ -52,7 +52,6 @@ All LLM access goes through `scheduler/llm_backends.py` (`call_llm` for text and
 - Tests never call Groq except `@pytest.mark.live` ones. Code that takes a `client=` stand-in expects an OpenAI-SDK shape (`chat.completions.create`).
 
 Plan for more providers (model comparison, 4.1): each candidate model gets its own branch; suitable ones are added to the provider tables and chosen by a task/depth-based router (4.0) that replaces `PROVIDER`. Routing goes by task (reflection / image / PDF) and depth (page count, text length, image size), optionally with a fallback model on a 429.
-
 Backend failures (missing key, retired model, rate limit, no tool call) raise a clear `RuntimeError`. Entry points report them using `llm_backends.is_backend_failure` instead of crashing; real code bugs still raise.
 
 Every backend uses forced tool-calling with a JSON schema that comes from the pydantic models, so the output is structured, not free text.
@@ -93,6 +92,7 @@ Every backend uses forced tool-calling with a JSON schema that comes from the py
 7. Anthropic was removed entirely (code, tests, requirements). If it returns at 4.1, install it, pin its exact version in `requirements.txt`, and note that `claude-sonnet-5-5` rejects a forced `tool_choice`.
 8. `DB_PATH` and `CACHE_PATH` are fixed to the repo root (`scheduler/paths.py`). A `scheduler.db` made by running scripts from another folder is not picked up; no migration (only Zane uses the app).
 9. `requirements.txt` is a full pip freeze of the Windows/Python 3.14 `.venv`, including indirect packages. Before CI, split it into direct dependencies plus a lock file. Keep it UTF-8: in PowerShell 5.1, `pip freeze > requirements.txt` writes UTF-16 and breaks `pip install -r`. Use `pip freeze | Out-File -Encoding utf8 requirements.txt` or run it from Git Bash.
+10. PDF text extraction often fails on `gpt-oss-120b` (`tool_use_failed`), so each page falls back to vision and costs two calls, which is the main cause of free-tier 429s. Address in model routing (4.0/4.1): retry once, trim the schema, or use another model; make the live PDF test catch the fallback.
 
 ## Roadmap pointer (order only; details in PRD.md)
 
