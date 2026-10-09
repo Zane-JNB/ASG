@@ -1,13 +1,15 @@
 import json
 import os
-from datetime import datetime
+from datetime import date, datetime
 from typing import Annotated
 
 from pydantic import Field, ValidationError, field_validator
 
-from scheduler.db import replace_extraction, load_settings
+from scheduler.calendar_utils import build_plan_inputs, find_overlaps
+from scheduler.db import get_dated_blocks, get_weekly_patterns, replace_extraction, load_settings
+from scheduler.fit_check import overlap_lines
 from scheduler.llm_backends import is_backend_failure
-from scheduler.models import ExtractionResult
+from scheduler.models import ExtractionResult, PlanAnchor
 from scheduler.paths import CACHE_PATH
 from scheduler.review import _confirm, _missed, review_extraction
 from scheduler.schedule_extraction import extract_schedule
@@ -124,6 +126,24 @@ def _close_past_tasks(reviewed: ExtractionResult, now: datetime, ask, show) -> t
     return reviewed.model_copy(update={"tasks": tasks}), closed
 
 
+def _clashes_with_saved(conn, student_id, reviewed: ExtractionResult, today: date) -> list[str]:
+    """Overlaps between the blocks being imported and the saved table this import does NOT
+    replace (weekly classes vs dated sessions), from today on. Clashes inside the import itself
+    are already shown by the review. Lines as overlap_lines prints them; [] if none."""
+    new_weekly, new_dated = reviewed.weekly_patterns, reviewed.dated_blocks
+    if bool(new_weekly) == bool(new_dated):  # both replaced, or neither: nothing saved to clash with
+        return []
+    old_weekly = [] if new_weekly else [p for _, p in get_weekly_patterns(conn, student_id)]
+    old_dated = [] if new_dated else [b for _, b in get_dated_blocks(conn, student_id)]
+    last = max([today] + [date.fromisoformat(b.date) for b in new_dated + old_dated])
+    anchor = PlanAnchor(start_date=today, num_days=max((last - today).days + 1, 7))  # a full week of classes
+    new_blocks, _ = build_plan_inputs(new_weekly, new_dated, [], anchor)
+    old_blocks, _ = build_plan_inputs(old_weekly, old_dated, [], anchor)
+    new_ids = {id(b) for b in new_blocks}
+    pairs = [(a, b) for a, b in find_overlaps(new_blocks + old_blocks) if (id(a) in new_ids) != (id(b) in new_ids)]
+    return overlap_lines(today, pairs)
+
+
 def run_import(conn, student_id, source_path, ask=input, show=print,
                extractor=extract_schedule, cache_path=CACHE_PATH, now: datetime | None = None) -> bool:   
     """Extract -> review -> replace the student's saved schedule items. True only if saved."""
@@ -152,6 +172,14 @@ def run_import(conn, student_id, source_path, ask=input, show=print,
              + (f" What was read is kept in '{kept_in}'; replaying it warns again that it is incomplete."
                 if kept_in else ""))
         return False
+    clashes = _clashes_with_saved(conn, student_id, reviewed, now.date())
+    if clashes:
+        show("WARNING -- these overlap your saved classes/sessions:")
+        for line in clashes:
+            show(f"  {line}")
+        if not _confirm(ask, "Save anyway? Both are kept and plans avoid both (with a warning).", default=False):
+            show("Not saved. Your saved schedule is untouched.")
+            return False
 
     summary = replace_extraction(conn, student_id, reviewed)  #     returns a dict, not None
     parts = []  #   -- say what was replaced and what was left alone

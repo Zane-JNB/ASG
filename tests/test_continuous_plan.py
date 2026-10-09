@@ -5,7 +5,7 @@ import pytest
 from scheduler.db import (
     add_dated_block, add_extracted_task, add_weekly_pattern, connect, get_or_create_student, add_commute
 )
-from scheduler.models import DatedBlock, ExtractedTask, WeeklyPattern, Commute
+from scheduler.models import DatedBlock, ExtractedTask, WeeklyPattern, Commute, time_to_slot
 from scheduler.planner import plan_from_saved
 
 D = date(2026, 10, 5)  # a Monday
@@ -74,12 +74,27 @@ def test_task_due_today_is_planned_in_the_hours_left(conn, sid):
     assert not [w for w in warnings if w.kind == "task_unscheduled"]
 
 
-def test_overlap_message_is_still_clear_in_continuous_mode(conn, sid):
-    for title in ("A", "B"):
-        add_dated_block(conn, sid, DatedBlock(title=title, date=D.isoformat(),
-                                              start_time="16:00", end_time="18:00"))
-    with pytest.raises(ValueError, match="overlaps"):
-        plan_from_saved(conn, sid, now=NOW)
+def test_overlapping_blocks_are_a_hard_warning_and_tasks_avoid_both(conn, sid):
+    add_dated_block(conn, sid, DatedBlock(title="A", date=D.isoformat(), start_time="16:00", end_time="18:00"))
+    add_dated_block(conn, sid, DatedBlock(title="B", date=D.isoformat(), start_time="17:00", end_time="19:00"))
+    add_extracted_task(conn, sid, _task("Report", 2, 3, D + timedelta(days=1)))
+    _, fixed, items, warnings = plan_from_saved(conn, sid, now=NOW, time_limit_seconds=10)
+    [w] = [w for w in warnings if w.kind == "block_overlap"]
+    assert w.severity == "hard" and "'A' 16:00-18:00 overlaps 'B' 17:00-19:00" in w.message
+    assert {"A", "B"} <= {b.title for b in fixed}  # both kept
+    lo, hi = time_to_slot("16:00"), time_to_slot("19:00")  # the union of A and B
+    assert not any(i.kind == "task" and i.day == 0 and i.start_slot < hi and i.end_slot > lo for i in items)
+
+
+def test_many_overlaps_are_summarised(conn, sid):
+    for h in range(16, 23):  # 7 pairs of identical blocks, all after NOW (15:00)
+        for title in ("A", "B"):
+            add_dated_block(conn, sid, DatedBlock(title=f"{title}{h}", date=D.isoformat(),
+                                                  start_time=f"{h}:00", end_time=f"{h}:30"))
+    add_extracted_task(conn, sid, _task("Report", 1, 3, D + timedelta(days=1)))
+    *_, warnings = plan_from_saved(conn, sid, now=NOW, time_limit_seconds=10)
+    overlaps = [w.message for w in warnings if w.kind == "block_overlap"]
+    assert len(overlaps) == 6 and overlaps[-1].startswith("...and 2 more")
 
 
 def _commute_vs_class(conn, sid, class_start="17:00", class_end="19:00", commute_start="16:30"):   

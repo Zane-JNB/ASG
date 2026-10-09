@@ -85,14 +85,15 @@ def test_format_plan_groups_by_real_date_sorts_by_time_and_skips_duplicate_fixed
         "  10:00-11:00  [fixed]  B",
     ]
 
-def test_overlapping_saved_blocks_give_a_clear_error_naming_both():
+def test_overlapping_saved_blocks_give_a_clear_hard_warning_naming_both():
     dup = [WeeklyPattern(title="MAT2003", day="Mon", start_time="12:00", end_time="13:50"),
            WeeklyPattern(title="MAT2003 (F2F Lecture)", day="Mon", start_time="12:00", end_time="13:50")]
     conn, sid = _setup(patterns=dup, blocks=[], tasks=[])
-    with pytest.raises(ValueError) as e:
-        plan_from_saved(conn, sid, 7, now=MON_MIDNIGHT)
-    msg = str(e.value)
-    assert "Mon 28 Sep" in msg and "MAT2003" in msg and "F2F Lecture" in msg and "import_schedule" in msg
+    *_, warnings = plan_from_saved(conn, sid, 7, now=MON_MIDNIGHT, time_limit_seconds=10)
+    [w] = [w for w in warnings if w.kind == "block_overlap"]
+    assert w.severity == "hard"
+    assert "Mon 28 Sep" in w.message and "MAT2003" in w.message and "F2F Lecture" in w.message
+    assert "import_schedule" in w.message
 
 # ---- the hours before the first wake-up must be protected ----
 def test_no_tasks_are_placed_in_the_small_hours_of_day_zero():

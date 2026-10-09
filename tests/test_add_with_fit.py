@@ -124,13 +124,14 @@ def test_late_night_task_due_today_does_not_crash(conn, sid):
     assert get_extracted_tasks(conn, sid) == []
 
 
-def test_overlapping_saved_blocks_stop_the_check_and_save_nothing(conn, sid):
+def test_overlapping_saved_blocks_no_longer_stop_the_check(conn, sid):
+    # both blocks are kept and the solver plans around them, so the task is still checked and added
     for title in ("A", "B"):
         add_dated_block(conn, sid, DatedBlock(title=title, date=D.isoformat(),
                                               start_time="10:00", end_time="12:00"))
     result, shown = _run(conn, sid, _task("Essay", 1, 3, D + timedelta(days=1)), [])
-    assert result is None and any("Could not check the fit" in l for l in shown)
-    assert get_extracted_tasks(conn, sid) == []
+    assert result is not None and "Added." in shown
+    assert not any("Could not check the fit" in l for l in shown)
 
 
 def test_report_moves_later_so_the_task_due_today_fits_and_nothing_is_cut(conn, sid):   

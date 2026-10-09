@@ -117,16 +117,27 @@ def sleep_setup(fixed: list[FixedBlock], morning_after: list[FixedBlock], num_da
     return fixed, [with_wake_limit(rule, [b for b in blocks if b.day == rule.night + 1], settings)
                    for rule in sleep_rules]
 
-def overlap_error(anchor: PlanAnchor, overlaps) -> str:    
+MAX_OVERLAPS_SHOWN = 5
+
+def overlap_lines(start_date, overlaps) -> list[str]:
+    """'Mon 05 Oct: 'A' 10:00-12:00 overlaps 'B' 11:00-13:00', the first few pairs, then '...and N more'."""
     lines = []
-    for a, b in overlaps[:5]:
-        d = anchor.start_date + timedelta(days=a.day)
-        lines.append(f"  {d:%a %d %b}: '{a.title}' {slot_to_time(a.start_slot)}-"
+    for a, b in overlaps[:MAX_OVERLAPS_SHOWN]:
+        d = start_date + timedelta(days=a.day)
+        lines.append(f"{d:%a %d %b}: '{a.title}' {slot_to_time(a.start_slot)}-"
                      f"{slot_to_time(a.end_slot % SLOTS_PER_DAY)} overlaps '{b.title}' "
                      f"{slot_to_time(b.start_slot)}-{slot_to_time(b.end_slot % SLOTS_PER_DAY)}")
-    more = f"\n  ...and {len(overlaps) - 5} more" if len(overlaps) > 5 else ""
-    return ("Some saved blocks overlap, so no schedule is possible:\n" + "\n".join(lines) + more
-            + "\nRe-run import_schedule.py and delete or fix the duplicates.")
+    if len(overlaps) > MAX_OVERLAPS_SHOWN:
+        lines.append(f"...and {len(overlaps) - MAX_OVERLAPS_SHOWN} more overlap(s)")
+    return lines
+
+def overlap_warnings_for_blocks(anchor: PlanAnchor, overlaps) -> list[ScheduleWarning]:
+    """Saved classes/sessions that overlap are a hard warning, not an error: both are kept and the
+    solver plans around their union (merge_fixed_spans), so one bad import never blocks planning."""
+    return [ScheduleWarning(severity="hard", kind="block_overlap",
+                            message=f"{line} (both kept; tasks avoid both). If one is wrong, "
+                                    "re-run import_schedule.py to replace it.")
+            for line in overlap_lines(anchor.start_date, overlaps)]
 
 @dataclass
 class FitInputs: 
@@ -187,12 +198,10 @@ def build_fit_inputs(conn, student_id: int, now: datetime,
     commute_blocks = expand_commutes(commutes, look)
     morning_after = [b for b in classes + commute_blocks if b.day == num_days]
     fixed = [b for b in classes if b.day < num_days]
-    overlaps = find_overlaps(fixed)
-    if overlaps:
-        raise ValueError(overlap_error(anchor, overlaps))
     fixed = [b for b in fixed if not (b.day == 0 and b.end_slot <= next_slot(now))]
+    block_warnings = overlap_warnings_for_blocks(anchor, find_overlaps(fixed))  # only clashes not already over
     fixed, commute_warnings = with_commutes(fixed, [b for b in commute_blocks if b.day < num_days],
                                             anchor, next_slot(now))
     fixed, sleep_rules = sleep_setup(fixed, morning_after, num_days, settings, now)
-    warnings = commute_warnings + overdue_warnings + unreadable_warnings(conn, student_id)
+    warnings = block_warnings + commute_warnings + overdue_warnings + unreadable_warnings(conn, student_id)
     return FitInputs(anchor, fixed, planned, new_dyn, sleep_rules, settings, warnings)  

@@ -488,3 +488,53 @@ def test_a_saved_task_from_before_missed_existed_still_loads(env):
                  (sid, '{"title": "Old", "date": "2026-10-02"}', "2026-09-01T00:00"))
     [(_, t)] = get_extracted_tasks(conn, sid)
     assert t.title == "Old" and t.missed is False
+
+
+# ---- blocks that clash with the saved table the import does NOT replace ----
+def _dated_only(start="11:00", end="13:00"):
+    return lambda d, m: ExtractionResult(
+        dated_blocks=[DatedBlock(title="Exam", date="2026-10-05", start_time=start, end_time=end)])  # a Monday
+
+
+def _saved_maths(conn, sid):
+    replace_extraction(conn, sid, ExtractionResult(
+        weekly_patterns=[WeeklyPattern(title="Maths", day="Mon", start_time="10:00", end_time="12:00")]))
+
+
+def test_import_clashing_with_saved_classes_asks_and_no_saves_nothing(env):
+    conn, sid, img, cache = env
+    _saved_maths(conn, sid)
+    shown, ask = [], Recorder(YES + KEEP_ALL + [""])  # Enter = the default No
+    assert not run_import(conn, sid, str(img), ask=ask, show=shown.append,
+                          extractor=_dated_only(), cache_path=cache)
+    assert any("overlap your saved" in l for l in shown)
+    assert any("'Maths' 10:00-12:00 overlaps 'Exam' 11:00-13:00" in l for l in shown)
+    assert _titles(conn, sid) == (["Maths"], [], [])
+
+
+def test_import_clashing_with_saved_classes_saves_on_yes(env):
+    conn, sid, img, cache = env
+    _saved_maths(conn, sid)
+    assert run_import(conn, sid, str(img), ask=Recorder(YES + KEEP_ALL + ["y"]), show=lambda _: None,
+                      extractor=_dated_only(), cache_path=cache)
+    assert _titles(conn, sid) == (["Maths"], ["Exam"], [])
+
+
+def test_weekly_import_clashing_with_saved_sessions_is_caught_too(env):
+    conn, sid, img, cache = env
+    replace_extraction(conn, sid, ExtractionResult(
+        dated_blocks=[DatedBlock(title="Exam", date="2026-10-05", start_time="11:00", end_time="13:00")]))
+    weekly = lambda d, m: ExtractionResult(
+        weekly_patterns=[WeeklyPattern(title="Maths", day="Mon", start_time="10:00", end_time="12:00")])
+    shown = []
+    assert not run_import(conn, sid, str(img), ask=Recorder(YES + KEEP_ALL + ["n"]), show=shown.append,
+                          extractor=weekly, cache_path=cache)
+    assert any("overlaps" in l for l in shown)
+
+
+def test_import_without_clashes_asks_nothing_extra(env):
+    conn, sid, img, cache = env
+    _saved_maths(conn, sid)
+    # back to back with Maths: no clash, so the Recorder has no extra answer to give
+    assert run_import(conn, sid, str(img), ask=Recorder(YES + KEEP_ALL), show=lambda _: None,
+                      extractor=_dated_only("12:00", "13:00"), cache_path=cache)
