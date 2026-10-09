@@ -109,6 +109,17 @@ def test_sleep_is_placed_at_preferred_bedtime_with_full_length():
     assert sleep.end_slot - sleep.start_slot == rule.length_slots 
     assert sleep_warnings([rule], items) == []  
 
+def test_latest_wake_ends_sleep_in_time_by_going_to_bed_earlier():
+    rule = SleepRule(latest_wake=SLOTS_PER_DAY + 24)  # up by 06:00
+    items, _ = build_schedule([], [], sleep_rules=[rule])
+    (sleep,) = sleep_items(items)
+    assert sleep.end_slot <= SLOTS_PER_DAY + 24
+    assert sleep.end_slot - sleep.start_slot == rule.length_slots  # bedtime moved, sleep kept
+
+def test_latest_wake_before_earliest_bed_is_rejected():
+    with pytest.raises(ValueError):
+        SleepRule(latest_wake=80)
+
 def test_tasks_do_not_overlap_sleep(): 
     tasks = [DynamicTask(title=f"T{i}", duration_slots=20, priority=3, difficulty=2,
                          splittable=False) for i in range(3)] 

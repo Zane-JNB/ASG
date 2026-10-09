@@ -52,6 +52,7 @@ class SleepRule(BaseModel):  #
     earliest_bed: int = Field(default=84, ge=0, lt=2 * SLOTS_PER_DAY)
     latest_bed: int = Field(default=100, ge=0, lt=2 * SLOTS_PER_DAY) 
     preferred_bed: int = Field(default=92, ge=0, lt=2 * SLOTS_PER_DAY)
+    latest_wake: int | None = Field(default=None, ge=0, le=2 * SLOTS_PER_DAY)  # sleep must end by then; None = no limit
     skip: bool = False  
  
     @model_validator(mode="after") 
@@ -60,6 +61,8 @@ class SleepRule(BaseModel):  #
             raise ValueError("min_slots cannot be more than length_slots")  
         if not (self.earliest_bed <= self.preferred_bed <= self.latest_bed):  
             raise ValueError("need earliest_bed <= preferred_bed <= latest_bed")  
+        if self.latest_wake is not None and self.latest_wake < self.earliest_bed:
+            raise ValueError("latest_wake cannot be before earliest_bed")
         return self 
 
 class ProfileSettings(BaseModel):  
@@ -76,6 +79,7 @@ class ProfileSettings(BaseModel):
     default_earliest_bed: int = Field(default=84, ge=0, lt=2 * SLOTS_PER_DAY)  #  21:00
     default_latest_bed: int = Field(default=100, ge=0, lt=2 * SLOTS_PER_DAY)  #  01:00
     default_preferred_bed: int = Field(default=92, ge=0, lt=2 * SLOTS_PER_DAY)  #  23:00
+    wake_buffer_slots: int = Field(default=4, ge=0)  #  1h to get ready between waking and the first class/commute
     drop_priority_weight: int = Field(default=10, ge=0)  #    cost per lost slot, per priority point
     drop_difficulty_weight: int = Field(default=2, ge=0)  #  
     drop_deadline_multiplier: int = Field(default=3, ge=1)  #    losing time on a deadline task costs 3x

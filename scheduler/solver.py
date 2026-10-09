@@ -144,6 +144,8 @@ def build_schedule(fixed_blocks: list[FixedBlock], tasks: list[DynamicTask],
             f"sleep_end_{rule.night}",  
         )  
         sleep_iv = model.NewIntervalVar(start, size, end, f"sleep_{rule.night}")   
+        if rule.latest_wake is not None:  # e.g. an early class the morning after the plan ends
+            model.Add(end <= base + rule.latest_wake)
         intervals.append(sleep_iv)   
         sleep_intervals.append(sleep_iv)      
  
