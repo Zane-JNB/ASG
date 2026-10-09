@@ -3,3 +3,4 @@ __pycache__/
 scheduler.db
 last_extraction.json
 .env
+HANDOFF.md
