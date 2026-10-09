@@ -49,7 +49,7 @@ def _dont_add_fallback(new_task: DynamicTask, rank: int) -> DropProposal:
                         slots_freed=0, sleep_sacrificed_slots=0, flags=flags, schedule=[])
 
 def _ranked_options(report: DropReport, new_task: DynamicTask, must_add: bool) -> list[DropProposal]:   
-    """Best first. Lifted out of choose_drop_proposal so automatic mode shares it."""
+    """Best first. Shared by semi-automatic and automatic mode so both offer the same options."""
     options = [p for p in report.proposals if p.new_task_added or not must_add]
     if not must_add and not any(not p.new_task_added for p in options):
         options.append(_dont_add_fallback(new_task, len(options) + 1))
@@ -59,9 +59,7 @@ def choose_drop_proposal(report: DropReport, new_task: DynamicTask, must_add: bo
                          ask=input, show=print) -> DropProposal | None:   
     if report.fits_already:
         raise ValueError("everything already fits -- nothing to choose")
-    options = [p for p in report.proposals if p.new_task_added or not must_add]
-    if not must_add and not any(not p.new_task_added for p in options):
-        options.append(_dont_add_fallback(new_task, len(options) + 1))
+    options = _ranked_options(report, new_task, must_add)
     if not options:
         show(f"No combination of cuts found that fits '{new_task.title}'.")
         return None
