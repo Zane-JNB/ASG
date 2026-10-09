@@ -68,14 +68,15 @@ Every backend uses forced tool-calling with a JSON schema that comes from the py
 
 **Scheduling rules**
 - Buffers: mandatory between task-task, task-block, block-task; not between two fixed blocks. After a commute: normal buffer. Before a commute: none. After waking: `wake_buffer_slots` (default 1h, student-editable) before any task, class or commute, every night, instead of the normal buffer (solver: each night's interval covers sleep + wake buffer; none on a night with no sleep). This morning's version is the "Sleep (night before)" + "Getting ready" blocks (`fit_check.sleep_setup`).
-- Sleep and deadlines are never silently traded away. Missing minimum sleep, skipping a night, or missing a deadline is a hard warning. Other drops are soft. Open tasks past their due date and optional `due_time` (rounded down to its slot, like the solver deadline) get a hard `task_overdue` warning (`fit_check._planned_and_overdue`).
+- Sleep and deadlines are never silently traded away. Missing minimum sleep, skipping a night, or missing a deadline is a hard warning. Other drops are soft. Open tasks past their due date and optional `due_time` (rounded down to its slot, like the solver deadline) get a hard `task_overdue` warning (`fit_check._planned_and_overdue`). A task whose plan cut takes all its time gets a hard `task_dropped` warning on every plan; a partly cut one gets a soft `task_cut`.
+- Overlapping saved classes/sessions are a hard `block_overlap` warning, never an error: both are kept and the solver plans around their union. Import asks before saving blocks that clash with the saved table it doesn't replace.
 - Every night must end by `SleepRule.latest_wake`: the next day's first class/commute minus `wake_buffer_slots`, with `latest_wake_reason` naming it (`fit_check.with_wake_limit`). For the window's last night that is the morning after the window, which is only looked at, never planned, so the window doesn't grow. Drop proposals count only sleep below what each night allows (`solver.reachable_sleep`), and a short-sleep warning names the cap only when it was the limit.
 - Objective order (highest cost first): sleep minimum > sleep target > task fit/priority > same-day spread > bedtime drift.
 - Commutes are fixed blocks with priority over tasks. If one overlaps another block, tell the student and ask; never silently drop it.
 - Splitting a task is the student's choice (per-task `splittable`), never automatic.
 - Plan cuts apply only to the current plan and never shrink the saved task.
 - Imports overwrite only fixed blocks. Tasks are added individually, never replaced by an import.
-- Completed tasks are kept as history, not deleted. A task closed without being done is kept too, with `missed=True`. Imported tasks already past due are asked done/missed and saved closed (`import_flow._close_past_tasks`).
+- Completed tasks are kept as history, not deleted. A task closed without being done is kept too, with `missed=True` (`[f]` in `manage_tasks.py` asks done or missed). Imported tasks already past due are asked done/missed and saved closed (`import_flow._close_past_tasks`).
 
 **Preferences and LLM**
 - No hardcoded algorithm tunables: all live in `ProfileSettings`, per student.
