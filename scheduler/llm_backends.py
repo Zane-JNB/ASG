@@ -6,8 +6,10 @@ import os
 # decommissioned in Aug 2026); gpt-oss-120b follows the tool schema more reliably than the 20b.
 DEFAULT_GROQ_MODEL = "openai/gpt-oss-120b"
 DEFAULT_GROQ_VISION_MODEL = "qwen/qwen3.8-27b"  # Groq's only vision model as of writing
-DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-5"  # paid (PRD E2). Valid ID as of Oct 2026; the newer
-# claude-sonnet-5-5 rejects the forced tool_choice used below, so switching needs code changes too.
+
+# Groq is the only provider for now. Other providers join the tables at the bottom of this file
+# at the model comparison (4.1); a task/depth-based router (4.0) then replaces this constant.
+PROVIDER = "groq"
 
 
 def groq_model() -> str:
@@ -16,10 +18,6 @@ def groq_model() -> str:
 
 def groq_vision_model() -> str:
     return os.environ.get("GROQ_VISION_MODEL", DEFAULT_GROQ_VISION_MODEL)
-
-
-def anthropic_model() -> str:
-    return os.environ.get("ANTHROPIC_MODEL", DEFAULT_ANTHROPIC_MODEL)
 
 
 def is_backend_failure(e: Exception) -> bool:
@@ -32,26 +30,7 @@ def is_backend_failure(e: Exception) -> bool:
         return True
     if getattr(e, "status_code", None) is not None:
         return True
-    return type(e).__module__.split(".")[0] in ("openai", "anthropic", "httpx")
-
-
-def _anthropic_call(system_prompt: str, user_message: str, tool_name: str, tool_schema: dict,
-                    client=None) -> dict:
-    """client: optional Anthropic-SDK-shaped stand-in (tests inject one; no real call)."""
-    if client is None:
-        import anthropic
-        client = anthropic.Anthropic()  # reads ANTHROPIC_API_KEY from the environment
-    response = client.messages.create(
-        model=anthropic_model(),
-        max_tokens=1024,
-        system=system_prompt,
-        tools=[{"name": tool_name, "description": tool_schema.get("description", ""),
-                "input_schema": tool_schema}],
-        tool_choice={"type": "tool", "name": tool_name},
-        messages=[{"role": "user", "content": user_message}],
-    )
-    block = next(b for b in response.content if b.type == "tool_use")
-    return block.input
+    return type(e).__module__.split(".")[0] in ("openai", "httpx")
 
 
 def _groq_client():
@@ -59,27 +38,50 @@ def _groq_client():
     # Free tier, no credit card required: https://console.groq.com
     key = os.environ.get("GROQ_API_KEY")
     if not key:
-        raise RuntimeError("LLM_BACKEND=groq needs GROQ_API_KEY set (free key: https://console.groq.com).")
+        raise RuntimeError("Groq needs GROQ_API_KEY set (free key: https://console.groq.com).")
     from openai import OpenAI
     return OpenAI(base_url="https://api.groq.com/openai/v1", api_key=key)
+
+
+def _groq_error_detail(e: Exception) -> str:
+    """Groq's own explanation from the error body (e.g. which rate limit: requests, tokens or
+    daily), or "" when there is none. The body can be flat, wrapped in "error", or a string."""
+    body = getattr(e, "body", None)
+    if not isinstance(body, dict):
+        return ""
+    inner = body.get("error")
+    if isinstance(inner, dict):
+        return str(inner.get("message") or "")
+    if isinstance(inner, str):
+        return inner
+    return str(body.get("message") or "")
 
 
 def _groq_status_error(e: Exception, model: str, env_var: str) -> RuntimeError | None:
     """A clear RuntimeError for Groq failures a student can act on, else None (caller re-raises).
     Duck-typed on status_code on purpose (see test_groq_backend_handles_error_via_duck_typing...)."""
     status_code = getattr(e, "status_code", None)
+    if status_code == 401:
+        return RuntimeError(
+            "Groq rejected GROQ_API_KEY (invalid or revoked). Make a new key at "
+            "https://console.groq.com/keys, set it, and reopen your terminal.")
+    if status_code == 429:
+        detail = _groq_error_detail(e)
+        return RuntimeError("Groq's free-tier rate limit was hit. Wait a minute and try again."
+                            + (f" Groq says: {detail}" if detail else ""))
     if status_code == 404:
         return RuntimeError(
             f"Groq model '{model}' isn't available -- it may have been decommissioned "
             "(Groq's free-tier catalog changes often). Check current models at "
             f"https://console.groq.com/docs/models and set the {env_var} env var to override.")
-    if status_code == 429:
-        return RuntimeError("Groq's free-tier rate limit was hit. Wait a minute and try again.")
     return None
 
 
-def _groq_call(system_prompt: str, user_message: str, tool_name: str, tool_schema: dict) -> dict:
-    client = _groq_client()
+def _groq_call(system_prompt: str, user_message: str, tool_name: str, tool_schema: dict,
+               client=None) -> dict:
+    """client: optional OpenAI-SDK-shaped stand-in (tests inject one; no real call)."""
+    if client is None:
+        client = _groq_client()
     model = groq_model()
     try:
         response = client.chat.completions.create(
@@ -129,72 +131,25 @@ def _tool_call_arguments(response, model: str, env_var: str) -> dict:
             f"Try again, or set the {env_var} env var to a stronger model.")
     return json.loads(tool_calls[0].function.arguments)
 
-def _fake_call(system_prompt: str, user_message: str, tool_name: str, tool_schema: dict) -> dict:
-    """A tiny offline heuristic -- NOT a real preference-change engine. It exists purely so the
-    rest of the app (db writes, main.py flow, UI) can be built and tested with zero network
-    calls and zero cost, before you have any API key at all. Replace with a real backend
-    once you're evaluating actual reflection-understanding quality.
-    """
-    text = user_message.lower()
-    proposals = []
-    if any(w in text for w in ("rushed", "no break", "no time", "back to back")):
-        proposals.append({"field": "buffer_slots", "direction": "increase", "magnitude": "medium",
-                          "reason": "mentioned feeling rushed or lacking breaks (fake backend)"})
-    if any(w in text for w in ("tired", "exhausted", "didn't sleep", "not enough sleep")):
-        proposals.append({"field": "sleep_target_penalty", "direction": "increase", "magnitude": "small",
-                          "reason": "mentioned tiredness or insufficient sleep (fake backend)"})
-    return {"summary": "Offline fake-backend response -- no real LLM call was made.",
-            "proposals": proposals}
 
-
-_BACKENDS = {"anthropic": _anthropic_call, "groq": _groq_call, "fake": _fake_call}
+_BACKENDS = {"groq": _groq_call}
 
 
 def call_llm(system_prompt: str, user_message: str, tool_name: str, tool_schema: dict) -> dict:
-    """Dispatch to whichever backend LLM_BACKEND names (env var; defaults to 'fake' -- free,
-    offline, no key needed). Set LLM_BACKEND=groq (with GROQ_API_KEY) or LLM_BACKEND=anthropic
-    (with ANTHROPIC_API_KEY) to use a real model.
-    """
-    backend = os.environ.get("LLM_BACKEND", "fake")
-    if backend not in _BACKENDS:
-        raise ValueError(f"unknown LLM_BACKEND '{backend}' (choose from: {', '.join(_BACKENDS)})")
-    return _BACKENDS[backend](system_prompt, user_message, tool_name, tool_schema)
-
-def _anthropic_vision_call(system_prompt: str, user_text: str, image_base64: str, media_type: str,
-                           tool_name: str, tool_schema: dict, client=None) -> dict:
-    """client: optional Anthropic-SDK-shaped stand-in (tests inject one; no real call)."""
-    if client is None:
-        import anthropic
-        client = anthropic.Anthropic()
-    content = [{"type": "text", "text": user_text}]
-    if media_type == "application/pdf":
-        content.insert(0, {"type": "document",
-                           "source": {"type": "base64", "media_type": media_type, "data": image_base64}})
-    else:
-        content.insert(0, {"type": "image",
-                           "source": {"type": "base64", "media_type": media_type, "data": image_base64}})
-
-    response = client.messages.create(
-        model=anthropic_model(),
-        max_tokens=2048,
-        system=system_prompt,
-        tools=[{"name": tool_name, "description": tool_schema.get("description", ""),
-                "input_schema": tool_schema}],
-        tool_choice={"type": "tool", "name": tool_name},
-        messages=[{"role": "user", "content": content}],
-    )
-    block = next(b for b in response.content if b.type == "tool_use")
-    return block.input
+    """Send a text prompt to the current provider (Groq; needs GROQ_API_KEY)."""
+    return _BACKENDS[PROVIDER](system_prompt, user_message, tool_name, tool_schema)
 
 
 def _groq_vision_call(system_prompt: str, user_text: str, image_base64: str, media_type: str,
-                      tool_name: str, tool_schema: dict) -> dict:
+                      tool_name: str, tool_schema: dict, client=None) -> dict:
+    """client: optional OpenAI-SDK-shaped stand-in (tests inject one; no real call)."""
     if media_type == "application/pdf":
         raise ValueError(
             "Groq's vision model doesn't support PDF input directly (images only, per their docs). "
-            "Convert the PDF's first page to an image first, or use LLM_BACKEND=anthropic for PDFs."
+            "Convert the PDF's pages to images first (import does this for you)."
         )
-    client = _groq_client()
+    if client is None:
+        client = _groq_client()
     model = groq_vision_model()
     try:
         response = client.chat.completions.create(
@@ -222,24 +177,12 @@ def _groq_vision_call(system_prompt: str, user_text: str, image_base64: str, med
     return _tool_call_arguments(response, model, "GROQ_VISION_MODEL")
 
 
-def _fake_vision_call(system_prompt: str, user_text: str, image_base64: str, media_type: str,
-                      tool_name: str, tool_schema: dict) -> dict:
-    """Offline stub -- can't actually read the image. Returns an empty result so the extraction
-    pipeline (review screen, db writes) can be built and tested with zero cost and no real
-    document, before you're ready to spend even Groq's free-tier rate limit on it.
-    """
-    return {"weekly_patterns": [], "tasks": []}
-
-
-_VISION_BACKENDS = {"anthropic": _anthropic_vision_call, "groq": _groq_vision_call, "fake": _fake_vision_call}
+_VISION_BACKENDS = {"groq": _groq_vision_call}
 
 
 def call_vision_llm(system_prompt: str, user_text: str, image_base64: str, media_type: str,
                     tool_name: str, tool_schema: dict) -> dict:
-    """Same LLM_BACKEND-driven dispatch as call_llm, but for image/PDF input. 'anthropic' and
-    'groq' both work for images; only 'anthropic' currently handles PDFs (see _groq_vision_call).
-    """
-    backend = os.environ.get("LLM_BACKEND", "fake")
-    if backend not in _VISION_BACKENDS:
-        raise ValueError(f"unknown LLM_BACKEND '{backend}' (choose from: {', '.join(_VISION_BACKENDS)})")
-    return _VISION_BACKENDS[backend](system_prompt, user_text, image_base64, media_type, tool_name, tool_schema)
+    """Same as call_llm, but for image input. Groq's vision model takes images only, not PDFs
+    (see _groq_vision_call); PDFs go through pdf_extraction instead."""
+    return _VISION_BACKENDS[PROVIDER](system_prompt, user_text, image_base64, media_type,
+                                      tool_name, tool_schema)

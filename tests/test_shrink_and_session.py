@@ -193,11 +193,10 @@ def test_review_without_a_session_length_behaves_as_before():
     assert not any("split" in l for l in shown)
 
 
-def test_import_flow_uses_the_students_session_length(tmp_path, monkeypatch, conn, sid):
-    monkeypatch.delenv("LLM_BACKEND", raising=False)
+def test_import_flow_uses_the_students_session_length(tmp_path, conn, sid):
     img = tmp_path / "t.png"
     img.write_bytes(b"fake-image-bytes")
-    ask, shown = scripted([""])
+    ask, shown = scripted(["y", ""])  # confirm the Groq call, then accept everything
     run_import(conn, sid, str(img), ask=ask, show=shown.append,
                extractor=lambda *a, **k: _long_task(), cache_path=str(tmp_path / "c.json"))
     assert any("can be split" in l for l in shown)

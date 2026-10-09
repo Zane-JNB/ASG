@@ -2,7 +2,7 @@
 
 Strategy per page:
   - If pdfplumber finds real text, send that TEXT to an LLM (via llm_backends.call_llm,
-    same LLM_BACKEND dispatch as reflections -- works on the free Groq tier today).
+    same llm_backends dispatch as reflections -- works on the free Groq tier today).
   - If a page has little/no extractable text (a scanned page, or a page that's mostly a
     picture), render that page to an image with pypdfium2 and reuse the EXISTING image
     extraction path (extract_schedule / call_vision_llm) -- the same path already used
@@ -10,8 +10,8 @@ Strategy per page:
 Both libraries used here (pdfplumber, pypdfium2) are permissively licensed (MIT / Apache-BSD),
 unlike PyMuPDF (AGPL), which matters if this app is ever sold.
 
-Swapping to Anthropic for either half later is a one-line change: nothing here calls a
-specific provider directly, everything goes through llm_backends' LLM_BACKEND dispatch.
+Nothing here calls a specific provider directly: everything goes through llm_backends,
+so adding another provider later (model routing, 4.0) needs no change here.
 """
 
 import pdfplumber
@@ -98,7 +98,7 @@ def extract_image_page(image_bytes: bytes, call_vision) -> ExtractionResult:
 def extract_schedule_from_pdf(file_bytes: bytes, call_text_llm=None, call_vision=None) -> ExtractionResult:
     """Read every page of a PDF: pages with real text go through the text path, pages that
     are scans/images get rendered and go through the vision path. Injectable call_text_llm /
-    call_vision default to the real backends (LLM_BACKEND-driven) so callers don't need to
+    call_vision default to the real backend (Groq, via llm_backends) so callers don't need to
     know which path a given PDF will take."""
     if call_text_llm is None:
         from scheduler.llm_backends import call_llm as call_text_llm

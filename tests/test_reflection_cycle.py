@@ -25,8 +25,7 @@ def make_result(*proposals) -> ReflectionResult:
     return ReflectionResult(summary="test summary", proposals=list(proposals))
 
 
-def test_get_proposals_uses_fake_backend_by_default(monkeypatch):
-    monkeypatch.delenv("LLM_BACKEND", raising=False)
+def test_get_proposals_goes_through_the_provider_table():  # conftest's offline stub answers
     result = get_proposals("it felt rushed, no breaks")
     assert isinstance(result, ReflectionResult)
     assert any(p.field == "buffer_slots" for p in result.proposals)
@@ -137,10 +136,10 @@ def test_user_owned_field_is_not_shown_to_the_model():
     change_tier(conn, sid, "buffer_slots", Tier.USER, Actor.USER)
     seen = {}
     def create(**kw):
-        seen["system"] = kw["system"]
-        block = SimpleNamespace(type="tool_use", input={"summary": "", "proposals": []})
-        return SimpleNamespace(content=[block])
-    client = SimpleNamespace(messages=SimpleNamespace(create=create))
+        seen["system"] = kw["messages"][0]["content"]  # OpenAI shape: system prompt is message 0
+        call = SimpleNamespace(function=SimpleNamespace(arguments='{"summary": "", "proposals": []}'))
+        return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(tool_calls=[call]))])
+    client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
     reflect_and_record(conn, sid, "felt rushed", client=client)
     assert "buffer_slots (deltas" not in seen["system"] and "bedtime_penalty (deltas" in seen["system"]
 

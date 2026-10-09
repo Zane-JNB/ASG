@@ -41,5 +41,3 @@ truststore==0.10.4
 typing-inspection==0.4.4
 typing_extensions==4.16.0
 tzdata==2026.4
-# Paid backend, not used until the model comparison (PRD E2). Install it then and pin it here:
-# anthropic==<version>

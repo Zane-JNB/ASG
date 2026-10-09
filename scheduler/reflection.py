@@ -93,18 +93,17 @@ def _tool_schema(fields):
 def propose_preference_changes(reflection_text: str, client=None, allowed_fields = None) -> ReflectionResult:
     """Ask the LLM to propose bounded preference changes from a reflection.
 
-    client is an optional Anthropic-SDK-shaped override (exposing .messages.create(...)),
+    client is an optional OpenAI-SDK-shaped override (exposing .chat.completions.create(...)),
     used mainly for testing. When omitted, this dispatches through llm_backends.call_llm,
-    which reads LLM_BACKEND from the environment -- defaulting to a free offline stub so
-    development doesn't require an API key at all (see llm_backends.py).
+    which calls Groq (needs GROQ_API_KEY; see llm_backends.py).
     """
     if allowed_fields is not None and not allowed_fields:  # nothing learnable -> skip the API call
         return ReflectionResult(summary="", proposals=[])
     
-    from scheduler.llm_backends import _anthropic_call, call_llm
+    from scheduler.llm_backends import _groq_call, call_llm
     args = dict(system_prompt=build_system_prompt(allowed_fields), user_message=reflection_text,
                 tool_name="propose_preference_changes", tool_schema=_tool_schema(allowed_fields))
-    raw = _anthropic_call(**args, client=client) if client is not None else call_llm(**args)
+    raw = _groq_call(**args, client=client) if client is not None else call_llm(**args)
 
     # validate each proposal individually -- one hallucinated/locked field shouldn't
     # discard every other, otherwise valid, proposal in the same response

@@ -36,8 +36,7 @@ def feed_inputs(monkeypatch, answers: list[str]):
 
 
 def test_first_reflection_records_evidence_only(monkeypatch, capsys, conn): 
-    monkeypatch.delenv("LLM_BACKEND", raising=False)
-    feed_inputs(monkeypatch, ["Zane", "felt rushed today, no breaks"])
+    feed_inputs(monkeypatch, ["y", "Zane", "felt rushed today, no breaks"])
     reflect.main()
     out = capsys.readouterr().out
     assert "Break time" in out and "1/3" in out and "Evidence recorded" in out
@@ -46,27 +45,24 @@ def test_first_reflection_records_evidence_only(monkeypatch, capsys, conn):
 
 
 def test_third_reflection_applies_one_learned_update(monkeypatch, capsys, conn):  
-    monkeypatch.delenv("LLM_BACKEND", raising=False)
     for _ in range(3):
-        feed_inputs(monkeypatch, ["Zane", "felt rushed today, no breaks"])
+        feed_inputs(monkeypatch, ["y", "Zane", "felt rushed today, no breaks"])
         reflect.main()
     assert "Settings updated." in capsys.readouterr().out
     sid = get_or_create_student(conn, "Zane")
     assert load_settings(conn, sid).buffer_slots == 3 and load_evidence(conn, sid) == {}
 
 def test_user_owned_field_is_reported_and_untouched(monkeypatch, capsys, conn):   
-    monkeypatch.delenv("LLM_BACKEND", raising=False)
     sid = get_or_create_student(conn, "Zane")
     change_tier(conn, sid, "buffer_slots", Tier.USER, Actor.USER)
-    feed_inputs(monkeypatch, ["Zane", "felt rushed today, no breaks"])
+    feed_inputs(monkeypatch, ["y", "Zane", "felt rushed today, no breaks"])
     reflect.main()
     assert "set by you" in capsys.readouterr().out
     assert load_evidence(conn, sid) == {} and load_settings(conn, sid).buffer_slots == 1
 
 
 def test_run_with_no_matching_keywords_reports_no_changes(monkeypatch, capsys):
-    monkeypatch.delenv("LLM_BACKEND", raising=False)
-    feed_inputs(monkeypatch, ["Zane", "everything was fine, nothing to report"])
+    feed_inputs(monkeypatch, ["y", "Zane", "everything was fine, nothing to report"])
 
     reflect.main()
 
@@ -74,19 +70,17 @@ def test_run_with_no_matching_keywords_reports_no_changes(monkeypatch, capsys):
     assert "No changes proposed." in out
 
 
-def test_non_fake_backend_asks_for_confirmation_first(monkeypatch, capsys):
-    monkeypatch.setenv("LLM_BACKEND", "groq")
+def test_asks_for_confirmation_before_the_groq_call(monkeypatch, capsys):
     feed_inputs(monkeypatch, ["n"])  # decline the cost warning
 
     reflect.main()
 
     out = capsys.readouterr().out
-    assert "LLM_BACKEND=groq" in out
+    assert "Groq (free tier, but a real API call)" in out
     assert "Aborted." in out
 
 
 def test_declining_the_cost_warning_makes_no_db_changes(monkeypatch, capsys, conn):
-    monkeypatch.setenv("LLM_BACKEND", "anthropic")
     feed_inputs(monkeypatch, ["n"])
 
     reflect.main()
@@ -95,15 +89,13 @@ def test_declining_the_cost_warning_makes_no_db_changes(monkeypatch, capsys, con
 
 
 def test_reflection_is_logged_with_outcome(monkeypatch, conn):   
-    monkeypatch.delenv("LLM_BACKEND", raising=False)
-    feed_inputs(monkeypatch, ["Zane", "felt rushed today, no breaks"])
+    feed_inputs(monkeypatch, ["y", "Zane", "felt rushed today, no breaks"])
     reflect.main()
     h = get_reflections(conn, get_or_create_student(conn, "Zane"))
     assert len(h) == 1 and h[0]["applied"] is False and h[0]["outcome"] == "evidence_recorded"
 
 def _reflect(monkeypatch, extra=()):
-    monkeypatch.delenv("LLM_BACKEND", raising=False)
-    feed_inputs(monkeypatch, ["Zane", "felt rushed today, no breaks", *extra])
+    feed_inputs(monkeypatch, ["y", "Zane", "felt rushed today, no breaks", *extra])
     reflect.main()
 
 def test_ask_mode_prompts_only_at_threshold_and_yes_applies(monkeypatch, capsys, conn):
@@ -134,9 +126,8 @@ def _fail_first(monkeypatch, error, times=1):
     return calls
 
 def test_backend_failure_can_be_retried_with_the_same_text(monkeypatch, capsys, conn):
-    monkeypatch.delenv("LLM_BACKEND", raising=False)
     calls = _fail_first(monkeypatch, RuntimeError("Groq rate limit reached"))
-    feed_inputs(monkeypatch, ["Zane", "felt rushed today, no breaks", "y"])
+    feed_inputs(monkeypatch, ["y", "Zane", "felt rushed today, no breaks", "y"])
     reflect.main()
     out = capsys.readouterr().out
     assert "Could not process your reflection: Groq rate limit reached" in out
@@ -144,18 +135,16 @@ def test_backend_failure_can_be_retried_with_the_same_text(monkeypatch, capsys, 
     assert len(get_reflections(conn, get_or_create_student(conn, "Zane"))) == 1
 
 def test_giving_up_after_a_backend_failure_shows_the_text_and_saves_nothing(monkeypatch, capsys, conn):
-    monkeypatch.delenv("LLM_BACKEND", raising=False)
     _fail_first(monkeypatch, RuntimeError("GROQ_API_KEY is not set"))
-    feed_inputs(monkeypatch, ["Zane", "felt rushed today", ""])  # Enter = default No
+    feed_inputs(monkeypatch, ["y", "Zane", "felt rushed today", ""])  # Enter = default No
     reflect.main()
     out = capsys.readouterr().out
     assert "Nothing was saved. Your reflection was:\nfelt rushed today" in out
     assert get_reflections(conn, get_or_create_student(conn, "Zane")) == []
 
 def test_a_real_bug_still_raises(monkeypatch, conn):
-    monkeypatch.delenv("LLM_BACKEND", raising=False)
     _fail_first(monkeypatch, TypeError("'NoneType' object is not subscriptable"))
-    feed_inputs(monkeypatch, ["Zane", "felt rushed today"])
+    feed_inputs(monkeypatch, ["y", "Zane", "felt rushed today"])
     with pytest.raises(TypeError):
         reflect.main()
 

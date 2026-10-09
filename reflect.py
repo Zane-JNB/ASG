@@ -1,5 +1,3 @@
-import os
-
 from scheduler.preferences import pending_approvals, resolve_pending 
 from scheduler.settings_menu import describe_pending 
 from scheduler.db import connect, get_or_create_student
@@ -18,15 +16,10 @@ _STATUS = {
 }
 
 def main():
-    backend = os.environ.get("LLM_BACKEND", "fake")
-    if backend != "fake":
-        cost_note = "paid" if backend == "anthropic" else "free-tier but a real API call"
-        confirm = input(
-            f"LLM_BACKEND={backend} ({cost_note}). Continue? [y/N] "
-        ).strip().lower()
-        if confirm != "y":
-            print("Aborted.")
-            return
+    confirm = input("Groq (free tier, but a real API call). Continue? [y/N] ").strip().lower()
+    if confirm != "y":
+        print("Aborted.")
+        return
 
     conn = connect(DB_PATH)
     name = input("Student name: ").strip()

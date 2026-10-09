@@ -20,7 +20,7 @@ def main():
     with open(path, "rb") as f:
         file_bytes = f.read()
 
-    print("Extracting... (this calls your configured LLM_BACKEND)")
+    print("Extracting... (this makes a real Groq call)")
     result = extract_schedule(file_bytes, media_type)
 
     print("\nWeekly patterns found:")

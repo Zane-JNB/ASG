@@ -41,23 +41,20 @@ def _load_result(source_path, ask, show, extractor, cache_path):
             show(f"'{source_path}' is not a valid saved extraction.")
             return None
 
-    backend = os.environ.get("LLM_BACKEND", "fake")
-    if backend != "fake":
-        cost_note = "paid" if backend == "anthropic" else "free-tier but a real API call"
-        page_note = ""
-        if ext == ".pdf":  #   -- each page can be its own call (text or rendered-image)
-            import io
-            import pdfplumber
-            try:
-                with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:  #   -- from bytes, matches
-                    num_pages = len(pdf.pages)                        # extract_schedule_from_pdf exactly
-            except Exception:  # pdfplumber/pdfminer raise their own types for a broken or fake PDF
-                show(f"'{source_path}' could not be opened as a PDF.")
-                return None
-            page_note = f" This PDF has {num_pages} page(s); each may use its own call."
-        if not _confirm(ask, f"LLM_BACKEND={backend} ({cost_note}).{page_note} Continue?", default=False):
-            show("Aborted.")
+    page_note = ""
+    if ext == ".pdf":  #   -- each page can be its own call (text or rendered-image)
+        import io
+        import pdfplumber
+        try:
+            with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:  #   -- from bytes, matches
+                num_pages = len(pdf.pages)                        # extract_schedule_from_pdf exactly
+        except Exception:  # pdfplumber/pdfminer raise their own types for a broken or invalid PDF
+            show(f"'{source_path}' could not be opened as a PDF.")
             return None
+        page_note = f" This PDF has {num_pages} page(s); each may use its own call."
+    if not _confirm(ask, f"Groq (free tier, but a real API call).{page_note} Continue?", default=False):
+        show("Aborted.")
+        return None
     try:
         if ext == ".pdf" and extractor is extract_schedule:  #   -- default PDF path avoids
             result = extract_schedule_from_pdf(file_bytes)   # Groq's vision model rejecting PDFs

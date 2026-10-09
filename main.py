@@ -6,6 +6,7 @@ re-solve to see what actually changed. Run with: python3 main.py
 from datetime import date, datetime
 from scheduler.add_with_fit import add_task_with_fit
 from scheduler.db import add_dated_block, add_extracted_task, connect, get_or_create_student, get_plan_cuts, load_settings
+from scheduler.llm_backends import is_backend_failure
 from scheduler.models import (
     DatedBlock, Exam, ExtractedTask, FixedBlock, SleepRule, StudyPlanRule, slot_to_time, time_to_slot,
 )
@@ -66,12 +67,18 @@ def demo_reflection():
     print("\n--- Warnings ---")
     print_warnings(sleep_warnings(sleep_rules, items) + task_warnings(unscheduled))
 
-    # --- simulate a reflection (fake backend -- free, offline, no API key needed) ---
+    # --- simulate a reflection (one real Groq call; needs GROQ_API_KEY) ---
     reflection_text = (
         "This week felt really rushed -- no breaks between class, work, and studying."
     )
     print(f"\n=== Reflection ===\n  \"{reflection_text}\"")
-    result = get_proposals(reflection_text)
+    try:
+        result = get_proposals(reflection_text)
+    except Exception as e:
+        if not is_backend_failure(e):
+            raise  # a real bug: keep the traceback
+        print(f"  Reflection skipped (Groq call failed): {e}")
+        return
     print(f"  {result.summary}")
     for p in result.proposals:
         print(f"  - {p.field}: {p.direction} ({p.magnitude}) -- {p.reason}")
@@ -115,7 +122,7 @@ def demo_make_room():
 
 def main():  
     demo_make_room()
-    print("\n\n=============== REFLECTION (offline demo) ===============")
+    print("\n\n=============== REFLECTION (one Groq call) ===============")
     demo_reflection()
 
 

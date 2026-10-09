@@ -22,7 +22,7 @@ Auto Schedule Generator: students enter a fixed timetable, tasks (deadline, diff
 
 ## Cost rule (important)
 
-Never run anything that makes a real Anthropic call, without asking Zane first. Groq is valid since it is set up as an environment variable. Groq free tier is the only real backend in use right now. Anthropic is not to be used until the model comparison (PRD E2).
+Groq (free tier) is the only provider and may be called; it is set up as an environment variable. Never add or run a paid provider (e.g. Anthropic) without asking Zane first. Other providers come back only at the model comparison (4.1), see "LLM backends".
 
 ## Commands
 
@@ -35,7 +35,8 @@ The project uses Python 3.14 in `.venv` (Windows). Run everything from the repo 
 .venv\Scripts\python.exe -m pytest -k "drop and not manual"         # by keyword
 ```
 
-- Tests: `pytest -q` (must stay green).
+- Tests: `pytest -q` (must stay green). Runs fully offline: `tests/conftest.py` removes `GROQ_API_KEY` and swaps test-only stubs into the provider tables.
+- Live tests: `pytest -m live` makes 3 real Groq calls (skipped without `GROQ_API_KEY`). Shape checks only.
 - Demo (in-memory DB, not an app): `python main.py`
 - There is no linter, formatter or build step configured.
 
@@ -45,10 +46,12 @@ The project uses Python 3.14 in `.venv` (Windows). Run everything from the repo 
 
 ## LLM backends
 
-All LLM access goes through `scheduler/llm_backends.py` (`call_llm` for text and `call_vision_llm` for images/PDFs). The `LLM_BACKEND` env var picks the backend:
-- `fake` (default): offline, free, deterministic keyword heuristics. Tests rely on it, so never call a real LLM or make a test depend on a real backend.
-- `groq`: needs `GROQ_API_KEY`. `GROQ_MODEL` and `GROQ_VISION_MODEL` override the models. It does not accept PDFs through vision.
-- `anthropic`: needs `ANTHROPIC_API_KEY`. `ANTHROPIC_MODEL` overrides the model. This backend is paid.
+All LLM access goes through `scheduler/llm_backends.py` (`call_llm` for text and `call_vision_llm` for images). Groq is the only provider: `PROVIDER = "groq"` picks from the `_BACKENDS` / `_VISION_BACKENDS` tables. There is no `LLM_BACKEND` env var and no offline/fake backend in the app.
+- Groq needs `GROQ_API_KEY`. `GROQ_MODEL` and `GROQ_VISION_MODEL` override the models. Its vision model takes images only; PDFs go through `pdf_extraction` (text per page, scanned pages rendered to images).
+- Entry points (`reflect.py`, import) always ask before the Groq call. `main.py`'s demo makes one Groq call and skips the reflection part if it fails.
+- Tests never call Groq except `@pytest.mark.live` ones. Code that takes a `client=` stand-in expects an OpenAI-SDK shape (`chat.completions.create`).
+
+Plan for more providers (model comparison, 4.1): each candidate model gets its own branch; suitable ones are added to the provider tables and chosen by a task/depth-based router (4.0) that replaces `PROVIDER`. Routing goes by task (reflection / image / PDF) and depth (page count, text length, image size), optionally with a fallback model on a 429.
 
 Backend failures (missing key, retired model, rate limit, no tool call) raise a clear `RuntimeError`. Entry points report them using `llm_backends.is_backend_failure` instead of crashing; real code bugs still raise.
 
@@ -83,11 +86,11 @@ Every backend uses forced tool-calling with a JSON schema that comes from the py
 
 1. `README.md` is stale ("V1 in progress").
 2. `scheduler/sample_timetables/` contains real classmates' timetables in a public repo. Data hygiene is NOT done: needs synthetic replacements and a git-history scrub (back up and make the repo private first).
-3. Model IDs live only in `llm_backends.py` (`DEFAULT_*`), overridable via `GROQ_MODEL`, `GROQ_VISION_MODEL`, `ANTHROPIC_MODEL`. `claude-sonnet-5` is a valid ID (checked Oct 2026). The newer `claude-sonnet-5-5` rejects the forced `tool_choice` the backends use, so E2 needs a code change before trying it. Groq model names churn.
+3. Model IDs live only in `llm_backends.py` (`DEFAULT_*`), overridable via `GROQ_MODEL` and `GROQ_VISION_MODEL`. Groq model names churn.
 4. Known extraction misreads (rotated images, one of the sample PDFs) are possibly a vision-model quality issue, deferred to the model comparison. Not a pipeline bug.
 5. No CI yet. Merges to master should go through a PR with green tests.
 6. `PRD.md` is referenced here but is not in the repo.
-7. `anthropic` is commented out of `requirements.txt` until PRD E2, but `LLM_BACKEND=anthropic` is still selectable. Without the package, reflect and import report "No module named anthropic". At E2, install it and pin its exact version in `requirements.txt`.
+7. Anthropic was removed entirely (code, tests, requirements). If it returns at 4.1, install it, pin its exact version in `requirements.txt`, and note that `claude-sonnet-5-5` rejects a forced `tool_choice`.
 8. `DB_PATH` and `CACHE_PATH` are fixed to the repo root (`scheduler/paths.py`). A `scheduler.db` made by running scripts from another folder is not picked up; no migration (only Zane uses the app).
 9. `requirements.txt` is a full pip freeze of the Windows/Python 3.14 `.venv`, including indirect packages. Before CI, split it into direct dependencies plus a lock file. Keep it UTF-8: in PowerShell 5.1, `pip freeze > requirements.txt` writes UTF-16 and breaks `pip install -r`. Use `pip freeze | Out-File -Encoding utf8 requirements.txt` or run it from Git Bash.
 

@@ -1,3 +1,6 @@
+import json
+from types import SimpleNamespace
+
 import pytest
 from pydantic import ValidationError
 
@@ -8,29 +11,19 @@ from scheduler.reflection import (
 )
 
 
-class FakeBlock:
-    def __init__(self, input_data):
-        self.type = "tool_use"
-        self.input = input_data
-
-
-class FakeResponse:
-    def __init__(self, content):
-        self.content = content
-
-
 class FakeClient:
-    def __init__(self, response):
-        self.messages = self
-        self._response = response
+    """OpenAI-SDK-shaped stand-in (what Groq's client looks like): replies with one tool call."""
+    def __init__(self, arguments: dict):
+        self.chat = SimpleNamespace(completions=self)
+        call = SimpleNamespace(function=SimpleNamespace(arguments=json.dumps(arguments)))
+        self._response = SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(tool_calls=[call]))])
 
     def create(self, **kwargs):
         return self._response
 
 
 def make_client(summary: str, proposals: list[dict]) -> FakeClient:
-    response = FakeResponse([FakeBlock({"summary": summary, "proposals": proposals})])
-    return FakeClient(response)
+    return FakeClient({"summary": summary, "proposals": proposals})
 
 
 def test_locked_fields_are_rejected():

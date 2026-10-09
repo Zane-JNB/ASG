@@ -120,3 +120,4 @@ def test_12_main_py_runs_offline_and_shows_all_three_modes():
     assert out.returncode == 0, out.stderr
     for marker in ("MANUAL", "SEMI-AUTOMATIC", "AUTOMATIC"):
         assert marker in out.stdout
+    assert "Reflection skipped (Groq call failed)" in out.stdout  # conftest removed the key

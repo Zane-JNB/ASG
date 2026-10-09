@@ -48,19 +48,19 @@ def extract_schedule(file_bytes: bytes, media_type: str, client=None) -> Extract
     """Extract weekly patterns, dated sessions, and dated tasks from an uploaded image or PDF.
 
     media_type: e.g. "image/png", "image/jpeg", "application/pdf".
-    client: optional Anthropic-SDK-shaped override (for testing). When omitted, dispatches
-    through llm_backends.call_vision_llm, which reads LLM_BACKEND from the environment.
+    client: optional OpenAI-SDK-shaped override (for testing). When omitted, dispatches
+    through llm_backends.call_vision_llm, which calls Groq (images only, not PDFs).
     """
     image_base64 = base64.standard_b64encode(file_bytes).decode("utf-8")
     schema = ExtractionResult.model_json_schema()
     user_text = ("Extract the recurring weekly class schedule, any one-off dated sessions, "
                 "and any dated tasks/deadlines from this document.")
 
-    from scheduler.llm_backends import _anthropic_vision_call, call_vision_llm
+    from scheduler.llm_backends import _groq_vision_call, call_vision_llm
     args = dict(system_prompt=build_extraction_system_prompt(), user_text=user_text,
                 image_base64=image_base64, media_type=media_type,
                 tool_name="extract_schedule", tool_schema=schema)
-    raw = _anthropic_vision_call(**args, client=client) if client is not None else call_vision_llm(**args)
+    raw = _groq_vision_call(**args, client=client) if client is not None else call_vision_llm(**args)
 
     # validate each item individually -- one malformed entry (bad time format, ambiguous
     # date) shouldn't discard every other, otherwise valid, item the model found
