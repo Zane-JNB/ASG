@@ -14,7 +14,7 @@ def main():
     now = datetime.now()   
     try:
         anchor, fixed, items, warnings = plan_from_saved(conn, student_id, now=now)
-    except ValueError as e:
+    except (ValueError, RuntimeError) as e:  # bad saved data, or the solver found nothing in time
         print(e)
         return
     print("\n".join(format_plan(anchor, fixed, items, warnings)))
