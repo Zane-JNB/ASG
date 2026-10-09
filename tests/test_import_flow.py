@@ -258,3 +258,37 @@ def test_json_replay_saved_with_a_bom_still_loads(env, tmp_path):
     saved.write_bytes(b"\xef\xbb\xbf" + _extraction().model_dump_json().encode("utf-8"))
     assert run_import(conn, sid, str(saved), ask=Recorder(KEEP_ALL), show=lambda _: None, cache_path=cache)
     assert _titles(conn, sid) == (["DS"], ["Lab"], ["HW"])
+
+
+# ---- a PDF where only some pages were read (option b: review it, save defaults to No) ----
+def _partial_pdf_import(env, monkeypatch, tmp_path, answers):
+    from reportlab.lib.pagesizes import letter
+    from reportlab.pdfgen import canvas
+    from scheduler.pdf_extraction import PartialExtraction
+    import io
+    conn, sid, _, cache = env
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf, pagesize=letter)
+    c.drawString(72, 700, "page one"); c.showPage()
+    c.save()
+    pdf_path = tmp_path / "partial.pdf"
+    pdf_path.write_bytes(buf.getvalue())
+    def partly(file_bytes, call_text_llm=None, call_vision=None):
+        raise PartialExtraction(_extraction("Read"), [2, 3], RuntimeError("rate limit"))
+    monkeypatch.setattr("scheduler.import_flow.extract_schedule_from_pdf", partly)
+    ask, shown = Recorder(answers), []
+    ok = run_import(conn, sid, str(pdf_path), ask=ask, show=shown.append, cache_path=cache)
+    return ok, ask, shown
+
+def test_partial_pdf_is_shown_but_enter_saves_nothing(env, monkeypatch, tmp_path):
+    conn, sid, _, cache = env
+    ok, ask, shown = _partial_pdf_import(env, monkeypatch, tmp_path, YES + KEEP_ALL + [""])
+    assert not ok and _titles(conn, sid) == ([], [], [])
+    assert any("only part of the PDF" in s for s in shown)
+    assert "Page(s) 2, 3 weren't read" in ask.prompts[-1]
+    assert ExtractionResult.model_validate_json(open(cache, encoding="utf-8").read()) == _extraction("Read")
+
+def test_partial_pdf_can_still_be_saved_on_yes(env, monkeypatch, tmp_path):
+    conn, sid, _, _ = env
+    ok, _, _ = _partial_pdf_import(env, monkeypatch, tmp_path, YES + KEEP_ALL + ["y"])
+    assert ok and _titles(conn, sid) == (["Read"], ["Lab"], ["HW"])

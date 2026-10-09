@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from typing import Literal 
 from datetime import date, timedelta
 from pydantic.json_schema import SkipJsonSchema
@@ -15,6 +15,24 @@ def slot_to_time(slot: int) -> str:
     """38 -> '09:30'"""
     minutes = slot * MINUTES_PER_SLOT
     return f"{minutes // 60:02d}:{minutes % 60:02d}"
+
+def _check_time(value: str, end: bool = False) -> str:
+    """'HH:MM', 24-hour. An end time may be '24:00' (midnight at the end of the day)."""
+    h, sep, m = value.partition(":")
+    if not (sep and h.isdigit() and m.isdigit() and len(h) <= 2 and len(m) == 2):
+        raise ValueError(f"'{value}' is not a time like 09:30")
+    if end and (int(h), int(m)) == (24, 0):
+        return value
+    if not (0 <= int(h) <= 23 and 0 <= int(m) <= 59):
+        raise ValueError(f"'{value}' is not a real time" + (" (latest end is 24:00)" if end else ""))
+    return value
+
+def _check_date(value: str) -> str:
+    """A real 'YYYY-MM-DD' date, stored in that exact form so dates sort correctly."""
+    try:
+        return date.fromisoformat(value).isoformat()
+    except ValueError:
+        raise ValueError(f"'{value}' is not a real date like 2026-10-05") from None
 
 class FixedBlock(BaseModel):
     title: str
@@ -168,6 +186,16 @@ class WeeklyPattern(BaseModel):
     start_time: str  # "HH:MM", 24-hour
     end_time: str  # "HH:MM", 24-hour
 
+    @field_validator("start_time")
+    @classmethod
+    def _start(cls, v):
+        return _check_time(v)
+
+    @field_validator("end_time")
+    @classmethod
+    def _end(cls, v):
+        return _check_time(v, end=True)
+
     @model_validator(mode="after")
     def times_make_sense(self):
         if time_to_slot(self.end_time) <= time_to_slot(self.start_time):
@@ -193,6 +221,11 @@ class ExtractedTask(BaseModel):
     reminder_min_priority: int | None = Field(default=None, ge=1, le=5)  #    None = ignore priority
     completed_at: SkipJsonSchema[str | None] = None
 
+    @field_validator("date")
+    @classmethod
+    def _date(cls, v):
+        return _check_date(v)
+
 
 class DatedBlock(BaseModel):
     """A one-off commitment on a specific calendar date with a specific time -- e.g. a module
@@ -204,6 +237,21 @@ class DatedBlock(BaseModel):
     date: str  # "YYYY-MM-DD"
     start_time: str  # "HH:MM", 24-hour
     end_time: str  # "HH:MM", 24-hour
+
+    @field_validator("date")
+    @classmethod
+    def _date(cls, v):
+        return _check_date(v)
+
+    @field_validator("start_time")
+    @classmethod
+    def _start(cls, v):
+        return _check_time(v)
+
+    @field_validator("end_time")
+    @classmethod
+    def _end(cls, v):
+        return _check_time(v, end=True)
 
     @model_validator(mode="after")
     def times_make_sense(self):

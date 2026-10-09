@@ -7,7 +7,10 @@ from reportlab.lib.pagesizes import letter
 from reportlab.lib.utils import ImageReader
 from reportlab.pdfgen import canvas
 
-from scheduler.pdf_extraction import extract_schedule_from_pdf, extract_text_page, _render_page
+import pypdfium2 as pdfium
+
+from scheduler.llm_backends import BadModelOutput
+from scheduler.pdf_extraction import PartialExtraction, extract_schedule_from_pdf, extract_text_page, _render_page
 from scheduler.models import ExtractionResult
 
 
@@ -105,7 +108,11 @@ def test_extract_text_page_directly():
 
 
 def test_render_page_produces_a_real_png():
-    png_bytes = _render_page(_image_only_pdf(), 0)
+    doc = pdfium.PdfDocument(_image_only_pdf())
+    try:
+        png_bytes = _render_page(doc, 0)
+    finally:
+        doc.close()
     assert png_bytes.startswith(b"\x89PNG")
 
 
@@ -120,20 +127,82 @@ def test_a_malformed_item_from_the_model_is_dropped_not_fatal():
     assert [p.title for p in result.weekly_patterns] == ["Good"]
 
 # ---- a failed text-path call must fall back to rendering + vision, not silently return nothing ----
-def _reflection_shaped_fallback(system_prompt, user_message, tool_name, tool_schema):
-    """Mimics what _groq_call returns when Groq's tool_use_failed soft-degrade fires --
-    shaped for reflections (summary/proposals), NOT for extraction."""
-    return {"summary": "didn't match expected format", "proposals": []}
+def _wrong_format(*a, **kw):
+    """What call_llm raises when Groq's tool call doesn't match the schema (tool_use_failed)."""
+    raise BadModelOutput("didn't match the expected answer format")
+
+
+def _rate_limited(*a, **kw):
+    raise RuntimeError("Groq's free-tier rate limit was hit.")
 
 
 def test_failed_text_call_falls_back_to_vision_instead_of_reporting_nothing_found():
     pdf = _text_pdf(["Weekly Schedule", "Monday 09:00-11:00 Data Structures",
                      "Tuesday 13:00-14:00 Algorithms"])
     result = extract_schedule_from_pdf(
-        pdf, call_text_llm=_reflection_shaped_fallback, call_vision=_fake_vision("Rescued via vision"))
+        pdf, call_text_llm=_wrong_format, call_vision=_fake_vision("Rescued via vision"))
     assert [p.title for p in result.weekly_patterns] == ["Rescued via vision"]
 
 
-def test_extract_text_page_raises_on_reflection_shaped_fallback():
-    with pytest.raises(ValueError):
-        extract_text_page("Monday 09:00-11:00 DS", _reflection_shaped_fallback)
+def test_extract_text_page_raises_on_wrong_format():
+    with pytest.raises(BadModelOutput):
+        extract_text_page("Monday 09:00-11:00 DS", _wrong_format)
+
+
+_THREE_TEXT_PAGES = [["Weekly Schedule", "Monday 09:00-11:00 Data Structures"]] * 3
+
+
+def _text_then(fail_from: int, error):
+    """Text callback that reads pages fine until call number `fail_from` (1-based), then fails."""
+    calls = []
+    def call(system_prompt, user_message, tool_name, tool_schema):
+        calls.append(1)
+        if len(calls) >= fail_from:
+            error()
+        return {"weekly_patterns": [{"title": f"P{len(calls)}", "day": "Mon", "start_time": "09:00", "end_time": "11:00"}]}
+    return call
+
+
+def test_rate_limit_mid_pdf_keeps_the_pages_already_read_and_stops():
+    pdf = _multi_page_pdf(_THREE_TEXT_PAGES)
+    with pytest.raises(PartialExtraction) as info:
+        extract_schedule_from_pdf(pdf, call_text_llm=_text_then(2, lambda: _rate_limited()), call_vision=_boom)
+    assert [p.title for p in info.value.result.weekly_patterns] == ["P1"]
+    assert info.value.failed_pages == [2, 3]  # page 3 was never tried: no extra calls
+
+
+def test_a_page_that_fails_both_ways_is_skipped_and_the_rest_still_read():
+    pdf = _multi_page_pdf(_THREE_TEXT_PAGES)
+    def text(system_prompt, user_message, tool_name, tool_schema):
+        text.n = getattr(text, "n", 0) + 1
+        if text.n == 2:
+            raise BadModelOutput("wrong format")
+        return {"weekly_patterns": [{"title": f"P{text.n}", "day": "Mon", "start_time": "09:00", "end_time": "11:00"}]}
+    with pytest.raises(PartialExtraction) as info:
+        extract_schedule_from_pdf(pdf, call_text_llm=text, call_vision=_wrong_format)
+    assert sorted(p.title for p in info.value.result.weekly_patterns) == ["P1", "P3"]
+    assert info.value.failed_pages == [2]
+
+
+def test_nothing_read_at_all_raises_the_error_itself():
+    pdf = _multi_page_pdf(_THREE_TEXT_PAGES)
+    with pytest.raises(RuntimeError, match="rate limit") as info:
+        extract_schedule_from_pdf(pdf, call_text_llm=_rate_limited, call_vision=_boom)
+    assert not isinstance(info.value, PartialExtraction)
+
+
+def test_a_bug_in_our_own_code_is_not_hidden_as_a_failed_page():
+    pdf = _text_pdf(["Weekly Schedule", "Monday 09:00-11:00 Data Structures"])
+    def buggy(*a, **kw):
+        raise KeyError("oops")
+    with pytest.raises(KeyError):
+        extract_schedule_from_pdf(pdf, call_text_llm=buggy, call_vision=_boom)
+
+
+def test_non_object_items_from_the_model_are_dropped():
+    def odd(system_prompt, user_message, tool_name, tool_schema):
+        return {"weekly_patterns": ["not an object", {"title": "Good", "day": "Mon", "start_time": "09:00", "end_time": "11:00"}],
+                "tasks": None}
+    pdf = _text_pdf(["Weekly Schedule", "Monday 09:00-11:00 Good class here"])
+    result = extract_schedule_from_pdf(pdf, call_text_llm=odd, call_vision=_boom)
+    assert [p.title for p in result.weekly_patterns] == ["Good"]

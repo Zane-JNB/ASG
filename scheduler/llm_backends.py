@@ -20,6 +20,12 @@ def groq_vision_model() -> str:
     return os.environ.get("GROQ_VISION_MODEL", DEFAULT_GROQ_VISION_MODEL)
 
 
+class BadModelOutput(RuntimeError):
+    """The model answered, but not in the forced tool format (Groq's tool_use_failed, plain text
+    instead of a tool call, or arguments that aren't JSON). Retrying or another path may work;
+    a rate limit, key or model error is a plain RuntimeError and stops at once."""
+
+
 def is_backend_failure(e: Exception) -> bool:
     """Failures a student can hit with working code: a retired model, rate limit, missing key
     (RuntimeError), bad model output (ValueError, incl. pydantic/JSON), network (OSError),
@@ -77,6 +83,21 @@ def _groq_status_error(e: Exception, model: str, env_var: str) -> RuntimeError |
     return None
 
 
+def _bad_output_error(e: Exception, model: str, env_var: str) -> BadModelOutput | None:
+    """BadModelOutput for Groq's 400 tool_use_failed (body flat or wrapped in "error"), else None."""
+    if getattr(e, "status_code", None) != 400:
+        return None
+    body = getattr(e, "body", None)
+    body = body if isinstance(body, dict) else {}
+    inner = body.get("error")  # can be a dict, a plain string, or missing
+    code = body.get("code") or (inner.get("code") if isinstance(inner, dict) else None)
+    if code != "tool_use_failed":
+        return None
+    return BadModelOutput(
+        f"Groq model '{model}' didn't match the expected answer format this time. "
+        f"Try again, or set the {env_var} env var to a stronger model.")
+
+
 def _groq_call(system_prompt: str, user_message: str, tool_name: str, tool_schema: dict,
                client=None) -> dict:
     """client: optional OpenAI-SDK-shaped stand-in (tests inject one; no real call)."""
@@ -98,26 +119,10 @@ def _groq_call(system_prompt: str, user_message: str, tool_name: str, tool_schem
             tool_choice={"type": "function", "function": {"name": tool_name}},
         )
     except Exception as e:
-        status_code = getattr(e, "status_code", None)
-        if status_code is None:
+        clear = _groq_status_error(e, model, "GROQ_MODEL") or _bad_output_error(e, model, "GROQ_MODEL")
+        if clear is None:
             raise
-        body = getattr(e, "body", None)
-        body = body if isinstance(body, dict) else {}
-        inner = body.get("error")  # can be a dict, a plain string, or missing
-        code = body.get("code") or (inner.get("code") if isinstance(inner, dict) else None)
-        clear = _groq_status_error(e, model, "GROQ_MODEL")
-        if clear is not None:
-            raise clear from e
-        if status_code == 400 and code == "tool_use_failed":
-            return {
-                "summary": (
-                    "The model's response didn't match the expected proposal format "
-                    "this time (can happen with faster/smaller models) -- no changes "
-                    "proposed. Try again, or set GROQ_MODEL to a stronger model."
-                ),
-                "proposals": [],
-            }
-        raise
+        raise clear from e
     return _tool_call_arguments(response, model, "GROQ_MODEL")
 
 
@@ -126,10 +131,16 @@ def _tool_call_arguments(response, model: str, env_var: str) -> dict:
     (tool_calls None or empty); say so clearly rather than failing on a None index."""
     tool_calls = response.choices[0].message.tool_calls if response.choices else None
     if not tool_calls:
-        raise RuntimeError(
+        raise BadModelOutput(
             f"Groq model '{model}' replied without the structured answer this time. "
             f"Try again, or set the {env_var} env var to a stronger model.")
-    return json.loads(tool_calls[0].function.arguments)
+    try:
+        args = json.loads(tool_calls[0].function.arguments)
+    except (TypeError, ValueError) as e:
+        raise BadModelOutput(f"Groq model '{model}' sent an answer that isn't valid JSON. Try again.") from e
+    if not isinstance(args, dict):
+        raise BadModelOutput(f"Groq model '{model}' sent an answer in the wrong shape. Try again.")
+    return args
 
 
 _BACKENDS = {"groq": _groq_call}
@@ -170,7 +181,8 @@ def _groq_vision_call(system_prompt: str, user_text: str, image_base64: str, med
             temperature=0
         )
     except Exception as e:
-        clear = _groq_status_error(e, model, "GROQ_VISION_MODEL")
+        clear = (_groq_status_error(e, model, "GROQ_VISION_MODEL")
+                 or _bad_output_error(e, model, "GROQ_VISION_MODEL"))
         if clear is None:
             raise
         raise clear from e

@@ -27,19 +27,13 @@ def planned_tasks(conn, student_id: int, anchor: PlanAnchor):
     return result
 
 def task_date_warnings(conn, student_id: int, today: date) -> list[ScheduleWarning]:
-    """Hard warnings for open tasks planned_tasks leaves out: past due, or a date that can't be read."""
+    """Hard warnings for open tasks planned_tasks leaves out because they are past due.
+    (A saved date is always a real date: ExtractedTask checks it.)"""
     warnings = []
     for _, saved in get_extracted_tasks(conn, student_id):
         if saved.completed_at:
             continue
-        try:
-            due = date.fromisoformat(saved.date)
-        except ValueError:
-            warnings.append(ScheduleWarning(
-                severity="hard", kind="task_bad_date",
-                message=f"'{saved.title}' has a date that can't be read ('{saved.date}'), so it isn't planned. Change its date."))
-            continue
-        if due < today:
+        if date.fromisoformat(saved.date) < today:
             warnings.append(ScheduleWarning(
                 severity="hard", kind="task_overdue",
                 message=f"'{saved.title}' was due {saved.date} and isn't marked done. Mark it finished or change its date."))

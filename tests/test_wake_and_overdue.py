@@ -5,7 +5,7 @@ import pytest
 from scheduler.add_with_fit import add_task_with_fit
 from scheduler.db import (
     add_commute, add_dated_block, add_extracted_task, connect, get_extracted_tasks,
-    get_or_create_student, update_extracted_task,
+    get_or_create_student,
 )
 from scheduler.fit_check import build_fit_inputs, task_date_warnings
 from scheduler.models import Commute, DatedBlock, ExtractedTask, SLOTS_PER_DAY
@@ -75,13 +75,10 @@ def test_fixed_window_plan_also_respects_the_next_morning(conn, sid):
     assert sleep.day * SLOTS_PER_DAY + sleep.end_slot <= SLOTS_PER_DAY + 20
 
 
-def test_overdue_and_unreadable_tasks_give_hard_warnings(conn, sid):
+def test_overdue_task_gives_a_hard_warning(conn, sid):
     add_extracted_task(conn, sid, _task("Overdue essay", 2, D - timedelta(days=4)))
-    bad_id = add_extracted_task(conn, sid, _task("Bad date", 1, D))
-    bad = dict(get_extracted_tasks(conn, sid))[bad_id]
-    update_extracted_task(conn, sid, bad_id, bad.model_copy(update={"date": "Oct 12"}))
     warnings = task_date_warnings(conn, sid, D)
-    assert [(w.severity, w.kind) for w in warnings] == [("hard", "task_overdue"), ("hard", "task_bad_date")]
+    assert [(w.severity, w.kind) for w in warnings] == [("hard", "task_overdue")]
 
 def test_finished_and_future_tasks_give_no_date_warnings(conn, sid):
     add_extracted_task(conn, sid, _task("Done", 2, D - timedelta(days=4), completed_at="2026-10-01T10:00"))
