@@ -17,16 +17,18 @@ def _iso(dt: datetime) -> str:
 
 
 def finish_task(conn, student_id: int, task_id: int, now: datetime, ask=input, show=print,
-                time_limit_seconds: float = 5.0) -> dict:   
-    """Mark a task done (kept as history), free its time, and offer to give cut tasks their hours
-    back. Returns {"restored": {task id: slots}} -- empty if nothing was restored."""
+                time_limit_seconds: float = 5.0, missed: bool = False) -> dict:
+    """Close a task as done (or missed=True: closed without being done), kept as history either
+    way; free its time, and offer to give cut tasks their hours back.
+    Returns {"restored": {task id: slots}} -- empty if nothing was restored."""
     task = dict(get_extracted_tasks(conn, student_id)).get(task_id)
     if task is None or task.completed_at:
         raise ValueError("that task is not an open task")
-    update_extracted_task(conn, student_id, task_id, task.model_copy(update={"completed_at": _iso(now)}))
+    update_extracted_task(conn, student_id, task_id,
+                          task.model_copy(update={"completed_at": _iso(now), "missed": missed}))
     clear_plan_cut(conn, student_id, task_id)
     clear_task_sessions(conn, student_id, task_id)
-    show(f"Marked '{task.title}' as done.")
+    show(f"Marked '{task.title}' as {'missed' if missed else 'done'}.")
     try:
         restores = plan_restores(conn, student_id, now, time_limit_seconds)
     except (ValueError, RuntimeError):

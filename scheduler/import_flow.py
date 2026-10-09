@@ -9,7 +9,7 @@ from scheduler.db import replace_extraction, load_settings
 from scheduler.llm_backends import is_backend_failure
 from scheduler.models import ExtractionResult
 from scheduler.paths import CACHE_PATH
-from scheduler.review import _confirm, review_extraction
+from scheduler.review import _confirm, _missed, review_extraction
 from scheduler.schedule_extraction import extract_schedule
 from scheduler.pdf_extraction import PartialExtraction, extract_schedule_from_pdf
 
@@ -118,12 +118,8 @@ def _close_past_tasks(reviewed: ExtractionResult, now: datetime, ask, show) -> t
         if task.completed_at or task.due_at() > now:
             tasks.append(task)
             continue
-        while True:
-            raw = ask(f"'{task.title}' was due {task.due_label()}. Was it [d]one or [m]issed? (Enter = done): ").strip().lower()
-            if raw in ("", "d", "m"):
-                break
-            show("Type d or m.")
-        tasks.append(task.model_copy(update={"completed_at": now.isoformat(timespec="minutes"), "missed": raw == "m"}))
+        missed = _missed(ask, show, f"'{task.title}' was due {task.due_label()}.")
+        tasks.append(task.model_copy(update={"completed_at": now.isoformat(timespec="minutes"), "missed": missed}))
         closed += 1
     return reviewed.model_copy(update={"tasks": tasks}), closed
 

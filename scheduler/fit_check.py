@@ -25,7 +25,7 @@ def _planned_and_overdue(conn, student_id: int, anchor: PlanAnchor, now: datetim
         if saved.due_at() <= now:
             warnings.append(ScheduleWarning(
                 severity="hard", kind="task_overdue",
-                message=f"'{saved.title}' was due {saved.due_label()} and isn't marked done. Mark it finished or change its date."))
+                message=f"'{saved.title}' was due {saved.due_label()} and isn't closed. Mark it done or missed in manage_tasks.py ([f])."))
             continue
         task = extracted_task_to_dynamic_task(saved, anchor.start_date, session)
         remaining = task.duration_slots - cuts.get(task_id, 0)

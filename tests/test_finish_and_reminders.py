@@ -251,10 +251,36 @@ def test_menu_check_in_option_says_when_there_is_nothing(conn, sid):
 
 def test_menu_finished_marks_done_and_hides_the_task(conn, sid):
     add_extracted_task(conn, sid, _task("Essay"))
-    ask, shown = scripted(["f", "1", "l", "q"])
+    ask, shown = scripted(["f", "1", "", "l", "q"])  # Enter = done
     run_menu(conn, sid, ask, shown.append, today=D)
     assert "Marked 'Essay' as done." in shown
     assert shown.count("No tasks saved.") == 1  # the later [l]ist shows only open tasks
+
+
+def test_menu_can_close_a_task_as_missed_and_keeps_it_as_history(conn, sid):
+    tid = add_extracted_task(conn, sid, _task("Essay"))
+    ask, shown = scripted(["f", "1", "x", "m", "q"])  # a bad answer is re-asked
+    run_menu(conn, sid, ask, shown.append, today=D)
+    saved = dict(get_extracted_tasks(conn, sid))[tid]
+    assert saved.completed_at and saved.missed  # kept, not deleted
+    assert "Type d or m." in shown and "Marked 'Essay' as missed." in shown
+
+
+def test_finish_task_done_is_not_missed(conn, sid):
+    tid = add_extracted_task(conn, sid, _task("Essay"))
+    finish_task(conn, sid, tid, NINE, ask=lambda _p: "", show=lambda _l: None)
+    assert dict(get_extracted_tasks(conn, sid))[tid].missed is False
+
+
+def test_closing_an_overdue_task_as_missed_clears_the_overdue_warning(conn, sid):
+    tid = add_extracted_task(conn, sid, _task("Old", due=D - timedelta(days=1)))
+    add_extracted_task(conn, sid, _task("Next"))
+    *_, warnings = plan_from_saved(conn, sid, now=NINE, time_limit_seconds=10)
+    [w] = [w for w in warnings if w.kind == "task_overdue"]
+    assert "done or missed" in w.message and "[f]" in w.message
+    finish_task(conn, sid, tid, NINE, ask=lambda _p: "n", show=lambda _l: None, missed=True)
+    *_, warnings = plan_from_saved(conn, sid, now=NINE, time_limit_seconds=10)
+    assert not [w for w in warnings if w.kind == "task_overdue"]
 
 
 def test_menu_finished_handles_empty_cancel_and_bad_numbers(conn, sid):
@@ -283,7 +309,7 @@ def test_menu_reminder_settings_custom_all_off_and_bad_input(conn, sid):
 def test_menu_reads_the_time_again_for_each_action(conn, sid):
     tid = add_extracted_task(conn, sid, _task("Essay"))
     times = iter([NINE, NINE + timedelta(hours=6), NINE + timedelta(hours=6)])  # opening, [f], [q]
-    ask, shown = scripted(["f", "1", "q"])
+    ask, shown = scripted(["f", "1", "d", "q"])
     run_menu(conn, sid, ask, shown.append, clock=lambda: next(times))
     done = dict(get_extracted_tasks(conn, sid))[tid].completed_at
     assert done == (NINE + timedelta(hours=6)).isoformat(timespec="minutes")  # not the time the menu opened

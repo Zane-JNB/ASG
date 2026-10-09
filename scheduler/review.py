@@ -38,6 +38,14 @@ def _confirm(ask, prompt: str, default: bool) -> bool:
         if answer in ("n", "no"):
             return False
 
+def _missed(ask, show, prompt: str) -> bool:
+    """'Was it [d]one or [m]issed?' -- True for missed. Enter = done; anything else re-asks."""
+    while True:
+        raw = ask(f"{prompt} Was it [d]one or [m]issed? (Enter = done): ").strip().lower()
+        if raw in ("", "d", "m"):
+            return raw == "m"
+        show("Type d or m.")
+
 _DAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
 
 

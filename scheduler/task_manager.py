@@ -5,7 +5,7 @@ from scheduler.db import (
     update_extracted_task, load_settings
 )
 from scheduler.models import DynamicTask, ExtractedTask, MINUTES_PER_SLOT, _check_time   
-from scheduler.review import _confirm, _describe, _due, _hours
+from scheduler.review import _confirm, _describe, _due, _hours, _missed
 from scheduler.completion import finish_task, run_checkin   
 from scheduler.task_filter import describe_reminders   
 from scheduler.commute_menu import run_commute_menu
@@ -145,7 +145,7 @@ def run_menu(conn, student_id, ask=input, show=print, today: date | None = None,
     today = fixed_today or now.date()
     run_checkin(conn, student_id, now, ask, show)
     while True:
-        choice = ask("Tasks: [a]dd  [l]ist  [d]elete one  [f]inished  [c]heck-in  [s]plit setting  session [t]ime  [r]eminders  [m] commutes  [p] settings  [u]nreadable  [x] delete ALL open  [q]uit: ").strip().lower()
+        choice = ask("Tasks: [a]dd  [l]ist  [d]elete one  [f]inished/missed  [c]heck-in  [s]plit setting  session [t]ime  [r]eminders  [m] commutes  [p] settings  [u]nreadable  [x] delete ALL open  [q]uit: ").strip().lower()
         now = clock()
         today = fixed_today or now.date()
         if choice == "q":
@@ -166,14 +166,16 @@ def run_menu(conn, student_id, ask=input, show=print, today: date | None = None,
                 show("Deleted.")
             elif raw:
                 show(f"Enter a number between 1 and {len(tasks)}.")
-        elif choice == "f":  #   -- manual "mark task done"
+        elif choice == "f":  #   -- close a task: done, or missed (both kept as history)
             tasks = _sorted_tasks(conn, student_id)
             _show_tasks(tasks, show, load_settings(conn, student_id).default_max_session_slots)
             if not tasks:
                 continue
-            raw = ask("Number of the task you finished (Enter to cancel): ").strip()
+            raw = ask("Number of the task to close (Enter to cancel): ").strip()
             if raw.isdigit() and 1 <= int(raw) <= len(tasks):
-                finish_task(conn, student_id, tasks[int(raw) - 1][0], now, ask, show)
+                task_id, task = tasks[int(raw) - 1]
+                missed = _missed(ask, show, f"'{task.title}':")
+                finish_task(conn, student_id, task_id, now, ask, show, missed=missed)
             elif raw:
                 show(f"Enter a number between 1 and {len(tasks)}.")
         elif choice == "c":   
