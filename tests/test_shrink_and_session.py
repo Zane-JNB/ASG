@@ -19,6 +19,17 @@ from scheduler.models import (
 from scheduler.review import _describe, review_extraction
 from scheduler.task_manager import prompt_new_task, run_menu
 
+
+@pytest.fixture(autouse=True)
+def _import_clock_before_the_sample_dates(monkeypatch):
+    """run_import asks about tasks already due; these samples are dated Oct 2026, so pin 'now' before them."""
+    class _Before(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime(2026, 9, 1, 9, 0)
+    monkeypatch.setattr("scheduler.import_flow.datetime", _Before)
+
+
 D = date(2026, 10, 5)
 NOW = datetime(2026, 10, 5, 9, 0)
 

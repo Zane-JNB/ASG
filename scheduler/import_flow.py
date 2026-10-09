@@ -1,5 +1,6 @@
 import json
 import os
+from datetime import datetime
 from typing import Annotated
 
 from pydantic import Field, ValidationError, field_validator
@@ -109,9 +110,28 @@ def _load_result(source_path, ask, show, extractor, cache_path):
     return result, failed, cache_path
 
 
+def _close_past_tasks(reviewed: ExtractionResult, now: datetime, ask, show) -> tuple[ExtractionResult, int]:
+    """Tasks already due are saved as history, done or missed (the student says which), so they
+    don't give an overdue warning on every plan. Returns (result, how many were closed)."""
+    tasks, closed = [], 0
+    for task in reviewed.tasks:
+        if task.completed_at or task.due_at() > now:
+            tasks.append(task)
+            continue
+        while True:
+            raw = ask(f"'{task.title}' was due {task.due_label()}. Was it [d]one or [m]issed? (Enter = done): ").strip().lower()
+            if raw in ("", "d", "m"):
+                break
+            show("Type d or m.")
+        tasks.append(task.model_copy(update={"completed_at": now.isoformat(timespec="minutes"), "missed": raw == "m"}))
+        closed += 1
+    return reviewed.model_copy(update={"tasks": tasks}), closed
+
+
 def run_import(conn, student_id, source_path, ask=input, show=print,
-               extractor=extract_schedule, cache_path=CACHE_PATH) -> bool:   
+               extractor=extract_schedule, cache_path=CACHE_PATH, now: datetime | None = None) -> bool:   
     """Extract -> review -> replace the student's saved schedule items. True only if saved."""
+    now = now or datetime.now()
     result, failed, kept_in = _load_result(source_path, ask, show, extractor, cache_path)
     if result is None:
         return False
@@ -128,6 +148,7 @@ def run_import(conn, student_id, source_path, ask=input, show=print,
     if not (reviewed.weekly_patterns or reviewed.dated_blocks or reviewed.tasks):
         show("Nothing kept. Your saved schedule is untouched.")
         return False
+    reviewed, closed = _close_past_tasks(reviewed, now, ask, show)
     if failed and not _confirm(ask, f"Page(s) {pages} weren't read, so this import is "
                                "incomplete. Saving replaces your saved classes with only what was read. "
                                "Save anyway?", default=False):
@@ -146,6 +167,8 @@ def run_import(conn, student_id, source_path, ask=input, show=print,
         text = f"{summary['tasks_added']} task(s) added"
         if summary["tasks_skipped"]:
             text += f", {summary['tasks_skipped']} duplicate(s) skipped"
+        if closed:
+            text += f" ({closed} past one(s) kept as history)"
         parts.append(text)
     show("Saved: " + ", ".join(parts) + ".")
     return True

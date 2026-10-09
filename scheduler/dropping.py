@@ -123,6 +123,14 @@ def make_proposal(tasks, new_task, settings, sleep_rules, actions, new_added, ne
                             score=score,slots_freed=freed, sleep_sacrificed_slots=sleep, flags=flags,
                             schedule=items)
 
+def already_unplaced(fixed_blocks, tasks, num_days=1, sleep_rules=None, settings=None,
+                     time_limit_seconds=5.0) -> list[int]:
+    """Indices of the tasks that don't fit even without a new one (e.g. due too soon)."""
+    _, unscheduled = build_schedule(fixed_blocks, tasks, num_days=num_days, sleep_rules=sleep_rules or [],
+                                    time_limit_seconds=time_limit_seconds, settings=settings)
+    out = {id(t) for t in unscheduled}
+    return [i for i, t in enumerate(tasks) if id(t) in out]
+
 def propose_drops(fixed_blocks, tasks, new_task, num_days=1, sleep_rules=None,   
                   settings=None, must_add=False, max_actions=3, max_proposals=4,
                   max_checks=60, time_limit_seconds=5.0, search = True) -> DropReport:

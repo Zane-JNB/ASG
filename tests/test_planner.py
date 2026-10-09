@@ -119,3 +119,12 @@ def test_an_early_class_on_day_zero_wins_over_the_assumed_sleep():
     assert block.end_slot == 20  # stops at 05:00: the 06:00 class minus the 1h wake-up buffer
     ready = next(b for b in fixed if b.title == "Getting ready")
     assert (ready.start_slot, ready.end_slot) == (20, 23)  # + the normal 15-min buffer = 1h
+
+def test_plan_with_bedtime_fully_blocked_warns_instead_of_crashing():
+    conn, sid = _setup(patterns=[], tasks=[], blocks=[
+        DatedBlock(title="Shift", date="2026-09-28", start_time="20:00", end_time="24:00"),
+        DatedBlock(title="Late shift", date="2026-09-29", start_time="00:00", end_time="02:00"),
+    ])
+    _, _, items, warnings = plan_from_saved(conn, sid, now=MON_MIDNIGHT, time_limit_seconds=10)
+    assert any(w.kind == "sleep_short" and w.severity == "hard" and w.message.startswith("Night 0")
+               for w in warnings)

@@ -157,7 +157,9 @@ def build_schedule(fixed_blocks: list[FixedBlock], tasks: list[DynamicTask],
                                     f"ready_end_{rule.night}")
         ready_size = model.NewIntVar(0, rule.length_slots + wake_buffer, f"ready_size_{rule.night}")
         model.Add(ready_size == size + wake_buffer * slept)
-        sleep_iv = model.NewIntervalVar(start, ready_size, ready_end, f"sleep_and_ready_{rule.night}")
+        # optional: a night with no room for sleep takes up no time (a hard warning, not a crash)
+        sleep_iv = model.NewOptionalIntervalVar(start, ready_size, ready_end, slept,
+                                                f"sleep_and_ready_{rule.night}")
         intervals.append(sleep_iv)   
         sleep_intervals.append(sleep_iv)      
  

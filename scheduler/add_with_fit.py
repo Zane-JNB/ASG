@@ -1,8 +1,9 @@
+from dataclasses import replace
 from datetime import datetime
 from scheduler.db import add_extracted_task
 from scheduler.drop_apply import apply_drop_choice
 from scheduler.drop_review import _h, choose_drop_proposal, choose_automatic
-from scheduler.dropping import propose_drops
+from scheduler.dropping import already_unplaced, propose_drops
 from scheduler.fit_check import build_fit_inputs
 from scheduler.models import ExtractedTask
 from scheduler.manual_apply import choose_manual 
@@ -18,6 +19,16 @@ def add_task_with_fit(conn, student_id: int, new_task: ExtractedTask, now: datet
         # is the verdict itself, not just constraints
         report = propose_drops(fit.fixed, [t for _, t in fit.planned], fit.new_task, fit.anchor.num_days,
                                fit.sleep_rules, settings=fit.settings, must_add=must_add, search = False)
+        if not report.fits_already:  # only the new task may decide: leave out tasks that don't fit anyway
+            stuck = already_unplaced(fit.fixed, [t for _, t in fit.planned], fit.anchor.num_days,
+                                     fit.sleep_rules, settings=fit.settings)
+            if stuck:
+                for i in stuck:
+                    show(f"Warning: '{fit.planned[i][1].title}' can't fit in the plan even without "
+                         f"'{new_task.title}'; it's left out of this check.")
+                fit = replace(fit, planned=[p for i, p in enumerate(fit.planned) if i not in stuck])
+                report = propose_drops(fit.fixed, [t for _, t in fit.planned], fit.new_task, fit.anchor.num_days,
+                                       fit.sleep_rules, settings=fit.settings, must_add=must_add, search=False)
     except (ValueError, RuntimeError) as e: #shows the specific error value for a fit that could not be checked
         show(f"Could not check the fit: {e}")
         show("Nothing saved.")
