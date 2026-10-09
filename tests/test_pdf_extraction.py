@@ -206,3 +206,186 @@ def test_non_object_items_from_the_model_are_dropped():
     pdf = _text_pdf(["Weekly Schedule", "Monday 09:00-11:00 Good class here"])
     result = extract_schedule_from_pdf(pdf, call_text_llm=odd, call_vision=_boom)
     assert [p.title for p in result.weekly_patterns] == ["Good"]
+
+
+# ---- fix/import-partial ----
+
+_DS = {"title": "DS", "day": "Mon", "start_time": "09:00", "end_time": "11:00"}
+
+def test_a_text_only_pdf_never_opens_the_renderer(monkeypatch):
+    def no_pdfium(*a, **kw):
+        raise AssertionError("pdfium should not be opened for a text-only PDF")
+    monkeypatch.setattr("scheduler.pdf_extraction.pdfium.PdfDocument", no_pdfium)
+    pdf = _text_pdf(["Data Structures Monday 09:00 to 11:00 in room 4B, weekly lecture"])
+    result = extract_schedule_from_pdf(pdf, call_text_llm=_fake_text("Data", "DS"), call_vision=_boom)
+    assert [p.title for p in result.weekly_patterns] == ["DS"]
+
+def test_a_pdf_the_renderer_cant_open_fails_only_the_pages_that_need_it(monkeypatch):
+    def broken(*a, **kw):
+        raise pdfium.PdfiumError("cannot open")
+    monkeypatch.setattr("scheduler.pdf_extraction.pdfium.PdfDocument", broken)
+    pdf = _multi_page_pdf([["Data Structures Monday 09:00 to 11:00 in room 4B, weekly lecture"], None,
+                           ["Data Structures Monday 09:00 to 11:00 in room 4B, weekly lecture"]])
+    with pytest.raises(PartialExtraction) as e:
+        extract_schedule_from_pdf(pdf, call_text_llm=_fake_text("Data", "DS"), call_vision=_boom)
+    assert e.value.failed_pages == [2] and len(e.value.result.weekly_patterns) == 2
+
+def test_the_model_error_is_kept_as_the_cause_when_the_renderer_also_fails(monkeypatch):
+    def broken(*a, **kw):
+        raise pdfium.PdfiumError("cannot open")
+    monkeypatch.setattr("scheduler.pdf_extraction.pdfium.PdfDocument", broken)
+    pdf = _multi_page_pdf([["Data Structures Monday 09:00 to 11:00 in room 4B, weekly lecture"]])
+    with pytest.raises(BadModelOutput):
+        extract_schedule_from_pdf(pdf, call_text_llm=_wrong_format, call_vision=_boom)
+
+@pytest.mark.parametrize("error", [pdfium.PdfiumError("bad page"), OSError("cannot encode")])
+def test_one_page_that_wont_render_is_skipped_not_the_rest(monkeypatch, error):
+    real_render = __import__("scheduler.pdf_extraction", fromlist=["_render_page"])._render_page
+    def render(doc, i):
+        if i == 0:
+            raise error
+        return real_render(doc, i)
+    monkeypatch.setattr("scheduler.pdf_extraction._render_page", render)
+    with pytest.raises(PartialExtraction) as e:
+        extract_schedule_from_pdf(_multi_page_pdf([None, None]), call_text_llm=_boom, call_vision=_fake_vision("Scan"))
+    assert e.value.failed_pages == [1] and len(e.value.result.weekly_patterns) == 1
+
+@pytest.mark.parametrize("answer", [{"weekly_patterns": 3}, {"tasks": "lots of things"},
+                                    {"tasks": {"0": {"title": "x"}}},
+                                    {"tasks": 0}, {"tasks": False}, {"tasks": True},
+                                    ["not", "an", "object"]])
+def test_a_wrongly_shaped_answer_is_bad_model_output_not_a_crash(answer):
+    from scheduler.schedule_extraction import extraction_from_dict
+    with pytest.raises(BadModelOutput):
+        extraction_from_dict(answer)
+
+@pytest.mark.parametrize("shape", [[_DS], _DS, __import__("json").dumps([_DS])])
+def test_a_list_one_item_or_a_json_string_is_read(shape):
+    from scheduler.schedule_extraction import extraction_from_dict
+    assert [p.title for p in extraction_from_dict({"weekly_patterns": shape}).weekly_patterns] == ["DS"]
+
+@pytest.mark.parametrize("empty", [{}, "", None, [], "none", "N/A", "[]", "{}", [None], [""], [{}], ["N/A"], ["none"], [[]]])
+def test_none_like_values_mean_no_items(empty):
+    from scheduler.schedule_extraction import extraction_from_dict
+    result = extraction_from_dict({"weekly_patterns": [_DS], "tasks": empty})
+    assert [p.title for p in result.weekly_patterns] == ["DS"] and result.tasks == []
+
+def test_a_page_with_a_wrongly_shaped_answer_counts_as_failed():
+    pdf = _multi_page_pdf([["Data Structures Monday 09:00 to 11:00 in room 4B, weekly lecture"],
+                           ["Algorithms Tuesday 10:00 to 12:00 in room 5C, weekly lecture"]])
+    def text(system_prompt, user_message, tool_name, tool_schema):
+        return {"weekly_patterns": [_DS]} if "Data" in user_message else {"weekly_patterns": 3}
+    def vision(**kw):
+        return {"weekly_patterns": 3}
+    with pytest.raises(PartialExtraction) as e:
+        extract_schedule_from_pdf(pdf, call_text_llm=text, call_vision=vision)
+    assert e.value.failed_pages == [2] and [p.title for p in e.value.result.weekly_patterns] == ["DS"]
+
+
+def test_a_wrong_shape_error_names_what_was_sent():
+    from scheduler.schedule_extraction import extraction_from_dict
+    with pytest.raises(BadModelOutput, match=r"\(str\)"):
+        extraction_from_dict({"tasks": "true"})
+
+def test_a_stray_non_object_in_a_list_is_dropped_not_fatal():
+    from scheduler.schedule_extraction import extraction_from_dict
+    assert [p.title for p in extraction_from_dict({"weekly_patterns": [_DS, "junk"]}).weekly_patterns] == ["DS"]
+
+
+def test_both_causes_are_named_when_pages_fail_for_different_reasons(monkeypatch):
+    def broken(*a, **kw):
+        raise pdfium.PdfiumError("cannot open")
+    monkeypatch.setattr("scheduler.pdf_extraction.pdfium.PdfDocument", broken)
+    pdf = _multi_page_pdf([["Data Structures Monday 09:00 to 11:00 in room 4B, weekly lecture"], None,
+                           ["Algorithms Tuesday 10:00 to 12:00 in room 5C, weekly lecture"]])
+    def text(system_prompt, user_message, tool_name, tool_schema):
+        if "Data" in user_message:
+            raise BadModelOutput("didn't match the expected answer format")
+        return {"weekly_patterns": [_DS]}
+    with pytest.raises(PartialExtraction) as e:
+        extract_schedule_from_pdf(pdf, call_text_llm=text, call_vision=_boom)
+    assert e.value.failed_pages == [1, 2]
+    assert "expected answer format" in str(e.value) and "PDF renderer failed" in str(e.value)
+
+def test_a_single_titled_object_is_one_item_and_a_bad_one_is_dropped():
+    from scheduler.schedule_extraction import extraction_from_dict
+    good = extraction_from_dict({"tasks": {"title": "Essay", "date": "2026-10-05"}}).tasks
+    assert [t.title for t in good] == ["Essay"]  # wrapped into a list of one
+    assert extraction_from_dict({"tasks": {"title": "Essay"}}).tasks == []  # one bad item (no date), dropped
+
+
+class _SdkError(RuntimeError):
+    """Like openai.APIConnectionError: can't be rebuilt from a message alone."""
+    def __init__(self, *, request=None):
+        super().__init__("Connection error.")
+
+def test_an_sdk_error_alongside_a_renderer_error_is_reported_not_a_crash(monkeypatch):
+    def broken(*a, **kw):
+        raise pdfium.PdfiumError("cannot open")
+    monkeypatch.setattr("scheduler.pdf_extraction.pdfium.PdfDocument", broken)
+    pdf = _multi_page_pdf([None, ["Data Structures Monday 09:00 to 11:00 in room 4B, weekly lecture"]])
+    def text(*a, **kw):
+        raise _SdkError()
+    with pytest.raises(RuntimeError) as e:  # nothing was read: both reasons named, the original kept
+        extract_schedule_from_pdf(pdf, call_text_llm=text, call_vision=_boom)
+    assert "Connection error" in str(e.value) and "PDF renderer failed" in str(e.value)
+    assert isinstance(e.value.__cause__, _SdkError)
+
+@pytest.mark.parametrize("error", ["pdfplumber", "pdfminer"])
+def test_a_page_whose_text_layer_is_broken_is_read_as_an_image(monkeypatch, error):
+    from pdfminer.pdfparser import PDFSyntaxError
+    from pdfplumber.utils.exceptions import PdfminerException
+    import pdfplumber.page
+    real = pdfplumber.page.Page.extract_text
+    def extract(self, *a, **kw):
+        if self.page_number == 1:  # what real pdfplumber raises for a corrupt content stream
+            raise PdfminerException("broken") if error == "pdfplumber" else PDFSyntaxError("broken")
+        return real(self, *a, **kw)
+    monkeypatch.setattr(pdfplumber.page.Page, "extract_text", extract)
+    pdf = _multi_page_pdf([["x"], ["Data Structures Monday 09:00 to 11:00 in room 4B, weekly lecture"]])
+    result = extract_schedule_from_pdf(pdf, call_text_llm=_fake_text("Data", "DS"), call_vision=_fake_vision("Scan"))
+    assert sorted(p.title for p in result.weekly_patterns) == ["DS", "Scan"]
+
+
+def test_an_object_sent_as_text_inside_a_list_is_read():
+    from scheduler.schedule_extraction import extraction_from_dict
+    wed = {**_DS, "title": "B", "day": "Wed"}
+    raw = {"weekly_patterns": [_DS, __import__("json").dumps(wed)]}
+    assert sorted(p.title for p in extraction_from_dict(raw).weekly_patterns) == ["B", "DS"]
+
+def test_an_empty_answer_is_still_just_empty():
+    from scheduler.schedule_extraction import extraction_from_dict
+    assert extraction_from_dict({}) == ExtractionResult()
+
+
+def test_extra_list_or_object_fields_on_an_item_are_ignored():
+    from scheduler.schedule_extraction import extraction_from_dict
+    item = {**_DS, "instructors": [], "location": {"room": "B12"}}
+    assert [p.title for p in extraction_from_dict({"weekly_patterns": [item]}).weekly_patterns] == ["DS"]
+    assert [p.title for p in extraction_from_dict({"weekly_patterns": item}).weekly_patterns] == ["DS"]
+
+def test_an_unknown_text_note_beside_the_answer_is_fine():
+    from scheduler.schedule_extraction import extraction_from_dict
+    assert extraction_from_dict({"weekly_patterns": [_DS], "note": "all weekly"}).weekly_patterns
+
+def _raising_from(filename, error):
+    """A function whose code says it lives in `filename`, so the error looks raised there."""
+    ns = {"error": error}
+    exec(compile("def extract(self, *a, **kw):\n    raise error\n", filename, "exec"), ns)
+    return ns["extract"]
+
+def test_any_error_reading_a_text_layer_sends_the_page_to_the_image_path(monkeypatch):
+    import pdfplumber.page
+    monkeypatch.setattr(pdfplumber.page.Page, "extract_text",
+                        _raising_from("/site-packages/pdfminer/pdffont.py", KeyError("corrupt font")))
+    result = extract_schedule_from_pdf(_multi_page_pdf([["x"]]), call_text_llm=_boom, call_vision=_fake_vision("Scan"))
+    assert [p.title for p in result.weekly_patterns] == ["Scan"]
+
+
+def test_a_task_sent_as_json_text_gets_the_same_due_time_handling():
+    import json
+    from scheduler.schedule_extraction import extraction_from_dict
+    task = {"title": "HW", "date": "2026-10-05", "due_time": "TBD"}
+    as_object = extraction_from_dict({"tasks": [task]}).tasks
+    as_text = extraction_from_dict({"tasks": [json.dumps(task)]}).tasks
+    assert [(t.title, t.due_time) for t in as_text] == [(t.title, t.due_time) for t in as_object] == [("HW", None)]

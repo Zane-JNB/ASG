@@ -1,6 +1,8 @@
+import json
 import os
+from typing import Annotated
 
-from pydantic import ValidationError
+from pydantic import Field, ValidationError, field_validator
 
 from scheduler.db import replace_extraction, load_settings
 from scheduler.llm_backends import is_backend_failure
@@ -9,6 +11,22 @@ from scheduler.paths import CACHE_PATH
 from scheduler.review import _confirm, review_extraction
 from scheduler.schedule_extraction import extract_schedule
 from scheduler.pdf_extraction import PartialExtraction, extract_schedule_from_pdf
+
+class _SavedExtraction(ExtractionResult):
+    """The replay copy: the extraction plus the PDF pages that weren't read, so replaying a
+    partial import still warns that it is incomplete. Older copies have no failed_pages."""
+    failed_pages: list[Annotated[int, Field(strict=True, ge=1)]] = Field(default_factory=list)
+
+    @field_validator("failed_pages", mode="before")
+    @classmethod
+    def _none_is_empty(cls, v):
+        return [] if v is None else v
+
+    @field_validator("failed_pages")
+    @classmethod
+    def _sorted_unique(cls, v):
+        return sorted(set(v))
+
 
 MEDIA_TYPES = {
     ".png": "image/png",
@@ -20,27 +38,29 @@ MEDIA_TYPES = {
 
 def _load_result(source_path, ask, show, extractor, cache_path):   
     """Get an ExtractionResult from a saved .json (free) or a real image/PDF (LLM call).
-    Returns (result, failed PDF page numbers); result is None if the student declines the
-    cost prompt or the call fails."""
+    Returns (result, failed PDF page numbers, replay file holding it or None); result is None if
+    the student declines the cost prompt or the call fails."""
     ext = os.path.splitext(source_path)[1].lower()
     if ext != ".json" and ext not in MEDIA_TYPES:
         show(f"Unsupported file type '{ext}'. Use png, jpg, jpeg, pdf, or a saved .json.")
-        return None, []
+        return None, [], None
 
     try:
         with open(source_path, "rb") as f:  #   -- read once, reused below for the page count too
             file_bytes = f.read()
     except OSError as e:  # missing file, no permission, a folder...
         show(f"Could not read '{source_path}': {e.strerror or e}")
-        return None, []
+        return None, [], None
 
     if ext == ".json":
         try:
             # Notepad/PowerShell can save UTF-8 with a BOM; JSON parsers reject it, so drop it
-            return ExtractionResult.model_validate_json(file_bytes.removeprefix(b"\xef\xbb\xbf")), []
-        except ValidationError:  # bad JSON or wrong shape
+            saved = _SavedExtraction.model_validate_json(file_bytes.removeprefix(b"\xef\xbb\xbf"))
+            result = ExtractionResult.model_validate(saved.model_dump(exclude={"failed_pages"}))
+        except ValidationError:  # bad JSON, wrong shape, or page numbers that aren't page numbers
             show(f"'{source_path}' is not a valid saved extraction.")
-            return None, []
+            return None, [], None
+        return result, saved.failed_pages, source_path  # the replayed file still holds it
 
     page_note = ""
     if ext == ".pdf":  #   -- each page can be its own call (text or rendered-image)
@@ -51,11 +71,11 @@ def _load_result(source_path, ask, show, extractor, cache_path):
                 num_pages = len(pdf.pages)                        # extract_schedule_from_pdf exactly
         except Exception:  # pdfplumber/pdfminer raise their own types for a broken or invalid PDF
             show(f"'{source_path}' could not be opened as a PDF.")
-            return None, []
+            return None, [], None
         page_note = f" This PDF has {num_pages} page(s); each may use its own call."
     if not _confirm(ask, f"Groq (free tier, but a real API call).{page_note} Continue?", default=False):
         show("Aborted.")
-        return None, []
+        return None, [], None
     failed = []
     try:
         if ext == ".pdf" and extractor is extract_schedule:  #   -- default PDF path avoids
@@ -69,24 +89,38 @@ def _load_result(source_path, ask, show, extractor, cache_path):
         if not is_backend_failure(e):
             raise  # a bug in our own code: keep the traceback
         show(f"Extraction failed: {e}")  # report it, save nothing, don't crash
-        return None, []
+        return None, [], None
 
-    try:
-        with open(cache_path, "w", encoding="utf-8") as f:  #   -- saved before review
-            f.write(result.model_dump_json(indent=2))
+    tmp_path = os.fspath(cache_path) + ".tmp"
+    try:  #   -- saved before review; written aside first so a failed write keeps the old copy
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            # failed_pages (read back by _SavedExtraction): replaying still warns it is incomplete
+            f.write(json.dumps(result.model_dump(mode="json") | {"failed_pages": failed}, indent=2))
+        os.replace(tmp_path, cache_path)
     except OSError as e:  # the replay copy is a convenience; don't lose the extraction over it
         show(f"Note: couldn't save a replay copy to '{cache_path}': {e.strerror or e}")
-    return result, failed
+        if os.path.exists(cache_path):
+            show(f"  '{cache_path}' still holds an EARLIER import; don't replay it for this document.")
+        try:
+            os.remove(tmp_path)  # it holds the student's timetable: don't leave it lying around
+        except OSError:
+            pass
+        return result, failed, None
+    return result, failed, cache_path
 
 
 def run_import(conn, student_id, source_path, ask=input, show=print,
                extractor=extract_schedule, cache_path=CACHE_PATH) -> bool:   
     """Extract -> review -> replace the student's saved schedule items. True only if saved."""
-    result, failed = _load_result(source_path, ask, show, extractor, cache_path)
+    result, failed, kept_in = _load_result(source_path, ask, show, extractor, cache_path)
     if result is None:
         return False
+    pages = ", ".join(map(str, failed))
     if not (result.weekly_patterns or result.dated_blocks or result.tasks):
-        show("Nothing was extracted. Your saved schedule is untouched.")
+        if failed:
+            show("Nothing was found in the pages that were read. Your saved schedule is untouched.")
+        else:
+            show("Nothing was extracted. Your saved schedule is untouched.")
         return False
 
     cap = load_settings(conn, student_id).default_max_session_slots  
@@ -94,10 +128,12 @@ def run_import(conn, student_id, source_path, ask=input, show=print,
     if not (reviewed.weekly_patterns or reviewed.dated_blocks or reviewed.tasks):
         show("Nothing kept. Your saved schedule is untouched.")
         return False
-    if failed and not _confirm(ask, f"Page(s) {', '.join(map(str, failed))} weren't read, so this import is "
+    if failed and not _confirm(ask, f"Page(s) {pages} weren't read, so this import is "
                                "incomplete. Saving replaces your saved classes with only what was read. "
                                "Save anyway?", default=False):
-        show("Not saved. Your saved schedule is untouched. What was read is kept in the replay copy.")
+        show("Not saved. Your saved schedule is untouched."
+             + (f" What was read is kept in '{kept_in}'; replaying it warns again that it is incomplete."
+                if kept_in else ""))
         return False
 
     summary = replace_extraction(conn, student_id, reviewed)  #     returns a dict, not None

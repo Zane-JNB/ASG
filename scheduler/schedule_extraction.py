@@ -1,7 +1,10 @@
 import base64
+import json
 from datetime import datetime
 
 from pydantic import ValidationError
+
+from scheduler.llm_backends import BadModelOutput
 
 from scheduler.models import WeeklyPattern, DatedBlock, ExtractedTask, ExtractionResult
 
@@ -46,7 +49,31 @@ def _sort_result(result: ExtractionResult) -> ExtractionResult:
 
 
 _LOOSE_TIME_FORMATS = ("%H:%M", "%H:%M:%S", "%H", "%I%p", "%I %p", "%I:%M%p", "%I:%M %p")
-_NO_TIME = {"", "0", "none", "null", "n/a", "na", "-", "tbd", "tba"}  # what models write for "no time stated"
+_NONE_WORDS = {"", "none", "null", "n/a", "na", "-"}  # what models write for "nothing"
+_NO_TIME = _NONE_WORDS | {"0", "tbd", "tba"}  # ...and for "no time stated"
+
+
+def _as_items(key: str, value) -> list:
+    """A list key's value as a list. Also accepts what models send for "none" (null, {}, "",
+    "N/A"...), one titled item on its own, and a list sent as JSON text. Each entry is then
+    validated on its own by the caller, so a bad entry is dropped and the rest kept. Anything
+    else (a number, true/false, other text, an object without a title) raises BadModelOutput: the
+    answer can't be trusted, so the caller fails it (and warns) instead of crashing."""
+    sent = type(value).__name__
+    if isinstance(value, str):
+        if value.strip().lower() in _NONE_WORDS:
+            return []
+        try:
+            value = json.loads(value)
+        except ValueError:
+            raise BadModelOutput(f"The model sent '{key}' in the wrong shape ({sent}). Try again.") from None
+    if value is None or value == {}:
+        return []
+    if isinstance(value, list):
+        return value
+    if isinstance(value, dict) and "title" in value:
+        return [value]
+    raise BadModelOutput(f"The model sent '{key}' in the wrong shape ({sent}). Try again.")
 
 
 def _task_with_loose_time(item: dict) -> list[ExtractedTask]:
@@ -73,11 +100,19 @@ def extraction_from_dict(raw: dict) -> ExtractionResult:
     an object) is dropped without discarding every other, otherwise valid, item. A task whose
     only problem is its due time is never dropped: a time like '5pm' or '17:00:00' is read as
     17:00; one that can't be read at all is left out and named in the title, so the student
-    sees it in the review and sets it."""
+    sees it in the review and sets it. An answer, or a list key, in a shape that can't be read
+    raises BadModelOutput (see _as_items)."""
+    if not isinstance(raw, dict):
+        raise BadModelOutput(f"The model sent an answer in the wrong shape ({type(raw).__name__}). Try again.")
     found = {}
     for key, model in (("weekly_patterns", WeeklyPattern), ("dated_blocks", DatedBlock), ("tasks", ExtractedTask)):
         found[key] = []
-        for item in raw.get(key) or []:
+        for item in _as_items(key, raw.get(key)):
+            if isinstance(item, str) and item.strip().startswith("{"):  # one entry sent as JSON text
+                try:
+                    item = json.loads(item)
+                except ValueError:
+                    pass
             if model is ExtractedTask and isinstance(item, dict) and str(item.get("due_time", "")).strip().lower() in _NO_TIME:
                 item = {**item, "due_time": None}
             try:

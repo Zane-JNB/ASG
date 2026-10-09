@@ -25,12 +25,16 @@ MIN_TEXT_CHARS = 40  # below this, treat the page as "no usable text" and render
 RENDER_SCALE = 2.0   # ~144 DPI; enough to read timetable text without huge file sizes
 
 
+class RenderError(RuntimeError):
+    """A page couldn't be rendered (or pdfium couldn't open the PDF): only that page fails."""
+
+
 class PartialExtraction(RuntimeError):
     """Some pages were read and some failed. .result holds what the read pages gave (already
     paid for); .failed_pages lists the 1-based page numbers that failed or were never tried."""
-    def __init__(self, result: ExtractionResult, failed_pages: list[int], cause: Exception):
+    def __init__(self, result: ExtractionResult, failed_pages: list[int], cause: Exception, note: str = ""):
         pages = ", ".join(map(str, failed_pages))
-        super().__init__(f"page(s) {pages} could not be read: {cause}")
+        super().__init__(f"page(s) {pages} could not be read: {cause}{note}")
         self.result, self.failed_pages, self.cause = result, failed_pages, cause
 
 
@@ -83,45 +87,84 @@ def extract_schedule_from_pdf(file_bytes: bytes, call_text_llm=None, call_vision
 
     A text page whose answer comes back in the wrong format is retried as an image. A page
     that still fails is skipped; a rate limit, key or model error stops at once (more calls
-    would fail too). If some pages were read, PartialExtraction carries them; if none were,
-    the error itself is raised."""
+    would fail too). The renderer is opened only when a page needs it; if it can't open the
+    PDF or render a page, only the pages that needed it fail. If some pages were read,
+    PartialExtraction carries them; if none were, the error itself is raised."""
     if call_text_llm is None:
         from scheduler.llm_backends import call_llm as call_text_llm
     if call_vision is None:
         from scheduler.llm_backends import call_vision_llm as call_vision
 
-    results, failed, cause = [], [], None
-    doc = pdfium.PdfDocument(file_bytes)  # opened once, only rendered from if a page needs it
+    results, failed = [], []
+    model_cause = render_cause = None  # a model error says more than a renderer error; name both
+    renderer = _LazyRenderer(file_bytes)
     try:
         with pdfplumber.open(__import__("io").BytesIO(file_bytes)) as pdf:
             num_pages = len(pdf.pages)
             for i, page in enumerate(pdf.pages):
-                text = (page.extract_text() or "").strip()
+                text_error = None
                 try:
+                    try:
+                        text = (page.extract_text() or "").strip()
+                    except Exception:  # a direct library call: a broken text layer (pdfminer raises many kinds)
+                        text = ""      # is read as an image instead
                     if len(text) >= MIN_TEXT_CHARS:
                         try:
                             results.append(extract_text_page(text, call_text_llm))
                             continue
-                        except BadModelOutput:  # wrong format: try the page as an image instead
-                            pass
-                    results.append(extract_image_page(_render_page(doc, i), call_vision))
+                        except BadModelOutput as e:  # wrong format: try the page as an image instead
+                            text_error = e
+                    results.append(extract_image_page(renderer.render(i), call_vision))
                 except Exception as e:
                     if not is_backend_failure(e):
                         raise  # a bug in our own code: keep the traceback
                     failed.append(i + 1)
-                    cause = e
-                    if not isinstance(e, BadModelOutput):  # rate limit, key, model: stop now
+                    if isinstance(e, RenderError):
+                        render_cause = e
+                        model_cause = text_error or model_cause
+                    else:
+                        model_cause = e
+                    if not isinstance(e, (BadModelOutput, RenderError)):  # rate limit, key, model: stop now
                         failed += range(i + 2, num_pages + 1)
                         break
     finally:
-        doc.close()
+        renderer.close()
     if num_pages == 0:
         raise ValueError("PDF has no pages")
     if failed:
+        cause = model_cause or render_cause
+        note = f" (and the PDF renderer failed: {render_cause})" if model_cause and render_cause else ""
         if not results:
+            if note:  # name both; a new error, since an SDK error can't be rebuilt from a message
+                raise (BadModelOutput if isinstance(cause, BadModelOutput) else RuntimeError)(f"{cause}{note}") from cause
             raise cause
-        raise PartialExtraction(_sort_result(_merge(results)), failed, cause)
+        raise PartialExtraction(_sort_result(_merge(results)), failed, cause, note)
     return _sort_result(_merge(results))
+
+
+class _LazyRenderer:
+    """Renders pages as PNG bytes, opening the document on first use so a text-only PDF never
+    needs pdfium. A document pdfium can't open (tried once), or a page that won't render or
+    encode, raises RenderError, which fails only that page."""
+    def __init__(self, file_bytes: bytes):
+        self._bytes, self._doc, self._error = file_bytes, None, None
+
+    def render(self, page_index: int) -> bytes:
+        if self._doc is None and self._error is None:
+            try:
+                self._doc = pdfium.PdfDocument(self._bytes)
+            except pdfium.PdfiumError as e:
+                self._error = e
+        if self._error is not None:
+            raise RenderError(f"the PDF renderer couldn't open this file: {self._error}")
+        try:
+            return _render_page(self._doc, page_index)
+        except Exception as e:  # _render_page is only pdfium/Pillow calls: any failure is this page's
+            raise RenderError(f"page {page_index + 1} couldn't be rendered: {e}") from e
+
+    def close(self) -> None:
+        if self._doc is not None:
+            self._doc.close()
 
 
 def _render_page(doc, page_index: int) -> bytes:
