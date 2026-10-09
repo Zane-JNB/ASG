@@ -64,7 +64,7 @@ def extracted_task_to_dynamic_task(task: ExtractedTask, plan_start_date: date,
         splittable=task.splittable,
         **({} if max_session_slots is None else {"max_session_slots": max_session_slots}),
         deadline_day=deadline_day,
-        deadline_slot=SLOTS_PER_DAY,
+        deadline_slot=task.due_slot(),  # end of day unless the task has a due time
     )
 
 

@@ -1,6 +1,6 @@
 from pydantic import BaseModel, Field, field_validator, model_validator
 from typing import Literal 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pydantic.json_schema import SkipJsonSchema
 
 MINUTES_PER_SLOT = 15
@@ -17,15 +17,23 @@ def slot_to_time(slot: int) -> str:
     return f"{minutes // 60:02d}:{minutes % 60:02d}"
 
 def _check_time(value: str, end: bool = False) -> str:
-    """'HH:MM', 24-hour. An end time may be '24:00' (midnight at the end of the day)."""
+    """'HH:MM', 24-hour, returned zero-padded ('9:30' -> '09:30') so times sort correctly.
+    An end time may be '24:00' (midnight at the end of the day)."""
     h, sep, m = value.partition(":")
-    if not (sep and h.isdigit() and m.isdigit() and len(h) <= 2 and len(m) == 2):
+    if not (sep and h.isascii() and h.isdigit() and m.isascii() and m.isdigit()
+            and len(h) <= 2 and len(m) == 2):
         raise ValueError(f"'{value}' is not a time like 09:30")
-    if end and (int(h), int(m)) == (24, 0):
-        return value
+    normalized = f"{int(h):02d}:{m}"
+    if end and normalized == "24:00":
+        return normalized
     if not (0 <= int(h) <= 23 and 0 <= int(m) <= 59):
         raise ValueError(f"'{value}' is not a real time" + (" (latest end is 24:00)" if end else ""))
-    return value
+    return normalized
+
+def _check_due_time(value: str) -> str:
+    """A task's due time ('24:00' allowed), rounded down to its 15-minute slot so the shown
+    deadline, the solver deadline and the overdue check all agree ('09:10' -> '09:00')."""
+    return slot_to_time(time_to_slot(_check_time(value, end=True)))
 
 def _check_date(value: str) -> str:
     """A real 'YYYY-MM-DD' date, stored in that exact form so dates sort correctly."""
@@ -205,13 +213,15 @@ class WeeklyPattern(BaseModel):
 class ExtractedTask(BaseModel):
     """A task/assignment found in an uploaded document, with a real calendar deadline.
 
-    Only title and date come from the document itself -- duration, priority, and difficulty
+    Only title, date and (if stated) due_time come from the document itself -- duration, priority, and difficulty
     aren't things a syllabus states, they're the student's judgment call, so they default to
     reasonable placeholders and are meant to be reviewed/adjusted before saving, not trusted
     as extracted fact.
     """
     title: str
     date: str  # "YYYY-MM-DD" -- a real calendar date, not a relative day index
+    due_time: str | None = Field(  # "HH:MM"; None = due at the end of that day
+        default=None, description="Time the task is due, HH:MM 24-hour, only if the document states one")
     duration_slots: int = Field(default=4, gt=0)  # placeholder: 1 hour
     priority: int = Field(default=3, ge=1, le=5)  # placeholder: medium
     difficulty: int = Field(default=3, ge=1, le=5)  # placeholder: medium
@@ -225,6 +235,38 @@ class ExtractedTask(BaseModel):
     @classmethod
     def _date(cls, v):
         return _check_date(v)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _midnight_is_the_day_before(cls, data):
+        """A due time before 00:15 leaves no time that day: it means the end of the day before
+        ('2026-10-06 00:00' -> '2026-10-05 24:00'). Bad values are left for the field checks."""
+        if isinstance(data, dict) and isinstance(data.get("due_time"), str) and isinstance(data.get("date"), str):
+            try:
+                if time_to_slot(_check_time(data["due_time"], end=True)) == 0:
+                    day = date.fromisoformat(data["date"]) - timedelta(days=1)
+                    data = {**data, "date": day.isoformat(), "due_time": "24:00"}
+            except ValueError:
+                pass
+        return data
+
+    @field_validator("due_time")
+    @classmethod
+    def _due_time(cls, v):
+        return None if v is None else _check_due_time(v)
+
+    def due_label(self) -> str:
+        """'2026-10-05' or '2026-10-05 10:00', as shown to the student."""
+        return f"{self.date} {self.due_time}" if self.due_time else self.date
+
+    def due_at(self) -> datetime:
+        """When the task is due (no time = the end of that day)."""
+        day = datetime.combine(date.fromisoformat(self.date), datetime.min.time())
+        return day + timedelta(minutes=self.due_slot() * MINUTES_PER_SLOT)
+
+    def due_slot(self) -> int:
+        """due_time as an exclusive slot within its day (96 = end of day)."""
+        return SLOTS_PER_DAY if self.due_time is None else time_to_slot(self.due_time)
 
 
 class DatedBlock(BaseModel):

@@ -7,7 +7,7 @@ from scheduler.db import (
     add_commute, add_dated_block, add_extracted_task, connect, get_extracted_tasks,
     get_or_create_student,
 )
-from scheduler.fit_check import build_fit_inputs, task_date_warnings
+from scheduler.fit_check import build_fit_inputs
 from scheduler.models import Commute, DatedBlock, ExtractedTask, SLOTS_PER_DAY
 from scheduler.planner import plan_from_saved
 
@@ -67,23 +67,17 @@ def test_saved_plan_sleep_ends_before_the_next_mornings_shift(conn, sid):
     (sleep,) = [i for i in items if i.kind == "sleep"]
     assert sleep.day * SLOTS_PER_DAY + sleep.end_slot <= SLOTS_PER_DAY + 20
 
-def test_fixed_window_plan_also_respects_the_next_morning(conn, sid):
-    _shifts(conn, sid)
-    add_extracted_task(conn, sid, _task("Reading", 1, D))
-    _, _, items, _ = plan_from_saved(conn, sid, 1, start_date=D, now=NOW, time_limit_seconds=10)
-    (sleep,) = [i for i in items if i.kind == "sleep"]
-    assert sleep.day * SLOTS_PER_DAY + sleep.end_slot <= SLOTS_PER_DAY + 20
-
 
 def test_overdue_task_gives_a_hard_warning(conn, sid):
     add_extracted_task(conn, sid, _task("Overdue essay", 2, D - timedelta(days=4)))
-    warnings = task_date_warnings(conn, sid, D)
-    assert [(w.severity, w.kind) for w in warnings] == [("hard", "task_overdue")]
+    fit = build_fit_inputs(conn, sid, NOW)
+    assert [(w.severity, w.kind) for w in fit.warnings] == [("hard", "task_overdue")]
+    assert fit.planned == []  # an overdue task is warned about, not planned
 
 def test_finished_and_future_tasks_give_no_date_warnings(conn, sid):
     add_extracted_task(conn, sid, _task("Done", 2, D - timedelta(days=4), completed_at="2026-10-01T10:00"))
     add_extracted_task(conn, sid, _task("Today", 1, D))
-    assert task_date_warnings(conn, sid, D) == []
+    assert build_fit_inputs(conn, sid, NOW).warnings == []
 
 def test_saved_plan_reports_an_overdue_task(conn, sid):
     add_extracted_task(conn, sid, _task("Overdue essay", 2, D - timedelta(days=4)))

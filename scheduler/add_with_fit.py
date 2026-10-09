@@ -22,6 +22,9 @@ def add_task_with_fit(conn, student_id: int, new_task: ExtractedTask, now: datet
         show(f"Could not check the fit: {e}")
         show("Nothing saved.")
         return None
+    for w in fit.warnings:  # the fit was checked without these rows
+        if w.kind == "saved_row_unreadable":
+            show(f"Warning: {w.message}")
 
     if report.fits_already:  # later-deadline tasks were shuffled by the solver if needed
         new_id = add_extracted_task(conn, student_id, new_task)

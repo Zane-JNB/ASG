@@ -82,11 +82,6 @@ def test_overlap_message_is_still_clear_in_continuous_mode(conn, sid):
         plan_from_saved(conn, sid, now=NOW)
 
 
-def test_explicit_start_date_still_gives_the_old_fixed_window(conn, sid):
-    add_extracted_task(conn, sid, _task("Report", 2, 3, D + timedelta(days=1)))
-    anchor, *_ = plan_from_saved(conn, sid, 3, start_date=D, time_limit_seconds=10)
-    assert (anchor.start_date, anchor.num_days) == (D, 3)
-
 def _commute_vs_class(conn, sid, class_start="17:00", class_end="19:00", commute_start="16:30"):   
     add_weekly_pattern(conn, sid, WeeklyPattern(title="Class", day="Mon",
                                                 start_time=class_start, end_time=class_end))
@@ -104,8 +99,3 @@ def test_commute_already_over_gives_no_warning(conn, sid):
     _commute_vs_class(conn, sid, "07:30", "09:00", "07:00")  # both before NOW (15:00)
     _, _, _, warnings = plan_from_saved(conn, sid, now=NOW, time_limit_seconds=10)
     assert not any(w.kind == "commute_overlap" for w in warnings)
-
-def test_explicit_window_also_warns(conn, sid):   
-    _commute_vs_class(conn, sid)
-    _, _, _, warnings = plan_from_saved(conn, sid, 3, start_date=D, time_limit_seconds=10)
-    assert any(w.kind == "commute_overlap" for w in warnings)

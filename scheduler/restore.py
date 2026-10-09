@@ -18,7 +18,8 @@ def plan_restores(conn, student_id: int, now: datetime, time_limit_seconds: floa
     saved = dict(get_extracted_tasks(conn, student_id))
     cap = fit.settings.default_max_session_slots
     planned = dict(fit.planned)  # id -> task with its cut applied (fully cut tasks are absent)
-    active = {i: c for i, c in cuts.items() if i in saved and not saved[i].completed_at}
+    active = {i: c for i, c in cuts.items()
+              if i in saved and not saved[i].completed_at and saved[i].due_at() > now}  # overdue: nothing to give back
     order = sorted(active, key=lambda i: (-saved[i].priority, -saved[i].difficulty, i))
     given = {}
     for tid in order:

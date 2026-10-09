@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime
 
 from scheduler.db import connect, get_or_create_student, get_extracted_tasks, replace_extraction
 from scheduler.models import ExtractedTask, ExtractionResult, WeeklyPattern
@@ -74,7 +74,7 @@ def test_delete_all_only_touches_tasks_not_classes():
         tasks=[ExtractedTask(title="A", date="2026-10-01")]))
     ask, shown = scripted(["x", "yes", "q"])
     run_menu(conn, sid, ask, shown.append, today=TODAY)
-    plan_from_saved(conn, sid, 3, start_date=TODAY, time_limit_seconds=5)  # classes still there: no error
+    plan_from_saved(conn, sid, 3, now=datetime(2026, 9, 28, 0, 0), time_limit_seconds=5)  # classes still there: no error
 
 def test_tasks_are_per_student():
     conn, sid = _conn()
@@ -87,7 +87,7 @@ def test_menu_handles_junk_and_empty_states():
     conn, sid = _conn()
     ask, shown = scripted(["zzz", "l", "d", "x", "q"])
     run_menu(conn, sid, ask, shown.append, today=TODAY)
-    assert "Choose a, l, d, f, c, s, t, r, m, p, x or q." in shown
+    assert "Choose a, l, d, f, c, s, t, r, m, p, u, x or q." in shown
     assert shown.count("No tasks saved.") == 2 and shown.count("No open tasks saved.") == 1
 
 def test_delete_all_keeps_completed_tasks_as_history():
@@ -133,7 +133,7 @@ def test_added_task_reaches_the_plan():
     conn, sid = _conn()
     ask, shown = scripted(["a", "Essay", "2026-10-02", "2", "", "", "q"])
     run_menu(conn, sid, ask, shown.append, today=TODAY)
-    _, _, items, _ = plan_from_saved(conn, sid, 7, start_date=date(2026, 9, 29), time_limit_seconds=10)
+    _, _, items, _ = plan_from_saved(conn, sid, 7, now=datetime(2026, 9, 29, 0, 0), time_limit_seconds=10)
     essay = [i for i in items if i.title.startswith("Essay")]
     assert essay and all(i.day <= 3 for i in essay)  # due Fri 2 Oct = day 3 from Tue 29 Sep
 

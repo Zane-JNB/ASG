@@ -1,11 +1,11 @@
 from datetime import date, datetime, time
 from scheduler.add_with_fit import add_task_with_fit
 from scheduler.db import (
-    delete_extracted_task, get_extracted_tasks,
+    delete_extracted_task, delete_unreadable_item, get_extracted_tasks, get_unreadable_items,
     update_extracted_task, load_settings
 )
-from scheduler.models import DynamicTask, ExtractedTask, MINUTES_PER_SLOT   
-from scheduler.review import _confirm, _date, _describe, _hours
+from scheduler.models import DynamicTask, ExtractedTask, MINUTES_PER_SLOT, _check_time   
+from scheduler.review import _confirm, _describe, _due, _hours
 from scheduler.completion import finish_task, run_checkin   
 from scheduler.task_filter import describe_reminders   
 from scheduler.commute_menu import run_commute_menu
@@ -38,19 +38,26 @@ def _ask_field(ask, show, label: str, parse, default=None):
             show(f"  Invalid: {e}")
 
 
-def prompt_new_task(ask=input, show=print, today: date | None = None, session_cap: int | None = None) -> ExtractedTask:
-    today = today or date.today()
+def prompt_new_task(ask=input, show=print, today: date | None = None, session_cap: int | None = None,
+                    now: datetime | None = None) -> ExtractedTask:
+    today = today or (now.date() if now else date.today())
     session_cap = session_cap or _SESSION_CAP
 
-    def future_date(s: str) -> str:
-        d = _date(s)
-        if date.fromisoformat(d) < today:  # plans start from today, so an earlier date is never planned
+    def future_due(s: str) -> tuple[str, str | None]:
+        d, t = _due(s)
+        typed = ExtractedTask(title="x", date=d, due_time=t)  # midnight / rounding applied
+        if now is not None and typed.due_at() <= now:
+            raise ValueError(f"due {typed.due_label()} has already passed (plans run in 15-minute steps)")
+        if date.fromisoformat(typed.date) < today:  # plans start from today, so an earlier date is never planned
             raise ValueError("due date must be today or later")
-        return d
+        clock = s.strip().partition(" ")[2].strip()
+        if clock and _check_time(clock, end=True) != typed.due_time or typed.date != d:
+            show(f"  Saved as due {typed.due_label()} (plans run in 15-minute steps).")
+        return typed.date, typed.due_time
 
     title = _ask_field(ask, show, "title", str)
-    due = _ask_field(ask, show, "due date YYYY-MM-DD", future_date)
-    fields = {"title": title, "date": due}
+    due, due_time = _ask_field(ask, show, "due date YYYY-MM-DD (add HH:MM if it has a time)", future_due)
+    fields = {"title": title, "date": due, "due_time": due_time}
     for label, key, parse, default in (
         ("hours", "duration_slots", _hours, f"{_DEFAULT.duration_slots * 15 / 60:g}"),
         ("priority 1-5", "priority", _rating, _DEFAULT.priority),
@@ -69,7 +76,7 @@ def prompt_new_task(ask=input, show=print, today: date | None = None, session_ca
 
 def _sorted_tasks(conn, student_id):
     open_tasks = [(i, t) for i, t in get_extracted_tasks(conn, student_id) if not t.completed_at]  #   -- done = history
-    return sorted(open_tasks, key=lambda x: (x[1].date, x[1].title.lower()))
+    return sorted(open_tasks, key=lambda x: (x[1].date, x[1].due_slot(), x[1].title.lower()))
 
 def _ask_level(ask, show, prompt: str) -> int | None:   
     while True:
@@ -110,18 +117,35 @@ def _show_tasks(tasks, show, session_cap: int | None = None):
     for n, (_, t) in enumerate(tasks, 1):
         show(f"{n}. {_describe('Task', t, session_cap)}")
 
+def _unreadable_menu(conn, student_id, ask, show) -> None:
+    """Saved rows that no longer pass their checks are skipped by the planner; list them and
+    let the student delete one (nothing is deleted without asking)."""
+    bad = get_unreadable_items(conn, student_id)
+    if not bad:
+        show("Every saved item can be read.")
+        return
+    for n, (label, row_id, reason) in enumerate(bad, 1):
+        show(f"{n}. Saved {label} (id {row_id}): {reason}")
+    raw = ask("Number to delete (Enter to keep them all): ").strip()
+    if raw.isdigit() and 1 <= int(raw) <= len(bad):
+        label, row_id, _ = bad[int(raw) - 1]
+        delete_unreadable_item(conn, student_id, label, row_id)
+        show("Deleted.")
+    elif raw:
+        show(f"Enter a number between 1 and {len(bad)}.")
+
 def run_menu(conn, student_id, ask=input, show=print, today: date | None = None, 
              now: datetime | None = None) -> None:
     now = now or (datetime.combine(today, time(0, 0)) if today else datetime.now())
     today = today or now.date()   
     run_checkin(conn, student_id, now, ask, show)
     while True:
-        choice = ask("Tasks: [a]dd  [l]ist  [d]elete one  [f]inished  [c]heck-in  [s]plit setting  session [t]ime  [r]eminders  [m] commutes  [p] settings  [x] delete ALL open  [q]uit: ").strip().lower()
+        choice = ask("Tasks: [a]dd  [l]ist  [d]elete one  [f]inished  [c]heck-in  [s]plit setting  session [t]ime  [r]eminders  [m] commutes  [p] settings  [u]nreadable  [x] delete ALL open  [q]uit: ").strip().lower()
         if choice == "q":
             return
         if choice == "a":
             cap = load_settings(conn, student_id).default_max_session_slots
-            add_task_with_fit(conn, student_id, prompt_new_task(ask, show, today, cap), now, ask, show)
+            add_task_with_fit(conn, student_id, prompt_new_task(ask, show, today, cap, now), now, ask, show)
         elif choice == "l":
             _show_tasks(_sorted_tasks(conn, student_id), show)
         elif choice == "d":
@@ -183,6 +207,8 @@ def run_menu(conn, student_id, ask=input, show=print, today: date | None = None,
             run_commute_menu(conn, student_id, ask, show, today)
         elif choice == "p":                                        
             run_settings_menu(conn, student_id, ask, show)
+        elif choice == "u":
+            _unreadable_menu(conn, student_id, ask, show)
         elif choice == "x":
             open_tasks = _sorted_tasks(conn, student_id)  #   -- completed tasks stay as history
             count = len(open_tasks)
@@ -195,4 +221,4 @@ def run_menu(conn, student_id, ask=input, show=print, today: date | None = None,
             else:
                 show("Cancelled -- nothing deleted.")
         else:
-            show("Choose a, l, d, f, c, s, t, r, m, p, x or q.")
+            show("Choose a, l, d, f, c, s, t, r, m, p, u, x or q.")

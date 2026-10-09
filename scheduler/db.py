@@ -1,7 +1,8 @@
+import json
 import sqlite3
 from datetime import date, datetime, timezone
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 from scheduler.preference_policy import POLICY, Tier
 from scheduler.models import ProfileSettings, FixedBlock, DynamicTask, Exam, WeeklyPattern, DatedBlock, ExtractedTask, ExtractionResult,Commute
 
@@ -298,12 +299,63 @@ def _add_item(conn: sqlite3.Connection, table: str, student_id: int, item: BaseM
     conn.commit()
     return cur.lastrowid
 
-def _get_items(conn: sqlite3.Connection, table: str, student_id: int, model_cls: type) -> list:
-    """Return every item of this type for a student, oldest first, as (id, model_instance) pairs."""
+def _read_items(conn: sqlite3.Connection, table: str, student_id: int, model_cls: type, strict: bool = False):
+    """(readable, unreadable) for one table, oldest first. readable: (id, model_instance);
+    unreadable: (id, reason, raw json) for rows saved before a check existed (e.g. an impossible date).
+    Unreadable rows are left in the database untouched -- never dropped or rewritten.
+    strict: raise on the first unreadable row instead."""
     rows = conn.execute(
         f"SELECT id, data_json FROM {table} WHERE student_id = ? ORDER BY id ASC", (student_id,)
     ).fetchall()
-    return [(r[0], model_cls.model_validate_json(r[1])) for r in rows]
+    readable, unreadable = [], []
+    for row_id, data in rows:
+        try:
+            readable.append((row_id, model_cls.model_validate_json(data)))
+        except ValidationError as e:
+            if strict:
+                raise
+            unreadable.append((row_id, "; ".join(err["msg"] for err in e.errors()), data))
+    return readable, unreadable
+
+def _get_items(conn: sqlite3.Connection, table: str, student_id: int, model_cls: type) -> list:
+    """Every readable item of this type for a student, oldest first, as (id, model_instance)
+    pairs. In tables get_unreadable_items reports, unreadable rows are skipped; anywhere else
+    they still raise, so nothing is left out without a warning."""
+    return _read_items(conn, table, student_id, model_cls, strict=table not in _CHECKED_TABLES)[0]
+
+# label shown to the student -> (table, model): every table the planner reads.
+UNREADABLE_CHECKED = {
+    "class": ("weekly_patterns", WeeklyPattern),
+    "dated session": ("dated_blocks", DatedBlock),
+    "task": ("extracted_tasks", ExtractedTask),
+    "commute": ("commutes", Commute),
+}
+_CHECKED_TABLES = {table for table, _ in UNREADABLE_CHECKED.values()}
+
+def has_saved_items(conn: sqlite3.Connection, student_id: int) -> bool:
+    """Any saved class, dated session or task (readable or not), without parsing the rows."""
+    return any(conn.execute(f"SELECT 1 FROM {t} WHERE student_id = ? LIMIT 1", (student_id,)).fetchone()
+               for t in ("weekly_patterns", "dated_blocks", "extracted_tasks"))
+
+def _is_completed(data: str) -> bool:
+    try:
+        raw = json.loads(data)
+    except ValueError:
+        return False
+    return isinstance(raw, dict) and bool(raw.get("completed_at"))
+
+def get_unreadable_items(conn: sqlite3.Connection, student_id: int,
+                         include_completed: bool = True) -> list[tuple[str, int, str]]:
+    """(label, row id, reason) for every saved row that no longer passes its model's checks.
+    include_completed=False leaves out finished tasks: they are history and never planned."""
+    return [(label, row_id, reason)
+            for label, (table, model) in UNREADABLE_CHECKED.items()
+            for row_id, reason, data in _read_items(conn, table, student_id, model)[1]
+            if include_completed or not _is_completed(data)]
+
+def delete_unreadable_item(conn: sqlite3.Connection, student_id: int, label: str, item_id: int) -> bool:
+    """Delete one unreadable row the student chose to remove (scoped to this student)."""
+    return _delete_item(conn, UNREADABLE_CHECKED[label][0], student_id, item_id)
 
 def _delete_item(conn: sqlite3.Connection, table: str, student_id: int, item_id: int) -> bool:
     """Delete one item by id, scoped to this student (so one student can't delete another's row)."""
@@ -430,7 +482,7 @@ def replace_extraction(conn, student_id: int, result: ExtractionResult) -> dict:
     """Save a reviewed import, all-or-nothing. Fixed blocks are REPLACED, tasks are ADDED:
     weekly patterns and dated blocks are each replaced only if the import contains some
     (so an exam sheet can't wipe your classes); tasks are appended, skipping exact repeats
-    (same title and due date, ignoring case). Returns counts of what was written."""
+    (same title and due date, ignoring case; a different due time is still a repeat). Returns counts of what was written."""
     if not (result.weekly_patterns or result.dated_blocks or result.tasks):
         raise ValueError("nothing was extracted; existing data left untouched")
 
@@ -450,7 +502,11 @@ def replace_extraction(conn, student_id: int, result: ExtractionResult) -> dict:
                     insert(table, item)
                 summary[key] = len(items)
 
-        seen = {(t.title.strip().lower(), t.date) for _, t in get_extracted_tasks(conn, student_id)}
+        seen = set()  # from the raw rows, so an unreadable saved task still counts as a repeat
+        for (data,) in conn.execute("SELECT data_json FROM extracted_tasks WHERE student_id = ?", (student_id,)):
+            raw = json.loads(data)
+            if isinstance(raw, dict):
+                seen.add((str(raw.get("title", "")).strip().lower(), raw.get("date")))
         for task in result.tasks:  #   -- tasks are appended, never replaced
             key = (task.title.strip().lower(), task.date)
             if key in seen:

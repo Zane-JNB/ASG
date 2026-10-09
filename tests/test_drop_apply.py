@@ -1,4 +1,4 @@
-from datetime import date, timedelta
+from datetime import date, datetime, time, timedelta
 
 import pytest
 
@@ -12,7 +12,8 @@ from scheduler.drop_apply import apply_drop_choice
 from scheduler.drop_review import _dont_add_fallback
 from scheduler.dropping import propose_drops
 from scheduler.models import DatedBlock, ExtractedTask, PlanAnchor
-from scheduler.planner import plan_from_saved, planned_tasks
+from scheduler.fit_check import planned_tasks
+from scheduler.planner import plan_from_saved
 
 START = date(2026, 10, 5)  # a Monday
 
@@ -137,7 +138,7 @@ def test_replanning_after_apply_fits_everything_remaining(conn, sid):
     essay = _task("Essay", 4, 4)
     planned, report = _propose(conn, sid, essay)
     apply_drop_choice(conn, sid, report.proposals[0], planned, essay)
-    anchor, fixed, items, warnings = plan_from_saved(conn, sid, 1, start_date=START, time_limit_seconds=10)
+    anchor, fixed, items, warnings = plan_from_saved(conn, sid, 1, now=datetime.combine(START, time(0, 0)), time_limit_seconds=10)
     assert not [w for w in warnings if w.kind == "task_unscheduled"]
     assert any(i.title.startswith("Essay") for i in items)
 

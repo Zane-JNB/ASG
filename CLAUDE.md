@@ -63,11 +63,12 @@ Every backend uses forced tool-calling with a JSON schema that comes from the py
 - 15-minute slots, 96/day, one continuous multi-day axis (`day * 96 + slot`). Day 0 = `PlanAnchor.start_date`: rolling, rebuilt every run, never stored. Sleep/bedtime may run past 96 (`end_slot` exclusive, max 192) to cross midnight. Use `time_to_slot` / `slot_to_time`.
 - Two layers: stored calendar-based (`WeeklyPattern`, `DatedBlock`, `ExtractedTask`, `Commute`) vs solver-facing day-indexed (`FixedBlock`, `DynamicTask`, `SleepRule`). Convert only via `calendar_utils.build_plan_inputs` / `commutes.expand_commutes`.
 - Every DB query is scoped by `student_id`. Schema changes are additive via `SCHEMA` + `_migrate`. Never drop or rewrite student data.
-- `plan_from_saved` uses the same "now"-based window as the fit check (`build_fit_inputs`) by default; a fixed window only when `start_date` is passed. Verified; don't re-fix.
+- `plan_from_saved` always plans from now, through `build_fit_inputs` (the fit check's window). There is no fixed start-date mode.
+- Saved rows that fail their model checks are skipped, never dropped or rewritten, and get a hard `saved_row_unreadable` warning (`db.get_unreadable_items`); the student deletes them via `[u]` in `manage_tasks.py`.
 
 **Scheduling rules**
 - Buffers: mandatory between task-task, task-block, block-task; not between two fixed blocks. After a commute: normal buffer. Before a commute: none.
-- Sleep and deadlines are never silently traded away. Missing minimum sleep, skipping a night, or missing a deadline is a hard warning. Other drops are soft. Open tasks past their due date get a hard `task_overdue` warning (`fit_check.task_date_warnings`).
+- Sleep and deadlines are never silently traded away. Missing minimum sleep, skipping a night, or missing a deadline is a hard warning. Other drops are soft. Open tasks past their due date and optional `due_time` (rounded down to its slot, like the solver deadline) get a hard `task_overdue` warning (`fit_check._planned_and_overdue`).
 - The plan window's last night must end by `SleepRule.latest_wake`: the first class/commute the morning after the window, minus `wake_buffer_slots` (default 1h, student-editable). That morning is only looked at (`fit_check.next_morning_wake`), never planned, so the window doesn't grow.
 - Objective order (highest cost first): sleep minimum > sleep target > task fit/priority > same-day spread > bedtime drift.
 - Commutes are fixed blocks with priority over tasks. If one overlaps another block, tell the student and ask; never silently drop it.

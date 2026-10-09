@@ -1,7 +1,9 @@
 import math
 from datetime import date, datetime 
 from pydantic import ValidationError  
-from scheduler.models import ExtractedTask, ExtractionResult, WeeklyPattern, DatedBlock, MINUTES_PER_SLOT, time_to_slot 
+from scheduler.models import (
+    ExtractedTask, ExtractionResult, WeeklyPattern, DatedBlock, MINUTES_PER_SLOT, _check_due_time, time_to_slot,
+) 
 
 
 def hours_to_slots(hours: float) -> int:   
@@ -43,6 +45,15 @@ def _time(s: str) -> str:  #   -- "9:00" -> "09:00"; ValueError if not a real ti
     return datetime.strptime(s, "%H:%M").strftime("%H:%M")
 
 
+def _due(s: str) -> tuple[str, str | None]:  #   -- "2026-10-02" or "2026-10-02 10:00"
+    """(date, due time or None). A date alone means due at the end of that day."""
+    day, _, clock = s.strip().partition(" ")
+    clock = clock.strip()
+    if not clock:
+        return _date(day), None
+    return _date(day), _check_due_time(clock)
+
+
 def _date(s: str) -> str:  #   -- the models store dates as plain strings, so check them here
     return date.fromisoformat(s).isoformat()
 
@@ -64,7 +75,7 @@ _EDIT_FIELDS = {
                     ("start HH:MM", "start_time", _time), ("end HH:MM", "end_time", _time)],
     DatedBlock: [("title", "title", str), ("date YYYY-MM-DD", "date", _date),
                  ("start HH:MM", "start_time", _time), ("end HH:MM", "end_time", _time)],
-    ExtractedTask: [("title", "title", str), ("due date YYYY-MM-DD", "date", _date),
+    ExtractedTask: [("title", "title", str), ("due YYYY-MM-DD [HH:MM]", "date", _due),
                     ("hours", "duration_slots", _hours), ("priority 1-5", "priority", int),
                     ("difficulty 1-5", "difficulty", int)],
 }
@@ -72,6 +83,8 @@ _EDIT_FIELDS = {
 
 def _current(item, key: str):   
     value = getattr(item, key)
+    if key == "date" and isinstance(item, ExtractedTask):
+        return item.due_label()
     return f"{value * MINUTES_PER_SLOT / 60:g}" if key == "duration_slots" else value
 
 
@@ -84,7 +97,7 @@ def _describe(kind: str, item, session_cap: int | None = None) -> str:
             note = ", can be split"
         else:
             note = ""
-        return f"{item.title} due {item.date} ({hours:g}h, priority {item.priority}, difficulty {item.difficulty}{note})"
+        return f"{item.title} due {item.due_label()} ({hours:g}h, priority {item.priority}, difficulty {item.difficulty}{note})"
     when = f"{item.day}" if kind == "Weekly" else f"{item.date}"
     return f"{item.title} -- {when} {item.start_time}-{item.end_time}"
 
@@ -96,7 +109,11 @@ def _edit_item(item, ask, show, session_cap: int | None):
             changes = {}
             for label, key, parse in _EDIT_FIELDS[type(item)]:
                 raw = ask(f"  {label} [{_current(item, key)}]: ").strip()
-                if raw:
+                if raw and parse is _due:  #   -- one answer sets the date and the (optional) time
+                    changes["date"], changes["due_time"] = parse(raw)
+                    if item.due_time and changes["due_time"] is None:
+                        show(f"  Due time {item.due_time} removed: now due at the end of that day.")
+                elif raw:
                     changes[key] = parse(raw)
             if isinstance(item, ExtractedTask) and session_cap:  #   -- only long tasks can be split
                 if changes.get("duration_slots", item.duration_slots) > session_cap:

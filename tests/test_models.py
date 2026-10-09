@@ -69,3 +69,14 @@ def test_bad_dates_are_rejected(bad):
 
 def test_dates_are_stored_in_one_sortable_form():
     assert _ET(title="x", date="20261005").date == "2026-10-05"
+
+
+def test_times_are_stored_zero_padded_so_they_sort():
+    p = _WP(title="x", day="Mon", start_time="9:30", end_time="9:45")
+    assert (p.start_time, p.end_time) == ("09:30", "09:45")
+    b = _DB(title="x", date="2026-10-05", start_time="8:00", end_time="10:00")
+    assert sorted([b.start_time, "10:00"]) == ["08:00", "10:00"]
+
+def test_non_ascii_digits_are_rejected():
+    with pytest.raises(ValueError):
+        _WP(title="x", day="Mon", start_time="٩:30", end_time="10:00")

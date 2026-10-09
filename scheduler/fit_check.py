@@ -1,43 +1,50 @@
 import math
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, date
+from datetime import datetime, timedelta
 from scheduler.commutes import commute_overlaps, expand_commutes, overlap_warnings
 from scheduler.calendar_utils import build_plan_inputs, extracted_task_to_dynamic_task, find_overlaps
-from scheduler.db import get_commutes, get_dated_blocks, get_weekly_patterns, load_settings, get_plan_cuts, get_extracted_tasks
+from scheduler.db import (
+    get_commutes, get_dated_blocks, get_extracted_tasks, get_plan_cuts, get_unreadable_items, get_weekly_patterns,
+    load_settings,
+)
 from scheduler.models import (
     DynamicTask, ExtractedTask, FixedBlock, MINUTES_PER_SLOT, PlanAnchor, ProfileSettings,
     SLOTS_PER_DAY, ScheduleWarning, SleepRule, slot_to_time,)
 
-def planned_tasks(conn, student_id: int, anchor: PlanAnchor):   
-    """[(saved task id, DynamicTask)] with plan cuts applied. Saved tasks are never changed."""
+def _planned_and_overdue(conn, student_id: int, anchor: PlanAnchor, now: datetime, session: int):
+    """One pass over the saved open tasks: ([(saved task id, DynamicTask)] with plan cuts
+    applied, hard task_overdue warnings). A task whose due time is at or before `now` is left
+    out of the plan and warned about. Saved tasks are never changed."""
     cuts = get_plan_cuts(conn, student_id)
-    session = load_settings(conn, student_id).default_max_session_slots
-     
-    result = []
+    planned, warnings = [], []
     for task_id, saved in get_extracted_tasks(conn, student_id):
         if saved.completed_at:
-            continue   
-        try:
-            task = extracted_task_to_dynamic_task(saved, anchor.start_date, session)
-        except ValueError:  # due before the plan starts
             continue
-        remaining = task.duration_slots - cuts.get(task_id, 0)
-        if remaining > 0:
-            result.append((task_id, task.model_copy(update={"duration_slots": remaining, "saved_id": task_id})))
-    return result
-
-def task_date_warnings(conn, student_id: int, today: date) -> list[ScheduleWarning]:
-    """Hard warnings for open tasks planned_tasks leaves out because they are past due.
-    (A saved date is always a real date: ExtractedTask checks it.)"""
-    warnings = []
-    for _, saved in get_extracted_tasks(conn, student_id):
-        if saved.completed_at:
-            continue
-        if date.fromisoformat(saved.date) < today:
+        if saved.due_at() <= now:
             warnings.append(ScheduleWarning(
                 severity="hard", kind="task_overdue",
-                message=f"'{saved.title}' was due {saved.date} and isn't marked done. Mark it finished or change its date."))
-    return warnings
+                message=f"'{saved.title}' was due {saved.due_label()} and isn't marked done. Mark it finished or change its date."))
+            continue
+        task = extracted_task_to_dynamic_task(saved, anchor.start_date, session)
+        remaining = task.duration_slots - cuts.get(task_id, 0)
+        if remaining > 0:
+            planned.append((task_id, task.model_copy(update={"duration_slots": remaining, "saved_id": task_id})))
+    return planned, warnings
+
+def planned_tasks(conn, student_id: int, anchor: PlanAnchor):
+    """[(saved task id, DynamicTask)] with plan cuts applied, as at the start of the anchor's
+    first day. Saved tasks are never changed."""
+    start = datetime.combine(anchor.start_date, datetime.min.time())
+    session = load_settings(conn, student_id).default_max_session_slots
+    return _planned_and_overdue(conn, student_id, anchor, start, session)[0]
+
+def unreadable_warnings(conn, student_id: int) -> list[ScheduleWarning]:
+    """Hard warnings for saved rows that no longer pass their checks; they are left out of the plan."""
+    return [ScheduleWarning(
+                severity="hard", kind="saved_row_unreadable",
+                message=f"A saved {label} (id {row_id}) can't be read ({reason}) and is left out of the plan. "
+                        "Delete it in manage_tasks.py ([u]) and add it again.")
+            for label, row_id, reason in get_unreadable_items(conn, student_id, include_completed=False)]
 
 def next_morning_wake(conn, student_id: int, anchor: PlanAnchor, settings: ProfileSettings) -> int | None:
     """Latest wake-up for the window's last night (slots from that night's day start): the first
@@ -112,7 +119,8 @@ def build_fit_inputs(conn, student_id: int, now: datetime,
     def from_now(t: DynamicTask) -> DynamicTask:
         return starts_from(t, now)
 
-    planned = [(i, from_now(t)) for i, t in planned_tasks(conn, student_id, day0)]
+    open_tasks, overdue_warnings = _planned_and_overdue(conn, student_id, day0, now, settings.default_max_session_slots)
+    planned = [(i, from_now(t)) for i, t in open_tasks]
     new_dyn = from_now(extracted_task_to_dynamic_task(new_task, today, settings.default_max_session_slots)) if new_task else None
 
     tasks = [t for _, t in planned] + ([new_dyn] if new_dyn else [])
@@ -143,5 +151,5 @@ def build_fit_inputs(conn, student_id: int, now: datetime,
                                               "preferred_bed": max(rule0.preferred_bed, bed),
                                               "latest_bed": max(rule0.latest_bed, bed)})
     sleep_rules = with_latest_wake(sleep_rules, next_morning_wake(conn, student_id, anchor, settings))
-    warnings = commute_warnings + task_date_warnings(conn, student_id, today)
+    warnings = commute_warnings + overdue_warnings + unreadable_warnings(conn, student_id)
     return FitInputs(anchor, fixed, planned, new_dyn, sleep_rules, settings, warnings)  
