@@ -67,7 +67,8 @@ Every backend uses forced tool-calling with a JSON schema that comes from the py
 
 **Scheduling rules**
 - Buffers: mandatory between task-task, task-block, block-task; not between two fixed blocks. After a commute: normal buffer. Before a commute: none.
-- Sleep and deadlines are never silently traded away. Missing minimum sleep, skipping a night, or missing a deadline is a hard warning. Other drops are soft.
+- Sleep and deadlines are never silently traded away. Missing minimum sleep, skipping a night, or missing a deadline is a hard warning. Other drops are soft. Open tasks past their due date get a hard `task_overdue` warning (`fit_check.task_date_warnings`).
+- The plan window's last night must end by `SleepRule.latest_wake`: the first class/commute the morning after the window, minus `wake_buffer_slots` (default 1h, student-editable). That morning is only looked at (`fit_check.next_morning_wake`), never planned, so the window doesn't grow.
 - Objective order (highest cost first): sleep minimum > sleep target > task fit/priority > same-day spread > bedtime drift.
 - Commutes are fixed blocks with priority over tasks. If one overlaps another block, tell the student and ask; never silently drop it.
 - Splitting a task is the student's choice (per-task `splittable`), never automatic.
