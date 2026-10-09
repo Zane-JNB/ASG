@@ -1,6 +1,6 @@
 import pytest
 
-from scheduler.llm_backends import call_llm
+from scheduler.llm_backends import BadModelOutput, call_llm
 
 
 SCHEMA = {"type": "object", "properties": {"summary": {"type": "string"}}}
@@ -38,10 +38,10 @@ def test_groq_backend_wraps_decommissioned_model_error(monkeypatch):
         call_llm("system", "text", "tool", SCHEMA)
 
 
-def test_groq_backend_degrades_gracefully_on_tool_schema_mismatch(monkeypatch):
+def test_groq_backend_raises_bad_model_output_on_tool_schema_mismatch(monkeypatch):
     """When the model's tool call doesn't match our schema (wrong field names, missing
-    fields), Groq rejects it server-side with a 400/tool_use_failed. That should come
-    back as zero proposals, not crash the whole reflection. Body shape here is the
+    fields), Groq rejects it server-side with a 400/tool_use_failed. That must raise
+    BadModelOutput (a RuntimeError), not pretend the model proposed nothing. Body shape here is the
     UNWRAPPED one Groq actually sends (no outer "error" key) -- confirmed via a live
     failure, not assumed.
     """
@@ -67,15 +67,14 @@ def test_groq_backend_degrades_gracefully_on_tool_schema_mismatch(monkeypatch):
 
     monkeypatch.setattr("openai.OpenAI", FakeClient)
 
-    result = call_llm("system", "text", "tool", SCHEMA)
-    assert result["proposals"] == []
-    assert "didn't match" in result["summary"]
+    with pytest.raises(BadModelOutput, match="didn't match"):
+        call_llm("system", "text", "tool", SCHEMA)
 
 
-def test_groq_backend_degrades_gracefully_on_wrapped_error_shape_too(monkeypatch):
+def test_groq_backend_raises_bad_model_output_on_wrapped_error_shape_too(monkeypatch):
     """Some SDK/proxy paths wrap the error body in an outer "error" key instead of
     sending it flat. Both shapes must work -- this guards the wrapped one specifically,
-    since test_groq_backend_degrades_gracefully_on_tool_schema_mismatch above already
+    since test_groq_backend_raises_bad_model_output_on_tool_schema_mismatch above already
     covers the real unwrapped shape.
     """
     import httpx
@@ -100,14 +99,13 @@ def test_groq_backend_degrades_gracefully_on_wrapped_error_shape_too(monkeypatch
 
     monkeypatch.setattr("openai.OpenAI", FakeClient)
 
-    result = call_llm("system", "text", "tool", SCHEMA)
-    assert result["proposals"] == []
-    assert "didn't match" in result["summary"]
+    with pytest.raises(BadModelOutput, match="didn't match"):
+        call_llm("system", "text", "tool", SCHEMA)
 
 
 def test_groq_backend_reraises_other_bad_request_errors(monkeypatch):
     """A 400 that ISN'T the tool-schema-mismatch case (bad key format, etc.) should still
-    surface normally -- only tool_use_failed gets the soft-degrade treatment.
+    surface normally -- only tool_use_failed becomes BadModelOutput.
     """
     import httpx
     from openai import BadRequestError
@@ -164,9 +162,8 @@ def test_groq_backend_handles_error_via_duck_typing_not_isinstance(monkeypatch):
 
     monkeypatch.setattr("openai.OpenAI", FakeClient)
 
-    result = call_llm("system", "text", "tool", SCHEMA)
-    assert result["proposals"] == []
-    assert "didn't match" in result["summary"]
+    with pytest.raises(BadModelOutput, match="didn't match"):
+        call_llm("system", "text", "tool", SCHEMA)
 
 
 def test_groq_backend_reraises_non_api_errors_untouched(monkeypatch):
@@ -320,11 +317,42 @@ def test_groq_reply_without_a_tool_call_is_a_clear_runtime_error(monkeypatch, to
     from scheduler.llm_backends import call_vision_llm
     _groq_replying(monkeypatch, tool_calls)
     env_var = "GROQ_VISION_MODEL" if vision else "GROQ_MODEL"
-    with pytest.raises(RuntimeError, match=f"structured answer.*{env_var}"):
+    with pytest.raises(BadModelOutput, match=f"structured answer.*{env_var}"):
         if vision:
             call_vision_llm("system", "text", "QUJD", "image/png", "extract", SCHEMA)
         else:
             call_llm("system", "text", "tool", SCHEMA)
+
+
+@pytest.mark.parametrize("arguments", ["not json", "[1, 2]"])
+def test_groq_tool_call_with_bad_arguments_is_bad_model_output(monkeypatch, arguments):
+    from types import SimpleNamespace
+    _groq_replying(monkeypatch, [SimpleNamespace(function=SimpleNamespace(arguments=arguments))])
+    with pytest.raises(BadModelOutput):
+        call_llm("system", "text", "tool", SCHEMA)
+
+
+def test_groq_vision_tool_use_failed_is_bad_model_output(monkeypatch):
+    from scheduler.llm_backends import call_vision_llm
+    class ToolUseFailed(Exception):
+        status_code = 400
+        body = {"code": "tool_use_failed"}
+    class FakeClient:
+        def __init__(self, *a, **kw):
+            def create(**kwargs):
+                raise ToolUseFailed()
+            self.chat = type("Chat", (), {"completions": type("C", (), {"create": staticmethod(create)})()})()
+    monkeypatch.setenv("GROQ_API_KEY", "fake-key-for-test")
+    monkeypatch.setattr("openai.OpenAI", FakeClient)
+    with pytest.raises(BadModelOutput, match="GROQ_VISION_MODEL"):
+        call_vision_llm("system", "text", "QUJD", "image/png", "extract", SCHEMA)
+
+
+def test_rate_limit_is_not_bad_model_output(monkeypatch):
+    _groq_raising(monkeypatch, 429)
+    with pytest.raises(RuntimeError) as info:
+        call_llm("system", "text", "tool", SCHEMA)
+    assert not isinstance(info.value, BadModelOutput)
 
 
 def test_groq_error_body_with_a_string_error_still_maps_to_a_clear_message(monkeypatch):

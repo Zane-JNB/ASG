@@ -46,3 +46,26 @@ def test_earliest_start_defaults_to_none():
     task = DynamicTask(title="x", duration_slots=4, priority=1, difficulty=1)
     assert task.earliest_start_day is None
 
+
+
+# ---- extracted dates and times are checked before they can be saved ----
+from scheduler.models import DatedBlock as _DB, ExtractedTask as _ET, WeeklyPattern as _WP
+
+@pytest.mark.parametrize("start,end", [("24:00", "25:00"), ("9.30", "10:00"), ("09:60", "10:00"), ("09:00", "24:15")])
+def test_bad_times_are_rejected(start, end):
+    with pytest.raises(ValueError):
+        _WP(title="x", day="Mon", start_time=start, end_time=end)
+
+def test_a_class_may_end_at_midnight():
+    p = _WP(title="Late lab", day="Mon", start_time="22:00", end_time="24:00")
+    assert time_to_slot(p.end_time) == 96
+
+@pytest.mark.parametrize("bad", ["Oct 12", "2026-02-30", ""])
+def test_bad_dates_are_rejected(bad):
+    with pytest.raises(ValueError):
+        _ET(title="x", date=bad)
+    with pytest.raises(ValueError):
+        _DB(title="x", date=bad, start_time="09:00", end_time="10:00")
+
+def test_dates_are_stored_in_one_sortable_form():
+    assert _ET(title="x", date="20261005").date == "2026-10-05"

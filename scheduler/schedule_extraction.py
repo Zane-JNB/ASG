@@ -44,6 +44,20 @@ def _sort_result(result: ExtractionResult) -> ExtractionResult:
     return ExtractionResult(weekly_patterns=weekly_patterns, dated_blocks=dated_blocks, tasks=tasks)
 
 
+def extraction_from_dict(raw: dict) -> ExtractionResult:
+    """Validate each item on its own: one malformed entry (bad time, impossible date, not even
+    an object) is dropped without discarding every other, otherwise valid, item."""
+    found = {}
+    for key, model in (("weekly_patterns", WeeklyPattern), ("dated_blocks", DatedBlock), ("tasks", ExtractedTask)):
+        found[key] = []
+        for item in raw.get(key) or []:
+            try:
+                found[key].append(model(**item))
+            except (ValidationError, TypeError):
+                continue
+    return ExtractionResult(**found)
+
+
 def extract_schedule(file_bytes: bytes, media_type: str, client=None) -> ExtractionResult:
     """Extract weekly patterns, dated sessions, and dated tasks from an uploaded image or PDF.
 
@@ -61,28 +75,4 @@ def extract_schedule(file_bytes: bytes, media_type: str, client=None) -> Extract
                 image_base64=image_base64, media_type=media_type,
                 tool_name="extract_schedule", tool_schema=schema)
     raw = _groq_vision_call(**args, client=client) if client is not None else call_vision_llm(**args)
-
-    # validate each item individually -- one malformed entry (bad time format, ambiguous
-    # date) shouldn't discard every other, otherwise valid, item the model found
-    weekly_patterns = []
-    for item in raw.get("weekly_patterns", []):
-        try:
-            weekly_patterns.append(WeeklyPattern(**item))
-        except ValidationError:
-            continue
-
-    dated_blocks = []
-    for item in raw.get("dated_blocks", []):
-        try:
-            dated_blocks.append(DatedBlock(**item))
-        except ValidationError:
-            continue
-
-    tasks = []
-    for item in raw.get("tasks", []):
-        try:
-            tasks.append(ExtractedTask(**item))
-        except ValidationError:
-            continue
-
-    return _sort_result(ExtractionResult(weekly_patterns=weekly_patterns, dated_blocks=dated_blocks, tasks=tasks))
+    return _sort_result(extraction_from_dict(raw))

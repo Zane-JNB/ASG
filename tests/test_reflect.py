@@ -151,3 +151,14 @@ def test_a_real_bug_still_raises(monkeypatch, conn):
 def test_every_reflection_outcome_has_a_status_line():
     assert {OUTCOME_APPLIED, OUTCOME_PENDING, OUTCOME_EVIDENCE,
             OUTCOME_AT_LIMIT, OUTCOME_IGNORED, OUTCOME_NONE} <= set(reflect._STATUS)
+
+def test_model_answering_in_the_wrong_format_offers_a_retry_and_logs_nothing(monkeypatch, capsys, conn):
+    from scheduler import llm_backends
+    def wrong_format(*a, **kw):
+        raise llm_backends.BadModelOutput("Groq model 'x' didn't match the expected answer format this time.")
+    monkeypatch.setitem(llm_backends._BACKENDS, "groq", wrong_format)
+    feed_inputs(monkeypatch, ["y", "Zane", "felt rushed today", ""])
+    reflect.main()
+    out = capsys.readouterr().out
+    assert "didn't match" in out and "Try again? Your text is kept." in out
+    assert get_reflections(conn, get_or_create_student(conn, "Zane")) == []
