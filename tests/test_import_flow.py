@@ -292,3 +292,154 @@ def test_partial_pdf_can_still_be_saved_on_yes(env, monkeypatch, tmp_path):
     conn, sid, _, _ = env
     ok, _, _ = _partial_pdf_import(env, monkeypatch, tmp_path, YES + KEEP_ALL + ["y"])
     assert ok and _titles(conn, sid) == (["Read"], ["Lab"], ["HW"])
+
+
+# ---- fix/import-partial: the replay copy remembers which pages weren't read ----
+
+def _one_page_pdf(tmp_path):
+    from reportlab.lib.pagesizes import letter
+    from reportlab.pdfgen import canvas
+    pdf_path = tmp_path / "p.pdf"
+    c = canvas.Canvas(str(pdf_path), pagesize=letter)
+    c.drawString(72, 700, "x"); c.showPage(); c.save()
+    return str(pdf_path)
+
+def _pdf_reads(monkeypatch, result, failed):
+    from scheduler.pdf_extraction import PartialExtraction
+    def partly(file_bytes, call_text_llm=None, call_vision=None):
+        raise PartialExtraction(result, failed, RuntimeError("rate limit"))
+    monkeypatch.setattr("scheduler.import_flow.extract_schedule_from_pdf", partly)
+
+def _replay_with(tmp_path, failed_json):
+    saved = tmp_path / "saved.json"
+    saved.write_text(_extraction().model_dump_json()[:-1] + f', "failed_pages": {failed_json}}}', encoding="utf-8")
+    return str(saved)
+
+def test_replaying_a_partial_import_still_warns_it_is_incomplete(env, monkeypatch, tmp_path):
+    conn, sid, _, cache = env
+    _partial_pdf_import(env, monkeypatch, tmp_path, YES + KEEP_ALL + [""])  # declined: nothing saved
+    ask = Recorder(KEEP_ALL + [""])
+    ok = run_import(conn, sid, cache, ask=ask, show=lambda _: None, cache_path=str(tmp_path / "c2.json"))
+    assert not ok and _titles(conn, sid) == ([], [], [])
+    assert "Page(s) 2, 3 weren't read" in ask.prompts[-1]
+
+def test_replay_copy_of_a_full_import_asks_nothing_extra(env, tmp_path):
+    conn, sid, img, cache = env
+    run_import(conn, sid, str(img), ask=Recorder(YES + KEEP_ALL), show=lambda _: None,
+               extractor=lambda d, m: _extraction(), cache_path=cache)
+    ask = Recorder(KEEP_ALL)
+    assert run_import(conn, sid, cache, ask=ask, show=lambda _: None, cache_path=str(tmp_path / "c2.json"))
+    assert len(ask.prompts) == 1  # only the review
+
+@pytest.mark.parametrize("failed", ['"2"', '["two"]', "{}", "[true]", "[0]", "[-1]", "[1.5]"])
+def test_replay_with_bad_failed_pages_is_reported(env, tmp_path, failed):
+    conn, sid, _, cache = env
+    shown = []
+    assert not run_import(conn, sid, _replay_with(tmp_path, failed), ask=Recorder([]), show=shown.append,
+                          cache_path=cache)
+    assert any("not a valid saved extraction" in s for s in shown)
+
+def test_replay_with_null_failed_pages_is_a_normal_replay(env, tmp_path):
+    conn, sid, _, cache = env
+    ask = Recorder(KEEP_ALL)
+    assert run_import(conn, sid, _replay_with(tmp_path, "null"), ask=ask, show=lambda _: None, cache_path=cache)
+    assert len(ask.prompts) == 1
+
+def test_replay_failed_pages_are_sorted_and_unique(env, tmp_path):
+    conn, sid, _, cache = env
+    ask = Recorder(KEEP_ALL + [""])
+    run_import(conn, sid, _replay_with(tmp_path, "[3, 2, 2]"), ask=ask, show=lambda _: None, cache_path=cache)
+    assert "Page(s) 2, 3 weren't read" in ask.prompts[-1]
+
+def test_declining_without_a_replay_copy_does_not_promise_one(env, monkeypatch, tmp_path):
+    conn, sid, _, _ = env
+    _pdf_reads(monkeypatch, _extraction("Read"), [2])
+    shown = []
+    assert not run_import(conn, sid, _one_page_pdf(tmp_path), ask=Recorder(YES + KEEP_ALL + [""]),
+                          show=shown.append, cache_path=str(tmp_path / "no_such_dir" / "cache.json"))
+    assert not any("kept in '" in s for s in shown)
+
+def test_nothing_found_but_pages_failed_says_so(env, monkeypatch, tmp_path):
+    conn, sid, _, cache = env
+    _pdf_reads(monkeypatch, ExtractionResult(), [2, 3])
+    shown = []
+    assert not run_import(conn, sid, _one_page_pdf(tmp_path), ask=Recorder(YES), show=shown.append, cache_path=cache)
+    assert any("page(s) 2, 3 could not be read" in s for s in shown)  # from the warning, shown once
+    assert any("Nothing was found in the pages that were read" in s for s in shown)
+
+def test_a_wrongly_shaped_image_answer_fails_and_keeps_the_old_replay_copy(env):
+    from scheduler.llm_backends import BadModelOutput
+    conn, sid, img, cache = env
+    run_import(conn, sid, str(img), ask=Recorder(YES + KEEP_ALL), show=lambda _: None,
+               extractor=lambda d, m: _extraction("Good"), cache_path=cache)
+    def bad(data, media_type):
+        raise BadModelOutput("The model sent 'tasks' in the wrong shape (int). Try again.")
+    shown = []
+    assert not run_import(conn, sid, str(img), ask=Recorder(YES), show=shown.append, extractor=bad, cache_path=cache)
+    assert any("Extraction failed" in s and "Try again" in s for s in shown)
+    assert ExtractionResult.model_validate_json(open(cache, encoding="utf-8").read()).weekly_patterns[0].title == "Good"
+
+
+def test_declining_a_replay_says_the_replayed_file_still_holds_it(env, tmp_path):
+    conn, sid, _, cache = env
+    path = _replay_with(tmp_path, "[2]")
+    shown = []
+    run_import(conn, sid, path, ask=Recorder(KEEP_ALL + [""]), show=shown.append, cache_path=cache)
+    assert any(f"kept in '{path}'" in s for s in shown)
+
+def test_a_replay_gives_a_plain_extraction_result(env, tmp_path, monkeypatch):
+    conn, sid, _, cache = env
+    seen = []
+    import scheduler.import_flow as flow
+    real = flow.review_extraction
+    monkeypatch.setattr(flow, "review_extraction", lambda result, **kw: seen.append(type(result)) or real(result, **kw))
+    run_import(conn, sid, _replay_with(tmp_path, "[2]"), ask=Recorder(KEEP_ALL + [""]), show=lambda _: None,
+               cache_path=cache)
+    assert seen == [ExtractionResult]
+
+
+def test_a_failed_replay_copy_write_keeps_the_old_copy(env, monkeypatch):
+    conn, sid, img, cache = env
+    run_import(conn, sid, str(img), ask=Recorder(YES + KEEP_ALL), show=lambda _: None,
+               extractor=lambda d, m: _extraction("Old"), cache_path=cache)
+    import scheduler.import_flow as flow
+    def fail_replace(src, dst):
+        raise OSError("disk full")
+    monkeypatch.setattr(flow.os, "replace", fail_replace)
+    run_import(conn, sid, str(img), ask=Recorder(YES + KEEP_ALL), show=lambda _: None,
+               extractor=lambda d, m: _extraction("New"), cache_path=cache)
+    assert ExtractionResult.model_validate_json(open(cache, encoding="utf-8").read()).weekly_patterns[0].title == "Old"
+
+
+def test_a_failed_replay_copy_write_leaves_no_temp_file(env, monkeypatch):
+    import os
+    conn, sid, img, cache = env
+    import scheduler.import_flow as flow
+    def fail_replace(src, dst):
+        raise OSError("locked by sync")
+    monkeypatch.setattr(flow.os, "replace", fail_replace)
+    run_import(conn, sid, str(img), ask=Recorder(YES + KEEP_ALL), show=lambda _: None,
+               extractor=lambda d, m: _extraction(), cache_path=cache)
+    assert not os.path.exists(cache + ".tmp")
+
+
+def test_a_failed_replay_copy_write_warns_the_old_copy_is_from_earlier(env, monkeypatch):
+    conn, sid, img, cache = env
+    run_import(conn, sid, str(img), ask=Recorder(YES + KEEP_ALL), show=lambda _: None,
+               extractor=lambda d, m: _extraction("Old"), cache_path=cache)
+    import scheduler.import_flow as flow
+    def fail_replace(src, dst):
+        raise OSError("locked by sync")
+    monkeypatch.setattr(flow.os, "replace", fail_replace)
+    shown = []
+    run_import(conn, sid, str(img), ask=Recorder(YES + KEEP_ALL), show=shown.append,
+               extractor=lambda d, m: _extraction("New"), cache_path=cache)
+    assert any("still holds an EARLIER import" in s for s in shown)
+
+
+def test_the_replay_copy_path_can_be_a_path_object(env, tmp_path):
+    conn, sid, img, _ = env
+    cache = tmp_path / "c.json"
+    assert run_import(conn, sid, str(img), ask=Recorder(YES + KEEP_ALL), show=lambda _: None,
+                      extractor=lambda d, m: _extraction(), cache_path=cache)
+    assert cache.exists()
