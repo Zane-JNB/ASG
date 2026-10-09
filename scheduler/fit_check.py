@@ -26,6 +26,45 @@ def planned_tasks(conn, student_id: int, anchor: PlanAnchor):
             result.append((task_id, task.model_copy(update={"duration_slots": remaining, "saved_id": task_id})))
     return result
 
+def task_date_warnings(conn, student_id: int, today: date) -> list[ScheduleWarning]:
+    """Hard warnings for open tasks planned_tasks leaves out: past due, or a date that can't be read."""
+    warnings = []
+    for _, saved in get_extracted_tasks(conn, student_id):
+        if saved.completed_at:
+            continue
+        try:
+            due = date.fromisoformat(saved.date)
+        except ValueError:
+            warnings.append(ScheduleWarning(
+                severity="hard", kind="task_bad_date",
+                message=f"'{saved.title}' has a date that can't be read ('{saved.date}'), so it isn't planned. Change its date."))
+            continue
+        if due < today:
+            warnings.append(ScheduleWarning(
+                severity="hard", kind="task_overdue",
+                message=f"'{saved.title}' was due {saved.date} and isn't marked done. Mark it finished or change its date."))
+    return warnings
+
+def next_morning_wake(conn, student_id: int, anchor: PlanAnchor, settings: ProfileSettings) -> int | None:
+    """Latest wake-up for the window's last night (slots from that night's day start): the first
+    class or commute the morning after the window, minus the wake buffer. That day is only
+    looked at, never planned. None if nothing is on that day."""
+    after = PlanAnchor(start_date=anchor.start_date + timedelta(days=anchor.num_days), num_days=1)
+    patterns = [p for _, p in get_weekly_patterns(conn, student_id)]
+    dated = [b for _, b in get_dated_blocks(conn, student_id)]
+    blocks, _ = build_plan_inputs(patterns, dated, [], after)
+    blocks += expand_commutes([c for _, c in get_commutes(conn, student_id)], after)
+    if not blocks:
+        return None
+    return min(b.start_slot for b in blocks) + SLOTS_PER_DAY - settings.wake_buffer_slots
+
+def with_latest_wake(sleep_rules: list[SleepRule], wake: int | None) -> list[SleepRule]:
+    """Cap the last night's sleep at `wake` (never before its earliest bedtime)."""
+    if wake is None or not sleep_rules:
+        return sleep_rules
+    last = sleep_rules[-1]
+    return sleep_rules[:-1] + [last.model_copy(update={"latest_wake": max(wake, last.earliest_bed)})]
+
 def overlap_error(anchor: PlanAnchor, overlaps) -> str:    
     lines = []
     for a, b in overlaps[:5]:
@@ -109,4 +148,6 @@ def build_fit_inputs(conn, student_id: int, now: datetime,
     sleep_rules[0] = rule0.model_copy(update={"earliest_bed": bed,
                                               "preferred_bed": max(rule0.preferred_bed, bed),
                                               "latest_bed": max(rule0.latest_bed, bed)})
-    return FitInputs(anchor, fixed, planned, new_dyn, sleep_rules, settings, commute_warnings)  
+    sleep_rules = with_latest_wake(sleep_rules, next_morning_wake(conn, student_id, anchor, settings))
+    warnings = commute_warnings + task_date_warnings(conn, student_id, today)
+    return FitInputs(anchor, fixed, planned, new_dyn, sleep_rules, settings, warnings)  

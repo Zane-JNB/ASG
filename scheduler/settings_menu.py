@@ -74,6 +74,7 @@ _UI = {  # field -> (parse, format, hint). Every user_editable POLICY field must
     "default_preferred_bed": (_clock, _fmt_clock, "HH:MM, e.g. 23:00"),
     "default_earliest_bed": (_clock, _fmt_clock, "HH:MM, e.g. 21:00"),
     "default_latest_bed": (_clock, _fmt_clock, "HH:MM, e.g. 01:00"),
+    "wake_buffer_slots": (_minutes, _fmt_minutes, "minutes, e.g. 60"),
     "reminders_enabled": (_bool, _fmt_bool, "yes/no"),
     "reminder_min_difficulty": (_rating, _fmt_rating, "1-5, or 'none'"),
     "reminder_min_priority": (_rating, _fmt_rating, "1-5, or 'none'"),

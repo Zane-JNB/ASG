@@ -52,6 +52,7 @@ POLICY: dict[str, FieldPolicy] = {
     "default_sleep_min_slots": _user_only("Minimum sleep", "Sleep floor (15-min slots)."),
     "default_earliest_bed": _user_only("Earliest bedtime", "Slot index on the 2-day timeline."),
     "default_latest_bed": _user_only("Latest bedtime", "Slot index on the 2-day timeline."),
+    "wake_buffer_slots": _user_only("Wake-up buffer", "Time to get ready before the first class or commute (15-min slots)."),
     "reminders_enabled": _user_only("Reminders on/off", "Master reminder switch."),
     "reminder_min_difficulty": _user_only("Reminder min difficulty", "1-5, or none."),
     "reminder_min_priority": _user_only("Reminder min priority", "1-5, or none."),

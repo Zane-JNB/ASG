@@ -1,5 +1,8 @@
 from datetime import date, datetime, timedelta   
-from scheduler.fit_check import build_fit_inputs, overlap_error, planned_tasks, with_commutes
+from scheduler.fit_check import (
+    build_fit_inputs, next_morning_wake, overlap_error, planned_tasks, task_date_warnings, with_commutes,
+    with_latest_wake,
+)
 from scheduler.calendar_utils import build_plan_inputs, find_overlaps
 from scheduler.db import (
     get_dated_blocks, get_extracted_tasks, get_weekly_patterns, load_settings,
@@ -52,12 +55,15 @@ def plan_from_saved(conn, student_id: int, num_days: int | None = None, start_da
     if wake > 0:
         fixed = fixed + [FixedBlock(title="Sleep (night before)", day=0, start_slot=0, end_slot=wake)]
 
+    sleep_rules = with_latest_wake(sleep_rules, next_morning_wake(conn, student_id, anchor, settings))
+
     items, unscheduled = build_schedule(
         fixed, tasks, num_days=num_days, sleep_rules=sleep_rules,
         time_limit_seconds=time_limit_seconds, settings=settings,
     )
     #compiles all warnings
-    warnings = sleep_warnings(sleep_rules, items) + task_warnings(unscheduled) + commute_warnings
+    warnings = (sleep_warnings(sleep_rules, items) + task_warnings(unscheduled) + commute_warnings
+                + task_date_warnings(conn, student_id, (now or datetime.now()).date()))
     return anchor, fixed, items, warnings
 
 def format_plan(anchor: PlanAnchor, fixed, items, warnings) -> list[str]:   
