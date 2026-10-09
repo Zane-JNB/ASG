@@ -92,6 +92,34 @@ def test_fully_cut_task_is_left_out_of_the_plan(conn, sid):
     assert planned_tasks(conn, sid, PlanAnchor(start_date=START, num_days=1)) == []
 
 
+def test_fully_cut_task_gets_a_hard_warning_in_the_plan(conn, sid):
+    # a full drop misses the due date, so the plan must say so on every run, not only when chosen
+    tid = add_extracted_task(conn, sid, _task("Essay", 2, 5, due=START + timedelta(days=2)))
+    add_extracted_task(conn, sid, _task("Other", 1, 3, due=START + timedelta(days=1)))
+    add_plan_cut(conn, sid, tid, 8)
+    _, _, items, warnings = plan_from_saved(conn, sid, now=datetime.combine(START, time(9, 0)),
+                                            time_limit_seconds=5)
+    assert "Essay" not in {i.title for i in items if i.kind == "task"}
+    [w] = [w for w in warnings if w.kind == "task_dropped"]
+    assert w.severity == "hard" and "'Essay'" in w.message and "2026-10-07" in w.message
+    assert not any(w.kind == "task_cut" for w in warnings)
+
+
+def test_partly_cut_task_gets_a_soft_note(conn, sid):
+    tid = add_extracted_task(conn, sid, _task("Essay", 3, 5, due=START + timedelta(days=2)))
+    add_plan_cut(conn, sid, tid, 4)
+    *_, warnings = plan_from_saved(conn, sid, now=datetime.combine(START, time(9, 0)), time_limit_seconds=5)
+    [w] = [w for w in warnings if w.kind == "task_cut"]
+    assert w.severity == "soft" and "2h of its 3h" in w.message
+    assert not any(w.kind == "task_dropped" for w in warnings)
+
+
+def test_uncut_task_gets_no_cut_warning(conn, sid):
+    add_extracted_task(conn, sid, _task("Essay", 3, 5, due=START + timedelta(days=2)))
+    *_, warnings = plan_from_saved(conn, sid, now=datetime.combine(START, time(9, 0)), time_limit_seconds=5)
+    assert not any(w.kind in ("task_cut", "task_dropped") for w in warnings)
+
+
 def test_clearing_a_cut_gives_the_time_back(conn, sid):
     tid = add_extracted_task(conn, sid, _task("Big", 10, 2))
     add_plan_cut(conn, sid, tid, 16)

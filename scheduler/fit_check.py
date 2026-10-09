@@ -7,14 +7,16 @@ from scheduler.db import (
     get_commutes, get_dated_blocks, get_extracted_tasks, get_plan_cuts, get_unreadable_items, get_weekly_patterns,
     load_settings,
 )
+from scheduler.drop_review import _h
 from scheduler.models import (
     DynamicTask, ExtractedTask, FixedBlock, MINUTES_PER_SLOT, PlanAnchor, ProfileSettings,
     SLOTS_PER_DAY, ScheduleWarning, SleepRule, slot_to_time,)
 
 def _planned_and_overdue(conn, student_id: int, anchor: PlanAnchor, now: datetime, session: int):
     """One pass over the saved open tasks: ([(saved task id, DynamicTask)] with plan cuts
-    applied, hard task_overdue warnings). A task whose due time is at or before `now` is left
-    out of the plan and warned about. Saved tasks are never changed."""
+    applied, warnings). A task whose due time is at or before `now` is left out of the plan with
+    a hard task_overdue warning; a fully cut task gets a hard task_dropped warning, a partly cut
+    one a soft task_cut note. Saved tasks are never changed."""
     cuts = get_plan_cuts(conn, student_id)
     planned, warnings = [], []
     for task_id, saved in get_extracted_tasks(conn, student_id):
@@ -27,8 +29,18 @@ def _planned_and_overdue(conn, student_id: int, anchor: PlanAnchor, now: datetim
             continue
         task = extracted_task_to_dynamic_task(saved, anchor.start_date, session)
         remaining = task.duration_slots - cuts.get(task_id, 0)
-        if remaining > 0:
-            planned.append((task_id, task.model_copy(update={"duration_slots": remaining, "saved_id": task_id})))
+        if remaining <= 0:  # every saved task has a due date, so a full drop misses it: never silent
+            warnings.append(ScheduleWarning(
+                severity="hard", kind="task_dropped",
+                message=f"'{saved.title}' is left out of the plan (all its time was cut to make room) "
+                        f"and won't be done by {saved.due_label()}. It gets time back when you finish another task."))
+            continue
+        if remaining < task.duration_slots:
+            warnings.append(ScheduleWarning(
+                severity="soft", kind="task_cut",
+                message=f"'{saved.title}' is planned at {_h(remaining)} of its {_h(task.duration_slots)} "
+                        "(cut to make room for another task)."))
+        planned.append((task_id, task.model_copy(update={"duration_slots": remaining, "saved_id": task_id})))
     return planned, warnings
 
 def planned_tasks(conn, student_id: int, anchor: PlanAnchor):
