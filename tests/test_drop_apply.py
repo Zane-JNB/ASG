@@ -2,17 +2,17 @@ from datetime import date, datetime, time, timedelta
 
 import pytest
 
-from scheduler.calendar_utils import build_plan_inputs, extracted_task_to_dynamic_task
+from scheduler.calendar_utils import extracted_task_to_dynamic_task
 from scheduler.db import (
     add_dated_block, add_extracted_task, add_plan_cut, apply_plan_changes, clear_plan_cut,
     clear_plan_cuts, connect, delete_extracted_task, get_extracted_tasks, get_or_create_student,
-    get_dated_blocks, get_plan_cuts, load_settings,
+    get_plan_cuts,
 )
 from scheduler.drop_apply import apply_drop_choice
 from scheduler.drop_review import _dont_add_fallback
 from scheduler.dropping import propose_drops
 from scheduler.models import DatedBlock, ExtractedTask, PlanAnchor
-from scheduler.fit_check import planned_tasks
+from scheduler.fit_check import build_fit_inputs, planned_tasks
 from scheduler.planner import plan_from_saved
 
 START = date(2026, 10, 5)  # a Monday
@@ -110,14 +110,11 @@ def _busy_student(conn, sid):
 
 
 def _propose(conn, sid, essay, must_add=True):
-    anchor = PlanAnchor(start_date=START, num_days=1)
-    fixed, _ = build_plan_inputs([], [b for _, b in get_dated_blocks(conn, sid)], [], anchor)
-    settings = load_settings(conn, sid)
-    rules = [settings.default_sleep_rule(night=0)]
-    planned = planned_tasks(conn, sid, anchor)
-    report = propose_drops(fixed, [t for _, t in planned], extracted_task_to_dynamic_task(essay, START),
-                           1, rules, settings=settings, must_add=must_add)
-    return planned, report
+    """The same inputs the add flow and plan_from_saved use (incl. the night-before sleep)."""
+    fit = build_fit_inputs(conn, sid, datetime.combine(START, time(0, 0)), essay)
+    report = propose_drops(fit.fixed, [t for _, t in fit.planned], fit.new_task, fit.anchor.num_days,
+                           fit.sleep_rules, settings=fit.settings, must_add=must_add)
+    return fit.planned, report
 
 
 def test_applying_a_cut_saves_it_for_the_plan_only(conn, sid):

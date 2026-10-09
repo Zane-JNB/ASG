@@ -135,12 +135,19 @@ def _unreadable_menu(conn, student_id, ask, show) -> None:
         show(f"Enter a number between 1 and {len(bad)}.")
 
 def run_menu(conn, student_id, ask=input, show=print, today: date | None = None, 
-             now: datetime | None = None) -> None:
-    now = now or (datetime.combine(today, time(0, 0)) if today else datetime.now())
-    today = today or now.date()   
+             now: datetime | None = None, clock=None) -> None:
+    """A fixed today/now (tests) is used throughout; otherwise the time is read again for every
+    action, so a menu left open for hours doesn't plan from when it was opened."""
+    fixed_now = now or (datetime.combine(today, time(0, 0)) if today else None)
+    clock = (lambda: fixed_now) if fixed_now else (clock or datetime.now)
+    fixed_today = today
+    now = clock()
+    today = fixed_today or now.date()
     run_checkin(conn, student_id, now, ask, show)
     while True:
         choice = ask("Tasks: [a]dd  [l]ist  [d]elete one  [f]inished  [c]heck-in  [s]plit setting  session [t]ime  [r]eminders  [m] commutes  [p] settings  [u]nreadable  [x] delete ALL open  [q]uit: ").strip().lower()
+        now = clock()
+        today = fixed_today or now.date()
         if choice == "q":
             return
         if choice == "a":

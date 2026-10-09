@@ -389,3 +389,4 @@ class DropReport(BaseModel):
     proposals: list[DropProposal]  # best first
     checks_used: int
     search_exhausted: bool  # False = stopped at the check limit
+    fit_warnings: list[ScheduleWarning] = []  # sleep given up to fit it as things stand (fits_already only)

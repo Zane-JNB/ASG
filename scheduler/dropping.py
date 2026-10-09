@@ -5,7 +5,8 @@ from scheduler.models import (
     DropAction, DropProposal, DropReport, DynamicTask, FixedBlock,
     ProfileSettings, SleepRule,
 )
-from scheduler.solver import build_schedule, reachable_sleep, sleep_warnings, split_sizes   
+from scheduler.models import SLOTS_PER_DAY
+from scheduler.solver import build_schedule, merge_fixed_spans, reachable_sleep, sleep_warnings, split_sizes   
 
 def chunk_sizes(task):   
     if task.splittable:
@@ -89,6 +90,15 @@ def _solve_all_fit(fixed, tasks, num_days, sleep_rules, settings, limit):
         return None
     return items, sleep_warnings(sleep_rules, items)
 
+def _free_slots(fixed_blocks, tasks, num_days):
+    """Slots in the window no fixed block covers, from the earliest any task may start.
+    Ignores buffers, sleep and deadlines, so it over-counts the real room (a safe bound)."""
+    lo = min((0 if t.earliest_start_day is None else t.earliest_start_day * SLOTS_PER_DAY + t.earliest_start_slot
+              for t in tasks), default=0)
+    end = num_days * SLOTS_PER_DAY
+    covered = sum(max(0, min(e, end) - max(s, lo)) for s, e, _ in merge_fixed_spans(fixed_blocks))
+    return max(0, end - lo - covered)
+
 def _sleep_sacrificed(sleep_rules, items):   
     """Sleep below what the nights allow; a cap from the morning after's early start isn't the cuts' fault."""
     target = sum(reachable_sleep(r) for r in sleep_rules)
@@ -123,7 +133,8 @@ def propose_drops(fixed_blocks, tasks, new_task, num_days=1, sleep_rules=None,
                           settings=settings)
     if not base[1]: 
         return DropReport(new_task_title=new_task.title, fits_already=True, proposals=[],
-                          checks_used=1, search_exhausted=True)
+                          checks_used=1, search_exhausted=True,
+                          fit_warnings=sleep_warnings(sleep_rules, base[0]))
     if not search:  
         return DropReport(new_task_title=new_task.title, fits_already=False, proposals=[],
                           checks_used=1, search_exhausted=False)
@@ -141,8 +152,9 @@ def propose_drops(fixed_blocks, tasks, new_task, num_days=1, sleep_rules=None,
     opts = _options(tasks, settings)
     new_cuts = [0] + (_shrink_amounts(new_task.duration_slots, settings)  #   -- a one-block new task can be shortened
                       if len(chunk_sizes(new_task)) == 1 else [])
-    deficit = sum(t.duration_slots for t in base[1])
-    sleep_flex = sum(max(0, reachable_sleep(r) - r.min_slots) for r in sleep_rules if not r.skip)
+    # the least that must be freed: all task time minus every free slot (an over-count of the room)
+    need = (sum(t.duration_slots for t in tasks + [new_task])
+            - _free_slots(fixed_blocks, tasks + [new_task], num_days))
 
     def combos():
         for n in range(0, max_actions + 1):  #   -- 0 = only shorten the new task
@@ -151,7 +163,7 @@ def propose_drops(fixed_blocks, tasks, new_task, num_days=1, sleep_rules=None,
                     for new_cut in new_cuts:
                         if not pick and not new_cut:
                             continue  # that is the plan that already failed
-                        if sum(a.slots_lost for a in pick) + new_cut < deficit - sleep_flex:
+                        if sum(a.slots_lost for a in pick) + new_cut < need:
                             continue  # cannot possibly free enough room
                         cost = (sum(loss_cost(tasks[a.task_index], a.slots_lost, settings) for a in pick)
                                 + loss_cost(new_task, new_cut, settings))
