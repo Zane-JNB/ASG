@@ -5,7 +5,7 @@ from scheduler.models import (
     DropAction, DropProposal, DropReport, DynamicTask, FixedBlock,
     ProfileSettings, SleepRule,
 )
-from scheduler.solver import build_schedule, sleep_warnings, split_sizes   
+from scheduler.solver import build_schedule, reachable_sleep, sleep_warnings, split_sizes   
 
 def chunk_sizes(task):   
     if task.splittable:
@@ -90,7 +90,8 @@ def _solve_all_fit(fixed, tasks, num_days, sleep_rules, settings, limit):
     return items, sleep_warnings(sleep_rules, items)
 
 def _sleep_sacrificed(sleep_rules, items):   
-    target = sum(r.length_slots for r in sleep_rules if not r.skip)
+    """Sleep below what the nights allow; a cap from the morning after's early start isn't the cuts' fault."""
+    target = sum(reachable_sleep(r) for r in sleep_rules)
     slept = sum(i.end_slot - i.start_slot for i in items if i.kind == "sleep")
     return max(0, target - slept)
 
@@ -141,7 +142,7 @@ def propose_drops(fixed_blocks, tasks, new_task, num_days=1, sleep_rules=None,
     new_cuts = [0] + (_shrink_amounts(new_task.duration_slots, settings)  #   -- a one-block new task can be shortened
                       if len(chunk_sizes(new_task)) == 1 else [])
     deficit = sum(t.duration_slots for t in base[1])
-    sleep_flex = sum(r.length_slots - r.min_slots for r in sleep_rules if not r.skip)
+    sleep_flex = sum(max(0, reachable_sleep(r) - r.min_slots) for r in sleep_rules if not r.skip)
 
     def combos():
         for n in range(0, max_actions + 1):  #   -- 0 = only shorten the new task

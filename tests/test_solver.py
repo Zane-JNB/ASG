@@ -146,9 +146,10 @@ def test_sleep_shortened_between_min_and_target_gives_soft_warning():
     rule = SleepRule(earliest_bed=88, preferred_bed=88, latest_bed=88,
                      length_slots=32, min_slots=24) 
     block = FixedBlock(title="Early flight", start_slot=18, end_slot=24, day=1) 
-    items, _ = build_schedule([block], [], num_days=2, sleep_rules=[rule])  
-    (sleep,) = sleep_items(items)   
-    assert sleep.end_slot - sleep.start_slot == 26  
+    items, _ = build_schedule([block], [], num_days=2, sleep_rules=[rule],
+                              settings=ProfileSettings(wake_buffer_slots=0))  # no get-ready time here
+    (sleep,) = sleep_items(items)
+    assert sleep.end_slot - sleep.start_slot == 26
     warnings = sleep_warnings([rule], items)  
     assert [(w.severity, w.kind) for w in warnings] == [("soft", "sleep_short")]  
 

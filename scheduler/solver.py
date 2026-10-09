@@ -143,9 +143,21 @@ def build_schedule(fixed_blocks: list[FixedBlock], tasks: list[DynamicTask],
             base + rule.earliest_bed, base + rule.latest_bed + rule.length_slots,  
             f"sleep_end_{rule.night}",  
         )  
-        sleep_iv = model.NewIntervalVar(start, size, end, f"sleep_{rule.night}")   
+        model.Add(end == start + size)   
         if rule.latest_wake is not None:  # e.g. an early class the morning after the plan ends
             model.Add(end <= base + rule.latest_wake)
+        # nothing starts within the wake buffer after waking (sleep never had the normal buffer
+        # after it, so 0 keeps the old behaviour); a night with no sleep gets no buffer
+        wake_buffer = settings.wake_buffer_slots
+        slept = model.NewBoolVar(f"slept_{rule.night}")
+        model.Add(size >= 1).OnlyEnforceIf(slept)
+        model.Add(size == 0).OnlyEnforceIf(slept.Not())
+        ready_end = model.NewIntVar(base + rule.earliest_bed,
+                                    base + rule.latest_bed + rule.length_slots + wake_buffer,
+                                    f"ready_end_{rule.night}")
+        ready_size = model.NewIntVar(0, rule.length_slots + wake_buffer, f"ready_size_{rule.night}")
+        model.Add(ready_size == size + wake_buffer * slept)
+        sleep_iv = model.NewIntervalVar(start, ready_size, ready_end, f"sleep_and_ready_{rule.night}")
         intervals.append(sleep_iv)   
         sleep_intervals.append(sleep_iv)      
  
@@ -242,6 +254,15 @@ def build_schedule(fixed_blocks: list[FixedBlock], tasks: list[DynamicTask],
     items.sort(key=lambda i: (i.day, i.start_slot))
     return items, unscheduled
 
+def reachable_sleep(rule: SleepRule) -> int:
+    """The most sleep this night allows: the target, unless latest_wake caps it (going to bed
+    at the earliest bedtime)."""
+    if rule.skip:
+        return 0
+    if rule.latest_wake is None:
+        return rule.length_slots
+    return max(0, min(rule.length_slots, rule.latest_wake - rule.earliest_bed))
+
 def sleep_warnings(sleep_rules: list[SleepRule],   
                    items: list[ScheduledItem]) -> list[ScheduleWarning]:   
     """Check the finished plan against each night's rule and report anything given up."""   
@@ -265,18 +286,23 @@ def sleep_warnings(sleep_rules: list[SleepRule],
                 found = item   
                 break   
  
-        length = 0 if found is None else found.end_slot - found.start_slot   
+        length = 0 if found is None else found.end_slot - found.start_slot
+        why = ""  # an early start the morning after the plan can be the cause, not the plan itself
+        woke_at_cap = (found is not None and rule.latest_wake is not None
+                       and found.day * SLOTS_PER_DAY + found.end_slot - base == rule.latest_wake)
+        if rule.latest_wake_reason and woke_at_cap:  # the next morning's start is what ended it
+            why = f" It has to end by then: {rule.latest_wake_reason}."   
         if length < rule.min_slots:   
             warnings.append(ScheduleWarning(   
                 severity="hard", kind="sleep_short",   
                 message=(f"{label}: only {hours(length)} of sleep fits, below your minimum "   
-                         f"of {hours(rule.min_slots)}."),   
+                         f"of {hours(rule.min_slots)}.{why}"),   
             ))   
         elif length < rule.length_slots:   
             warnings.append(ScheduleWarning(   
                 severity="soft", kind="sleep_short",   
                 message=(f"{label}: {hours(length)} of sleep, shorter than your "   
-                         f"target of {hours(rule.length_slots)}."),   
+                         f"target of {hours(rule.length_slots)}.{why}"),   
             ))   
  
         if found is not None:  

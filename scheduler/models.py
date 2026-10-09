@@ -79,6 +79,7 @@ class SleepRule(BaseModel):  #
     latest_bed: int = Field(default=100, ge=0, lt=2 * SLOTS_PER_DAY) 
     preferred_bed: int = Field(default=92, ge=0, lt=2 * SLOTS_PER_DAY)
     latest_wake: int | None = Field(default=None, ge=0, le=2 * SLOTS_PER_DAY)  # sleep must end by then; None = no limit
+    latest_wake_reason: str | None = None  # what sets latest_wake, e.g. "'Work' at 06:00 the next morning"
     skip: bool = False  
  
     @model_validator(mode="after") 
