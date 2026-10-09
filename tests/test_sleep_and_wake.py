@@ -105,14 +105,14 @@ def test_the_reason_names_the_class_and_the_buffer(conn, sid):
     _block(conn, sid, "Work", D + timedelta(days=1), "06:00", "12:00")
     fit = build_fit_inputs(conn, sid, datetime(2026, 10, 5, 9, 30))
     assert fit.sleep_rules[-1].latest_wake == SLOTS_PER_DAY + 20
-    assert fit.sleep_rules[-1].latest_wake_reason == "'Work' at 06:00 the next morning (minus your 60 min wake-up buffer)"
+    assert fit.sleep_rules[-1].latest_wake_reason == "'Work' at 06:00 the next day (minus your 60 min wake-up buffer)"
 
 def test_a_zero_buffer_is_not_mentioned_in_the_reason(conn, sid):
     from scheduler.preferences import Actor, set_values
     set_values(conn, sid, {"wake_buffer_slots": 0}, Actor.USER)
     _block(conn, sid, "Work", D + timedelta(days=1), "06:00", "12:00")
     fit = build_fit_inputs(conn, sid, datetime(2026, 10, 5, 9, 30))
-    assert fit.sleep_rules[-1].latest_wake_reason == "'Work' at 06:00 the next morning"
+    assert fit.sleep_rules[-1].latest_wake_reason == "'Work' at 06:00 the next day"
 
 def test_a_commute_the_next_morning_caps_the_night_too(conn, sid):
     add_commute(conn, sid, Commute(start_time="07:00", length_minutes=30, date=(D + timedelta(days=1)).isoformat()))
@@ -145,3 +145,10 @@ def test_a_late_bedtime_is_not_blamed_on_the_next_morning():
     slept = [ScheduledItem(title="Sleep", day=1, start_slot=4, end_slot=32, kind="sleep")]
     (warning,) = sleep_warnings([late], slept)
     assert "'Class'" not in warning.message
+
+
+def test_a_night_with_no_room_at_all_still_names_the_cause():
+    # a 01:00 class the next day: the cap (00:00) is before the earliest bedtime allows any sleep
+    capped = SleepRule(night=0, latest_wake=88, latest_wake_reason="'Lab' at 01:00 the next day", **RULE)
+    (warning,) = sleep_warnings([capped], [])  # no sleep item at all
+    assert warning.severity == "hard" and "'Lab' at 01:00 the next day" in warning.message
