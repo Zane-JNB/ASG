@@ -46,25 +46,64 @@ def unreadable_warnings(conn, student_id: int) -> list[ScheduleWarning]:
                         "Delete it in manage_tasks.py ([u]) and add it again.")
             for label, row_id, reason in get_unreadable_items(conn, student_id, include_completed=False)]
 
-def next_morning_wake(conn, student_id: int, anchor: PlanAnchor, settings: ProfileSettings) -> int | None:
-    """Latest wake-up for the window's last night (slots from that night's day start): the first
-    class or commute the morning after the window, minus the wake buffer. That day is only
-    looked at, never planned. None if nothing is on that day."""
-    after = PlanAnchor(start_date=anchor.start_date + timedelta(days=anchor.num_days), num_days=1)
-    patterns = [p for _, p in get_weekly_patterns(conn, student_id)]
-    dated = [b for _, b in get_dated_blocks(conn, student_id)]
-    blocks, _ = build_plan_inputs(patterns, dated, [], after)
-    blocks += expand_commutes([c for _, c in get_commutes(conn, student_id)], after)
-    if not blocks:
+def wake_before(day_blocks: list[FixedBlock], settings: ProfileSettings) -> tuple[int, str] | None:
+    """(latest wake-up within that day, why) from the day's first class or commute minus the
+    wake buffer, or None if nothing is on that day. The one wake-up rule, for every morning."""
+    if not day_blocks:
         return None
-    return min(b.start_slot for b in blocks) + SLOTS_PER_DAY - settings.wake_buffer_slots
+    first = min(day_blocks, key=lambda b: b.start_slot)
+    reason = f"'{first.title}' at {slot_to_time(first.start_slot)} the next morning"
+    if settings.wake_buffer_slots:
+        reason += f" (minus your {settings.wake_buffer_slots * MINUTES_PER_SLOT} min wake-up buffer)"
+    return first.start_slot - settings.wake_buffer_slots, reason
 
-def with_latest_wake(sleep_rules: list[SleepRule], wake: int | None) -> list[SleepRule]:
-    """Cap the last night's sleep at `wake` (never before its earliest bedtime)."""
-    if wake is None or not sleep_rules:
-        return sleep_rules
-    last = sleep_rules[-1]
-    return sleep_rules[:-1] + [last.model_copy(update={"latest_wake": max(wake, last.earliest_bed)})]
+def with_wake_limit(rule: SleepRule, next_day: list[FixedBlock], settings: ProfileSettings) -> SleepRule:
+    """Cap one night's sleep at the next day's wake-up (never before its earliest bedtime), and
+    say why. Unchanged if nothing is on that day."""
+    limit = wake_before(next_day, settings)
+    if limit is None:
+        return rule
+    wake, reason = limit
+    return rule.model_copy(update={"latest_wake": max(wake + SLOTS_PER_DAY, rule.earliest_bed),
+                                   "latest_wake_reason": reason})
+
+def sleep_setup(fixed: list[FixedBlock], morning_after: list[FixedBlock], num_days: int,
+                settings: ProfileSettings, now: datetime) -> tuple[list[FixedBlock], list[SleepRule]]:
+    """(fixed blocks with this morning's sleep added, one sleep rule per night). The one place
+    sleep is set up for a plan:
+      - this morning: if it is still sleep time, "Sleep (night before)" runs from 00:00 to the
+        wake-up (the usual one, or the first class/commute minus the wake buffer), and "Getting
+        ready" keeps the rest of the wake buffer free (also when the plan starts inside it);
+      - tonight: bedtime is never before now;
+      - every night: ends by the next day's first class/commute minus the wake buffer, and says
+        so. The last night's next day (the morning after the window) is only looked at.
+    The solver keeps the wake buffer after every night's sleep."""
+    start_day, start_slot = divmod(next_slot(now), SLOTS_PER_DAY)
+    sleep_rules = [settings.default_sleep_rule(night=n) for n in range(num_days)]
+    rule0 = sleep_rules[0]
+    today = [b for b in fixed if b.day == 0]
+    wake = rule0.preferred_bed + rule0.length_slots - SLOTS_PER_DAY
+    limit = wake_before(today, settings)
+    wake = max(0, min(wake, limit[0]) if limit else wake)
+    if start_day == 0:
+        added = []
+        if wake > start_slot:  # still morning-sleep hours: keep them free
+            added.append(FixedBlock(title="Sleep (night before)", day=0, start_slot=0, end_slot=wake))
+        # the normal buffer after a block makes up the rest of the wake buffer; never past the
+        # day's first block (a class just after midnight leaves no room for it)
+        ready_end = min([wake + settings.wake_buffer_slots - settings.buffer_slots] + [b.start_slot for b in today])
+        ready_start = max(wake, start_slot)
+        if ready_start < ready_end <= SLOTS_PER_DAY:
+            added.append(FixedBlock(title="Getting ready", day=0, start_slot=ready_start, end_slot=ready_end))
+        fixed = fixed + added
+    # tonight's bedtime cannot be earlier than now
+    bed = max(rule0.earliest_bed, next_slot(now))
+    sleep_rules[0] = rule0.model_copy(update={"earliest_bed": bed,
+                                              "preferred_bed": max(rule0.preferred_bed, bed),
+                                              "latest_bed": max(rule0.latest_bed, bed)})
+    blocks = fixed + morning_after
+    return fixed, [with_wake_limit(rule, [b for b in blocks if b.day == rule.night + 1], settings)
+                   for rule in sleep_rules]
 
 def overlap_error(anchor: PlanAnchor, overlaps) -> str:    
     lines = []
@@ -88,11 +127,10 @@ class FitInputs:
     settings: ProfileSettings
     warnings: list[ScheduleWarning] = field(default_factory=list)
 
-def with_commutes(conn, student_id: int, fixed: list[FixedBlock], anchor: PlanAnchor,
-                  after_slot: int = 0):  
+def with_commutes(fixed: list[FixedBlock], commute_blocks: list[FixedBlock], anchor: PlanAnchor,
+                  after_slot: int = 0):
     """(fixed + commute blocks, soft overlap warnings). Commutes are never rejected for overlapping."""
-    commutes = [c for _, c in get_commutes(conn, student_id)]
-    blocks = [b for b in expand_commutes(commutes, anchor)
+    blocks = [b for b in commute_blocks
               if not (b.day == 0 and b.end_slot <= after_slot)]  # skip commutes already over
     return fixed + blocks, overlap_warnings(commute_overlaps(fixed, blocks), anchor)
     
@@ -114,8 +152,6 @@ def build_fit_inputs(conn, student_id: int, now: datetime,
     settings = load_settings(conn, student_id)
     today = now.date() #makes day 0 = today
     day0 = PlanAnchor(start_date=today, num_days=1) #anchor's plan with today's date.
-    start_day, start_slot = divmod(next_slot(now), SLOTS_PER_DAY)
-
     def from_now(t: DynamicTask) -> DynamicTask:
         return starts_from(t, now)
 
@@ -130,26 +166,21 @@ def build_fit_inputs(conn, student_id: int, now: datetime,
     num_days = max([num_days] + [math.ceil((next_slot(now) + t.duration_slots) / SLOTS_PER_DAY) for t in tasks])
     anchor = PlanAnchor(start_date=today, num_days=num_days)
 
+    # read and expand once, for the window plus the morning after (only looked at, for the wake-up)
     patterns = [p for _, p in get_weekly_patterns(conn, student_id)]
     dated = [b for _, b in get_dated_blocks(conn, student_id)]
-    fixed, _ = build_plan_inputs(patterns, dated, [], anchor)
+    commutes = [c for _, c in get_commutes(conn, student_id)]
+    look = PlanAnchor(start_date=today, num_days=num_days + 1)
+    classes, _ = build_plan_inputs(patterns, dated, [], look)
+    commute_blocks = expand_commutes(commutes, look)
+    morning_after = [b for b in classes + commute_blocks if b.day == num_days]
+    fixed = [b for b in classes if b.day < num_days]
     overlaps = find_overlaps(fixed)
     if overlaps:
         raise ValueError(overlap_error(anchor, overlaps))
     fixed = [b for b in fixed if not (b.day == 0 and b.end_slot <= next_slot(now))]
-    fixed, commute_warnings = with_commutes(conn, student_id, fixed, anchor, next_slot(now))
-
-    sleep_rules = [settings.default_sleep_rule(night=n) for n in range(num_days)]
-    rule0 = sleep_rules[0]
-    wake = rule0.preferred_bed + rule0.length_slots - SLOTS_PER_DAY
-    wake = min([wake] + [b.start_slot for b in fixed if b.day == 0])
-    if start_day == 0 and wake > start_slot:  # still morning-sleep hours: keep them free
-        fixed = fixed + [FixedBlock(title="Sleep (night before)", day=0, start_slot=0, end_slot=wake)]
-    # tonight's bedtime cannot be earlier than now
-    bed = max(rule0.earliest_bed, next_slot(now))
-    sleep_rules[0] = rule0.model_copy(update={"earliest_bed": bed,
-                                              "preferred_bed": max(rule0.preferred_bed, bed),
-                                              "latest_bed": max(rule0.latest_bed, bed)})
-    sleep_rules = with_latest_wake(sleep_rules, next_morning_wake(conn, student_id, anchor, settings))
+    fixed, commute_warnings = with_commutes(fixed, [b for b in commute_blocks if b.day < num_days],
+                                            anchor, next_slot(now))
+    fixed, sleep_rules = sleep_setup(fixed, morning_after, num_days, settings, now)
     warnings = commute_warnings + overdue_warnings + unreadable_warnings(conn, student_id)
     return FitInputs(anchor, fixed, planned, new_dyn, sleep_rules, settings, warnings)  

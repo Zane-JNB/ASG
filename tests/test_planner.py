@@ -116,4 +116,6 @@ def test_an_early_class_on_day_zero_wins_over_the_assumed_sleep():
     conn, sid = _setup(patterns=[], blocks=[early], tasks=[])
     _, fixed, _, _ = plan_from_saved(conn, sid, 2, now=MON_MIDNIGHT, time_limit_seconds=5)  # must not raise
     block = next(b for b in fixed if b.title == "Sleep (night before)")
-    assert block.end_slot == 24  # stops at 06:00 where the class starts
+    assert block.end_slot == 20  # stops at 05:00: the 06:00 class minus the 1h wake-up buffer
+    ready = next(b for b in fixed if b.title == "Getting ready")
+    assert (ready.start_slot, ready.end_slot) == (20, 23)  # + the normal 15-min buffer = 1h
