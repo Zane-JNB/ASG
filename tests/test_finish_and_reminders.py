@@ -279,3 +279,11 @@ def test_menu_reminder_settings_custom_all_off_and_bad_input(conn, sid):
     s = load_settings(conn, sid)
     assert s.reminders_enabled and s.reminder_min_difficulty is None and s.reminder_min_priority is None
     assert "Choose a, c or o." in shown
+
+def test_menu_reads_the_time_again_for_each_action(conn, sid):
+    tid = add_extracted_task(conn, sid, _task("Essay"))
+    times = iter([NINE, NINE + timedelta(hours=6), NINE + timedelta(hours=6)])  # opening, [f], [q]
+    ask, shown = scripted(["f", "1", "q"])
+    run_menu(conn, sid, ask, shown.append, clock=lambda: next(times))
+    done = dict(get_extracted_tasks(conn, sid))[tid].completed_at
+    assert done == (NINE + timedelta(hours=6)).isoformat(timespec="minutes")  # not the time the menu opened

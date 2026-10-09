@@ -138,3 +138,32 @@ def test_system_prompt_names_exact_required_keys():
         assert required_key in prompt
     for wrong_key in ('"change"', '"size"', '"amount"'):
         assert wrong_key in prompt  # named explicitly as WRONG, but must be mentioned
+
+GOOD = {"field": "buffer_slots", "direction": "increase", "magnitude": "small", "reason": "felt rushed"}
+
+
+@pytest.mark.parametrize("sent", [None, "none", {}, ""])
+def test_no_proposals_in_any_none_shape_is_an_empty_result(sent):
+    result = propose_preference_changes("fine week", client=FakeClient({"summary": "ok", "proposals": sent}))
+    assert result.proposals == [] and result.summary == "ok"
+
+
+def test_entries_that_are_not_objects_are_skipped_and_good_ones_kept():
+    result = propose_preference_changes("x", client=make_client("ok", ["more buffer please", 3, GOOD]))
+    assert [p.field for p in result.proposals] == ["buffer_slots"]
+
+
+def test_one_proposal_on_its_own_or_as_json_text_is_read():
+    assert len(propose_preference_changes("x", client=make_client("ok", GOOD)).proposals) == 1
+    assert len(propose_preference_changes("x", client=make_client("ok", json.dumps([GOOD]))).proposals) == 1
+
+
+def test_unreadable_proposals_shape_is_a_clear_backend_failure():
+    from scheduler.llm_backends import BadModelOutput, is_backend_failure
+    with pytest.raises(BadModelOutput) as e:
+        propose_preference_changes("x", client=FakeClient({"summary": "ok", "proposals": 5}))
+    assert is_backend_failure(e.value)
+
+
+def test_non_text_summary_becomes_empty():
+    assert propose_preference_changes("x", client=FakeClient({"summary": None, "proposals": []})).summary == ""

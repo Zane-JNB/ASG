@@ -154,3 +154,13 @@ def test_search_stops_at_the_check_limit():
     report = propose_drops(fixed, tasks, new, 1, rules, max_checks=2)
     assert report.checks_used <= 2
     assert report.search_exhausted is False
+
+def test_shortening_the_new_task_is_found_when_it_fits():
+    # 11 free slots; B (2) + N (10) is one slot too many. The old bound used N's whole length
+    # as the amount to free, so "shorten N by 2" was skipped and only worse options were offered.
+    fixed = [FixedBlock(title="Busy", start_slot=0, end_slot=85)]
+    b = DynamicTask(title="B", duration_slots=2, priority=5, difficulty=2, splittable=False)
+    n = DynamicTask(title="N", duration_slots=10, priority=3, difficulty=2, splittable=False)
+    report = propose_drops(fixed, [b], n, settings=ProfileSettings(buffer_slots=0), must_add=True)
+    best = report.proposals[0]
+    assert best.actions == [] and best.new_task_slots_cut == 2

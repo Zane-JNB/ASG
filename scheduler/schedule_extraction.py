@@ -53,9 +53,9 @@ _NONE_WORDS = {"", "none", "null", "n/a", "na", "-"}  # what models write for "n
 _NO_TIME = _NONE_WORDS | {"0", "tbd", "tba"}  # ...and for "no time stated"
 
 
-def _as_items(key: str, value) -> list:
+def _as_items(key: str, value, marker: str = "title") -> list:
     """A list key's value as a list. Also accepts what models send for "none" (null, {}, "",
-    "N/A"...), one titled item on its own, and a list sent as JSON text. Each entry is then
+    "N/A"...), one item on its own (recognised by its `marker` key), and a list sent as JSON text. Each entry is then
     validated on its own by the caller, so a bad entry is dropped and the rest kept. Anything
     else (a number, true/false, other text, an object without a title) raises BadModelOutput: the
     answer can't be trusted, so the caller fails it (and warns) instead of crashing."""
@@ -71,7 +71,7 @@ def _as_items(key: str, value) -> list:
         return []
     if isinstance(value, list):
         return value
-    if isinstance(value, dict) and "title" in value:
+    if isinstance(value, dict) and marker in value:
         return [value]
     raise BadModelOutput(f"The model sent '{key}' in the wrong shape ({sent}). Try again.")
 

@@ -29,6 +29,9 @@ def add_task_with_fit(conn, student_id: int, new_task: ExtractedTask, now: datet
     if report.fits_already:  # later-deadline tasks were shuffled by the solver if needed
         new_id = add_extracted_task(conn, student_id, new_task)
         show("Added.")
+        for w in report.fit_warnings:  # it fits, but sleep was given up for it
+            if w.kind == "sleep_short" or w.severity == "hard":
+                show(f"Warning: {w.message}")
         return {"cuts": {}, "new_task_id": new_id}
 
     full = None  #  the ranked search, run at most once and shared by semi and automatic
@@ -41,10 +44,16 @@ def add_task_with_fit(conn, student_id: int, new_task: ExtractedTask, now: datet
             choice = choose_manual(fit, must_add, ask, show)
         else:  # semi and automatic share one search; they differ in who picks
             if full is None:   
-                full = propose_drops(fit.fixed, [t for _, t in fit.planned], fit.new_task, fit.anchor.num_days,
-                                     fit.sleep_rules, settings=fit.settings, must_add=must_add)
-            pick = choose_automatic if mode == "a" else choose_drop_proposal
-            choice = pick(full, fit.new_task, must_add, ask, show)
+                try:
+                    full = propose_drops(fit.fixed, [t for _, t in fit.planned], fit.new_task, fit.anchor.num_days,
+                                         fit.sleep_rules, settings=fit.settings, must_add=must_add)
+                except (ValueError, RuntimeError) as e:  # e.g. the solver ran out of time
+                    show(f"Could not search for ways to make room: {e}")
+            if full is None:
+                choice = None
+            else:
+                pick = choose_automatic if mode == "a" else choose_drop_proposal
+                choice = pick(full, fit.new_task, must_add, ask, show)
         if choice is not None:
             break
         show("Nothing saved yet. Choose another way, or Enter to cancel.")   

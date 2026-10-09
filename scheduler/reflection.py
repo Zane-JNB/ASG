@@ -107,14 +107,17 @@ def propose_preference_changes(reflection_text: str, client=None, allowed_fields
 
     # validate each proposal individually -- one hallucinated/locked field shouldn't
     # discard every other, otherwise valid, proposal in the same response
+    # null / "none" / JSON text are read loosely; an unreadable shape raises BadModelOutput
+    from scheduler.schedule_extraction import _as_items
     proposals = []
-    for item in raw.get("proposals", []):
+    for item in _as_items("proposals", raw.get("proposals"), marker="field"):
         try:
             proposals.append(PreferenceChangeProposal(**item))
-        except ValidationError:
+        except (ValidationError, TypeError):  # TypeError: an entry that isn't an object
             continue
 
-    return ReflectionResult(summary=raw.get("summary", ""), proposals=proposals)
+    summary = raw.get("summary")
+    return ReflectionResult(summary=summary if isinstance(summary, str) else "", proposals=proposals)
     
 def _upper_bound(field_name: str) -> int | None:  
     for constraint in ProfileSettings.model_fields[field_name].metadata:

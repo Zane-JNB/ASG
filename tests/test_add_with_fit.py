@@ -200,3 +200,33 @@ def test_the_ranked_search_runs_once_across_mode_switches(conn, sid, monkeypatch
                         lambda *a, **k: (calls.append(k.get("search", True)), propose_drops(*a, **k))[1])
     _run(conn, sid, _tight_day(conn, sid), ["a", "n", "s", "1"])
     assert calls == [False, True]  # one cheap fit check, then exactly one full search
+
+
+def _long_day_then_early_class(conn, sid):
+    add_dated_block(conn, sid, DatedBlock(title="Work", date=D.isoformat(), start_time="09:00", end_time="20:00"))
+    add_dated_block(conn, sid, DatedBlock(title="Class", date=(D + timedelta(days=1)).isoformat(),
+                                          start_time="06:00", end_time="08:00"))
+
+
+def test_fits_already_still_shows_sleep_given_up_for_it(conn, sid):
+    _long_day_then_early_class(conn, sid)
+    result, shown = _run(conn, sid, _task("Essay", 1.5, 3, D), [])
+    assert result is not None and "Added." in shown
+    assert any(s.startswith("Warning:") and "sleep" in s for s in shown)
+
+
+def test_easy_fit_shows_no_sleep_warning(conn, sid):
+    result, shown = _run(conn, sid, _task("Essay", 1.5, 3, D + timedelta(days=3)), [])
+    assert shown == ["Added."]
+
+
+def test_a_failed_full_search_returns_to_the_mode_prompt(conn, sid, monkeypatch):
+    from scheduler.dropping import propose_drops
+    def fail_the_full_search(*a, **k):
+        if k.get("search", True):
+            raise RuntimeError("No schedule found within 5.0s")
+        return propose_drops(*a, **k)
+    monkeypatch.setattr("scheduler.add_with_fit.propose_drops", fail_the_full_search)
+    result, shown = _run(conn, sid, _tight_day(conn, sid), ["s", ""])
+    assert "Could not search for ways to make room: No schedule found within 5.0s" in shown
+    assert result is None and len(get_extracted_tasks(conn, sid)) == 1  # nothing saved
