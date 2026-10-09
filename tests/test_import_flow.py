@@ -1,9 +1,21 @@
+from datetime import datetime
+
 import pytest
 
 from scheduler.db import (connect, get_or_create_student, replace_extraction,
                           get_weekly_patterns, get_dated_blocks, get_extracted_tasks)
 from scheduler.import_flow import run_import
 from scheduler.models import WeeklyPattern, DatedBlock, ExtractedTask, ExtractionResult
+
+
+@pytest.fixture(autouse=True)
+def _import_clock_before_the_sample_dates(monkeypatch):
+    """run_import asks about tasks already due; these samples are dated Oct 2026, so pin 'now' before them."""
+    class _Before(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime(2026, 9, 1, 9, 0)
+    monkeypatch.setattr("scheduler.import_flow.datetime", _Before)
 
 
 def _extraction(title="DS"):
@@ -443,3 +455,36 @@ def test_the_replay_copy_path_can_be_a_path_object(env, tmp_path):
     assert run_import(conn, sid, str(img), ask=Recorder(YES + KEEP_ALL), show=lambda _: None,
                       extractor=lambda d, m: _extraction(), cache_path=cache)
     assert cache.exists()
+
+
+def _past_and_future():
+    return ExtractionResult(tasks=[ExtractedTask(title="Quiz 1", date="2026-09-20"),
+                                   ExtractedTask(title="Quiz 2", date="2026-09-22", due_time="10:00"),
+                                   ExtractedTask(title="Final", date="2026-12-10")])
+
+
+def test_past_due_imported_tasks_are_saved_as_history_done_or_missed(env, tmp_path):
+    from scheduler.planner import plan_from_saved
+    conn, sid, _, cache = env
+    saved = tmp_path / "syllabus.json"
+    saved.write_text(_past_and_future().model_dump_json(), encoding="utf-8")
+    shown = []
+    ask = Recorder(KEEP_ALL + ["x", "", "m"])  # bad answer re-asked, Quiz 1 done, Quiz 2 missed
+    now = datetime(2026, 10, 1, 9, 0)
+    assert run_import(conn, sid, str(saved), ask=ask, show=shown.append, cache_path=cache, now=now)
+    tasks = {t.title: t for _, t in get_extracted_tasks(conn, sid)}
+    assert (tasks["Quiz 1"].completed_at, tasks["Quiz 1"].missed) == ("2026-10-01T09:00", False)
+    assert tasks["Quiz 2"].completed_at and tasks["Quiz 2"].missed
+    assert tasks["Final"].completed_at is None  # future tasks aren't asked about
+    assert sum("was due" in p for p in ask.prompts) == 3 and "Type d or m." in shown
+    assert any("2 past one(s) kept as history" in s for s in shown)
+    _, _, _, warnings = plan_from_saved(conn, sid, now=now, time_limit_seconds=10)
+    assert not [w for w in warnings if w.kind == "task_overdue"]
+
+
+def test_a_saved_task_from_before_missed_existed_still_loads(env):
+    conn, sid, _, _ = env
+    conn.execute("INSERT INTO extracted_tasks (student_id, data_json, created_at) VALUES (?, ?, ?)",
+                 (sid, '{"title": "Old", "date": "2026-10-02"}', "2026-09-01T00:00"))
+    [(_, t)] = get_extracted_tasks(conn, sid)
+    assert t.title == "Old" and t.missed is False

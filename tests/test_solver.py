@@ -408,3 +408,15 @@ def test_overlapping_commute_and_class_solve_without_error():
     assert unscheduled == []
     assert sum(i.kind == "fixed" for i in items) == 2  # both still shown
     assert read.end_slot <= 28 or read.start_slot >= 42  # clear of 28-40 plus buffer after
+
+@pytest.mark.parametrize("blocks", [
+    [FixedBlock(title="Job", start_slot=80, end_slot=104)],  # 20:00 - 02:00
+    [FixedBlock(title="Job", start_slot=80, end_slot=96),    # 20:00 - 24:00, then a late commute
+     FixedBlock(title="Commute", start_slot=95, end_slot=101, buffer_before=False)],
+])
+def test_bedtime_window_fully_blocked_is_a_hard_warning_not_a_crash(blocks):
+    rule = SleepRule(night=0)
+    items, _ = build_schedule(blocks, [], num_days=1, sleep_rules=[rule], time_limit_seconds=10)
+    assert not [i for i in items if i.kind == "sleep"]
+    [w] = sleep_warnings([rule], items)
+    assert (w.severity, w.kind) == ("hard", "sleep_short")

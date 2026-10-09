@@ -231,6 +231,7 @@ class ExtractedTask(BaseModel):
     reminder_min_difficulty: int | None = Field(default=None, ge=1, le=5)  #    None = ignore difficulty
     reminder_min_priority: int | None = Field(default=None, ge=1, le=5)  #    None = ignore priority
     completed_at: SkipJsonSchema[str | None] = None
+    missed: SkipJsonSchema[bool] = False  # closed without being done (kept as history, like completed_at)
 
     @field_validator("date")
     @classmethod

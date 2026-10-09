@@ -230,3 +230,11 @@ def test_a_failed_full_search_returns_to_the_mode_prompt(conn, sid, monkeypatch)
     result, shown = _run(conn, sid, _tight_day(conn, sid), ["s", ""])
     assert "Could not search for ways to make room: No schedule found within 5.0s" in shown
     assert result is None and len(get_extracted_tasks(conn, sid)) == 1  # nothing saved
+
+
+def test_a_saved_task_that_cannot_fit_anyway_does_not_block_a_new_one(conn, sid):
+    add_extracted_task(conn, sid, ExtractedTask(title="Lab", date=D.isoformat(), due_time="10:00",
+                                                duration_slots=32, priority=3))  # 8h, due in 1h
+    result, shown = _run(conn, sid, _task("Reading", 0.5, 2, D + timedelta(days=7)), [])
+    assert result["new_task_id"] is not None and "Added." in shown
+    assert any("'Lab' can't fit in the plan even without 'Reading'" in s for s in shown)
