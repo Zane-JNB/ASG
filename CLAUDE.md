@@ -75,7 +75,7 @@ Every backend uses forced tool-calling with a JSON schema that comes from the py
 - Splitting a task is the student's choice (per-task `splittable`), never automatic.
 - Plan cuts apply only to the current plan and never shrink the saved task.
 - Imports overwrite only fixed blocks. Tasks are added individually, never replaced by an import.
-- Completed tasks are kept as history, not deleted.
+- Completed tasks are kept as history, not deleted. A task closed without being done is kept too, with `missed=True`. Imported tasks already past due are asked done/missed and saved closed (`import_flow._close_past_tasks`).
 
 **Preferences and LLM**
 - No hardcoded algorithm tunables: all live in `ProfileSettings`, per student.
@@ -96,6 +96,17 @@ Every backend uses forced tool-calling with a JSON schema that comes from the py
 8. `DB_PATH` and `CACHE_PATH` are fixed to the repo root (`scheduler/paths.py`). A `scheduler.db` made by running scripts from another folder is not picked up; no migration (only Zane uses the app).
 9. `requirements.txt` is a full pip freeze of the Windows/Python 3.14 `.venv`, including indirect packages. Before CI, split it into direct dependencies plus a lock file. Keep it UTF-8: in PowerShell 5.1, `pip freeze > requirements.txt` writes UTF-16 and breaks `pip install -r`. Use `pip freeze | Out-File -Encoding utf8 requirements.txt` or run it from Git Bash.
 10. PDF text extraction often fails on `gpt-oss-120b` (`tool_use_failed`), so each page falls back to vision and costs two calls, which is the main cause of free-tier 429s. Address in model routing (4.0/4.1): retry once, trim the schema, or use another model; make the live PDF test catch the fallback.
+11. Sleep target vs task fit: the solver can trade target sleep for a task, which breaks the "sleep target > task fit" order. The task bonus (`priority * presence_bonus`) is paid once per task, while target sleep costs `sleep_target_penalty` per slot, so even a 15-minute priority-5 task can take up to 2.5h. For now it is shown as a warning after "Added." Rescaling needs the drop menu's "sleep below target" choice stored per task, so that `plan_from_saved` honours it.
+12. Hard-coded search tunables: `propose_drops` (`max_actions`, `max_proposals`, `max_checks`, `time_limit_seconds`) and the `restore.plan_restores` steps should be `ProfileSettings` fields with `POLICY` entries. Do this with the optimal-schedule work.
+13. Solver/drop search size: `_cheapest_first` rebuilds every combination on each batch (slow with about 40+ open tasks). The buffer-after-block rule adds a variable per (block x chunk) pair. Both go with the optimal-schedule work.
+14. Unused reminder fields on `ExtractedTask` (`reminders_enabled`, `reminder_min_*`) are sent in the Groq extraction schema. Remove them or mark them `SkipJsonSchema` (see 10).
+15. Commutes: adding one doesn't check for overlaps or ask the student (it breaks the commute invariant; planning only gives a soft warning). `Commute` doesn't use the shared `_check_time`/`_check_date`, so a date like `20261005` passes but never matches.
+16. Small CLI issues:
+    - "inf" as hours crashes (`review.hours_to_slots` raises OverflowError).
+    - `24:00` is rejected as an end time when editing an import (`review._time`).
+    - Sleep warnings round to 2 significant figures (`solver.hours`; reuse `drop_review._h`).
+    - Manual cuts always read "still one block".
+    - Old reminder sessions with reminders turned off are never marked as asked (`completion.py`), so they pile up.
 
 ## Roadmap pointer (order only; details in PRD.md)
 
