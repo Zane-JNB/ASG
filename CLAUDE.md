@@ -19,6 +19,7 @@ Auto Schedule Generator: students enter a fixed timetable, tasks (deadline, diff
 - Keep deterministic logic (solver, fit check, drop ranking, evidence) out of the LLM's hands.
 - Keep answers short.
 - Update CLAUDE.md with progress after a section is complete and notify Zane before making the adjustments.
+- Use the "Explore -> Plan -> Code -> Commit" framework
 
 ## Cost rule (important)
 
