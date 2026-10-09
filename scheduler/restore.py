@@ -1,7 +1,7 @@
-from datetime import datetime
+from datetime import date, datetime
 
 from scheduler.calendar_utils import extracted_task_to_dynamic_task
-from scheduler.db import get_extracted_tasks, get_plan_cuts
+from scheduler.db import get_extracted_tasks, get_plan_cuts, load_settings
 from scheduler.dropping import _solve_all_fit
 from scheduler.fit_check import build_fit_inputs, starts_from
 
@@ -14,12 +14,17 @@ def plan_restores(conn, student_id: int, now: datetime, time_limit_seconds: floa
     cuts = get_plan_cuts(conn, student_id)
     if not cuts:
         return {}
-    fit = build_fit_inputs(conn, student_id, now)
     saved = dict(get_extracted_tasks(conn, student_id))
-    cap = fit.settings.default_max_session_slots
-    planned = dict(fit.planned)  # id -> task with its cut applied (fully cut tasks are absent)
     active = {i: c for i, c in cuts.items()
               if i in saved and not saved[i].completed_at and saved[i].due_at() > now}  # overdue: nothing to give back
+    if not active:
+        return {}
+    # fully cut tasks aren't planned, so the window must reach their due dates too (as plan_from_saved would)
+    last_due = max((date.fromisoformat(saved[i].date) - now.date()).days for i in active)
+    horizon = load_settings(conn, student_id).plan_horizon_max_days
+    fit = build_fit_inputs(conn, student_id, now, min_days=min(last_due + 1, horizon))
+    cap = fit.settings.default_max_session_slots
+    planned = dict(fit.planned)  # id -> task with its cut applied (fully cut tasks are absent)
     order = sorted(active, key=lambda i: (-saved[i].priority, -saved[i].difficulty, i))
     given = {}
     for tid in order:

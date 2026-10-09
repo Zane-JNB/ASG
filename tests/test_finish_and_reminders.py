@@ -140,6 +140,23 @@ def test_nothing_to_restore_when_there_are_no_cuts(conn, sid):
     assert plan_restores(conn, sid, NINE) == {}
 
 
+def test_fully_cut_task_is_checked_up_to_its_own_due_date(conn, sid):
+    # the other open task is due today, so the plan window without 'Far' is one day long;
+    # today is full, but 'Far' is due in a week, so all of it can come back
+    add_dated_block(conn, sid, DatedBlock(title="Class", date=D.isoformat(), start_time="10:00", end_time="21:00"))
+    far = add_extracted_task(conn, sid, _task("Far", hours=2, due=D + timedelta(days=7)))
+    add_extracted_task(conn, sid, _task("Soon", hours=1, due=D))
+    add_plan_cut(conn, sid, far, 8)
+    assert plan_restores(conn, sid, NINE) == {far: 8}
+
+
+def test_restore_window_stays_within_the_plan_horizon(conn, sid):
+    _set(conn, sid, plan_horizon_max_days=3)
+    far = add_extracted_task(conn, sid, _task("Far", hours=2, due=D + timedelta(days=40)))
+    add_plan_cut(conn, sid, far, 8)
+    assert plan_restores(conn, sid, NINE) == {far: 8}  # fits inside the capped 3-day window
+
+
 def test_higher_priority_cut_task_is_restored_first(conn, sid):
     add_dated_block(conn, sid, DatedBlock(title="Class", date=D.isoformat(), start_time="09:00", end_time="17:00"))
     low = add_extracted_task(conn, sid, _task("Low", hours=4, priority=2, due=D))
