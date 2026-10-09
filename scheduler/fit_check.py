@@ -52,7 +52,7 @@ def wake_before(day_blocks: list[FixedBlock], settings: ProfileSettings) -> tupl
     if not day_blocks:
         return None
     first = min(day_blocks, key=lambda b: b.start_slot)
-    reason = f"'{first.title}' at {slot_to_time(first.start_slot)} the next morning"
+    reason = f"'{first.title}' at {slot_to_time(first.start_slot)} the next day"
     if settings.wake_buffer_slots:
         reason += f" (minus your {settings.wake_buffer_slots * MINUTES_PER_SLOT} min wake-up buffer)"
     return first.start_slot - settings.wake_buffer_slots, reason

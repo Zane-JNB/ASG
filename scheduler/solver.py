@@ -288,8 +288,9 @@ def sleep_warnings(sleep_rules: list[SleepRule],
  
         length = 0 if found is None else found.end_slot - found.start_slot
         why = ""  # an early start the morning after the plan can be the cause, not the plan itself
-        woke_at_cap = (found is not None and rule.latest_wake is not None
-                       and found.day * SLOTS_PER_DAY + found.end_slot - base == rule.latest_wake)
+        woke_at_cap = rule.latest_wake is not None and (
+            found.day * SLOTS_PER_DAY + found.end_slot - base == rule.latest_wake if found is not None
+            else reachable_sleep(rule) == 0)  # the cap left no room for any sleep
         if rule.latest_wake_reason and woke_at_cap:  # the next morning's start is what ended it
             why = f" It has to end by then: {rule.latest_wake_reason}."   
         if length < rule.min_slots:   
