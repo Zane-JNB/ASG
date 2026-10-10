@@ -7,7 +7,7 @@ from scheduler.add_with_fit import add_task_with_fit
 from scheduler.commute_menu import run_commute_menu
 from scheduler.completion import finish_task, run_checkin
 from scheduler.db import EXTRACTED_TASKS, get_unreadable_items, load_settings, transaction
-from scheduler.models import DynamicTask, ExtractedTask, ProfileSettings
+from scheduler.models import ExtractedTask, ProfileSettings
 from scheduler.preferences import Actor, PreferenceError, set_values
 from scheduler.prompts import (ask_missed, ask_until, confirm, describe_task, parse_due, parse_hours,
                                parse_rating, pick)
@@ -15,22 +15,17 @@ from scheduler.settings_menu import run_settings_menu
 from scheduler.task_filter import describe_reminders
 from scheduler.units import parse_time, plan_start, slots_to_hours
 
-_DEFAULT = ExtractedTask(title="x", date="2000-01-01")  # only used to read the placeholder defaults
-_SESSION_CAP = DynamicTask.model_fields["max_session_slots"].default
+_DEFAULT = {name: ExtractedTask.model_fields[name].default for name in ("duration_slots", "priority", "difficulty")}
 
 
-def prompt_new_task(ask=input, show=print, today: date | None = None, session_cap: int | None = None,
-                    now: datetime | None = None) -> ExtractedTask:
-    today = today or (now.date() if now else date.today())
-    session_cap = session_cap or _SESSION_CAP
+def prompt_new_task(ask=input, show=print, *, now: datetime, session_cap: int) -> ExtractedTask:
+    """Ask for a new task. Its due time must leave at least one slot to plan it in."""
 
     def future_due(s: str) -> tuple[str, str | None]:
         d, t = parse_due(s)
         typed = ExtractedTask(title="x", date=d, due_time=t)  # midnight / rounding applied
-        if now is not None and typed.due_at() <= plan_start(now):  # no slot left to plan it in
+        if typed.due_at() <= plan_start(now):  # no slot left to plan it in (an earlier date included)
             raise ValueError(f"due {typed.due_label()} has already passed (plans run in 15-minute steps)")
-        if date.fromisoformat(typed.date) < today:  # plans start from today, so an earlier date is never planned
-            raise ValueError("due date must be today or later")
         clock = s.strip().partition(" ")[2].strip()
         if clock and parse_time(clock, end=True) != typed.due_time or typed.date != d:
             show(f"  Saved as due {typed.due_label()} (plans run in 15-minute steps).")
@@ -41,11 +36,11 @@ def prompt_new_task(ask=input, show=print, today: date | None = None, session_ca
                               required=True)
     task = ExtractedTask(
         title=title, date=due, due_time=due_time,
-        duration_slots=ask_until(ask, show, f"hours [{slots_to_hours(_DEFAULT.duration_slots):g}]", parse_hours,
-                                 _DEFAULT.duration_slots),
-        priority=ask_until(ask, show, f"priority 1-5 [{_DEFAULT.priority}]", parse_rating, _DEFAULT.priority),
-        difficulty=ask_until(ask, show, f"difficulty 1-5 [{_DEFAULT.difficulty}]", parse_rating,
-                             _DEFAULT.difficulty),
+        duration_slots=ask_until(ask, show, f"hours [{slots_to_hours(_DEFAULT['duration_slots']):g}]", parse_hours,
+                                 _DEFAULT["duration_slots"]),
+        priority=ask_until(ask, show, f"priority 1-5 [{_DEFAULT['priority']}]", parse_rating, _DEFAULT["priority"]),
+        difficulty=ask_until(ask, show, f"difficulty 1-5 [{_DEFAULT['difficulty']}]", parse_rating,
+                             _DEFAULT["difficulty"]),
     )
     if task.duration_slots > session_cap:  # splitting only matters for tasks longer than one session
         hours, cap = slots_to_hours(task.duration_slots), slots_to_hours(session_cap)
@@ -54,26 +49,29 @@ def prompt_new_task(ask=input, show=print, today: date | None = None, session_ca
     return task
 
 
-def _sorted_tasks(conn, student_id):
+def _sorted_tasks(conn, student_id: int) -> list[tuple[int, ExtractedTask]]:
     open_tasks = [(i, t) for i, t in EXTRACTED_TASKS.get(conn, student_id) if not t.completed_at]  # done = history
     return sorted(open_tasks, key=lambda x: (x[1].date, x[1].due_slot(), x[1].title.lower()))
 
 
 @dataclass(frozen=True)
 class _Menu:
-    """What every menu action needs. now/today are read again before each action."""
+    """What every menu action needs. now is read again before each action."""
     conn: sqlite3.Connection
     student_id: int
     ask: Callable[[str], str]
     show: Callable[[str], object]
     now: datetime
-    today: date
+
+    @property
+    def today(self) -> date:
+        return self.now.date()
 
     def session_cap(self) -> int:
         return load_settings(self.conn, self.student_id).default_max_session_slots
 
 
-def _show_tasks(tasks, show, session_cap: int | None = None) -> None:
+def _show_tasks(tasks: list[tuple[int, ExtractedTask]], show, session_cap: int | None = None) -> None:
     if not tasks:
         show("No tasks saved.")
     for n, (_, t) in enumerate(tasks, 1):
@@ -88,7 +86,7 @@ def _pick_task(m: _Menu, prompt: str, session_cap: int | None = None) -> tuple[i
 
 
 def _add(m: _Menu) -> None:
-    task = prompt_new_task(m.ask, m.show, m.today, m.session_cap(), m.now)
+    task = prompt_new_task(m.ask, m.show, now=m.now, session_cap=m.session_cap())
     add_task_with_fit(m.conn, m.student_id, task, m.now, m.ask, m.show)
 
 
@@ -179,7 +177,7 @@ def _reminders(m: _Menu) -> None:
 
 
 def _commutes(m: _Menu) -> None:
-    run_commute_menu(m.conn, m.student_id, m.ask, m.show, m.today)
+    run_commute_menu(m.conn, m.student_id, m.ask, m.show, today=m.today)
 
 
 def _settings(m: _Menu) -> None:
@@ -235,12 +233,13 @@ _PROMPT = "Tasks: " + "  ".join(label for label, _ in _ACTIONS.values()) + "  [q
 _CHOOSE = f"Choose {', '.join(_ACTIONS)} or q."
 
 
-def run_menu(conn, student_id, ask=input, show=print, today: date | None = None,
-             now: datetime | None = None, clock=None) -> None:
-    """A fixed today/now (tests) is used throughout; otherwise the time is read again for every
-    action, so a menu left open for hours doesn't plan from when it was opened."""
+def run_menu(conn, student_id: int, ask=input, show=print, today: date | None = None,
+             now: datetime | None = None, clock: Callable[[], datetime] = datetime.now) -> None:
+    """clock is read again before every action, so a menu left open for hours doesn't plan from
+    when it was opened. A fixed now, or today at midnight (tests), replaces it."""
     fixed_now = now or (datetime.combine(today, time(0, 0)) if today else None)
-    clock = (lambda: fixed_now) if fixed_now else (clock or datetime.now)
+    if fixed_now:
+        clock = lambda: fixed_now  # noqa: E731
     run_checkin(conn, student_id, clock(), ask, show)
     while True:
         choice = ask(_PROMPT).strip().lower()
@@ -249,5 +248,4 @@ def run_menu(conn, student_id, ask=input, show=print, today: date | None = None,
         if choice not in _ACTIONS:
             show(_CHOOSE)
             continue
-        now = clock()
-        _ACTIONS[choice][1](_Menu(conn, student_id, ask, show, now, today or now.date()))
+        _ACTIONS[choice][1](_Menu(conn, student_id, ask, show, clock()))

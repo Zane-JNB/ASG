@@ -284,7 +284,7 @@ def test_reimport_counts_an_unreadable_saved_task_as_a_repeat(conn, sid):
     from scheduler.db import replace_extraction
     _raw_row(conn, sid, "extracted_tasks", '{"title": "Essay", "date": "2026-10-06", "due_time": "99:00"}')
     summary = replace_extraction(conn, sid, ExtractionResult(tasks=[ExtractedTask(title="Essay", date="2026-10-06")]))
-    assert summary["tasks_skipped"] == 1
+    assert summary.tasks_skipped == 1
 
 def test_extraction_leaves_classes_without_a_due_time_key():
     from scheduler.schedule_extraction import extraction_from_dict

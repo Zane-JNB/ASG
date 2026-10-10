@@ -1,6 +1,8 @@
 """Adding a task: check that it fits; if not, the student makes room (manual, semi-automatic or
 automatic) and the choice is saved as plan cuts, all in one transaction."""
+from dataclasses import dataclass
 from datetime import datetime
+
 from scheduler.db import EXTRACTED_TASKS, apply_plan_changes
 from scheduler.dropping import NEW_TASK, dont_add_unverified, manual_actions, propose_drops, try_cuts
 from scheduler.fit_check import FitInputs, build_fit_inputs
@@ -11,10 +13,16 @@ from scheduler.solver import chunk_sizes
 from scheduler.units import format_hours
 
 
+@dataclass(frozen=True)
+class AddOutcome:
+    """What adding a task saved."""
+    cuts: dict[int, int]  # saved task id -> slots cut from its plan (the new task's own cut too)
+    new_task_id: int | None  # None: the student chose not to add it
+
+
 def add_task_with_fit(conn, student_id: int, new_task: ExtractedTask, now: datetime,
-                      ask=input, show=print, must_add: bool = False) -> dict | None:
-    """Only asks the student anything if the deadline can't be met.
-    Returns {"cuts": {...}, "new_task_id": id or None}, or None if nothing was saved."""
+                      ask=input, show=print, must_add: bool = False) -> AddOutcome | None:
+    """Only asks the student anything if the deadline can't be met. None if nothing was saved."""
     try:
         fit = build_fit_inputs(conn, student_id, now, new_task)
         fits = fit.frame.solve_all_fit(fit.tasks + [fit.new_task])
@@ -37,7 +45,7 @@ def add_task_with_fit(conn, student_id: int, new_task: ExtractedTask, now: datet
     if fits is not None:  # later-deadline tasks were shuffled if needed; target sleep never is (#11)
         new_id = EXTRACTED_TASKS.add(conn, student_id, new_task)
         show("Added.")
-        return {"cuts": {}, "new_task_id": new_id}
+        return AddOutcome({}, new_id)
 
     full = None  # the ranked search, run at most once and shared by semi and automatic
     while True:  # declining or cancelling a mode returns to the mode prompt
@@ -62,7 +70,7 @@ def add_task_with_fit(conn, student_id: int, new_task: ExtractedTask, now: datet
             break
         show("Nothing saved yet. Choose another way, or Enter to cancel.")
     summary = apply_drop_choice(conn, student_id, choice, fit.planned, new_task)
-    if summary["new_task_id"] is None:
+    if summary.new_task_id is None:
         show(f"'{new_task.title}' was not added. Nothing else changed.")
     else:
         show(f"Added '{new_task.title}'.")
@@ -102,7 +110,7 @@ def _choose_manual(fit: FitInputs, must_add: bool, ask, show) -> DropProposal | 
 
 def apply_drop_choice(conn, student_id: int, proposal: DropProposal,
                       planned: list[tuple[int, DynamicTask]],
-                      new_task: ExtractedTask | None = None) -> dict:
+                      new_task: ExtractedTask | None = None) -> AddOutcome:
     """`planned` is the (saved task id, DynamicTask) list given to propose_drops, same order.
     That is how a proposal's task_index maps back to a saved task."""
     added = proposal.added
@@ -118,4 +126,4 @@ def apply_drop_choice(conn, student_id: int, proposal: DropProposal,
     new_id = apply_plan_changes(conn, student_id, cuts, new_task if added else None, new_cut)
     if new_cut:
         cuts[new_id] = new_cut
-    return {"cuts": cuts, "new_task_id": new_id}
+    return AddOutcome(cuts, new_id)

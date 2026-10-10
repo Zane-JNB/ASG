@@ -133,10 +133,9 @@ def _clashes_with_saved(conn, student_id, reviewed: ExtractionResult, today: dat
     return overlap_lines(today, pairs)
 
 
-def run_import(conn, student_id, source_path, ask=input, show=print,
-               extractor=extract_document, cache_path=CACHE_PATH, now: datetime | None = None) -> bool:
+def run_import(conn, student_id: int, source_path: str, ask=input, show=print,
+               extractor=extract_document, cache_path=CACHE_PATH, *, now: datetime) -> bool:
     """Extract -> review -> replace the student's saved schedule items. True only if saved."""
-    now = now or datetime.now()
     result, failed, kept_in = _load_result(source_path, ask, show, extractor, cache_path)
     if result is None:
         return False
@@ -170,16 +169,16 @@ def run_import(conn, student_id, source_path, ask=input, show=print,
             show("Not saved. Your saved schedule is untouched.")
             return False
 
-    summary = replace_extraction(conn, student_id, reviewed)
+    saved = replace_extraction(conn, student_id, reviewed)
     parts = []  # say what was replaced and what was left alone
-    if summary["weekly"]:
-        parts.append(f"{summary['weekly']} weekly (replaced old)")
-    if summary["dated"]:
-        parts.append(f"{summary['dated']} dated (replaced old)")
-    if summary["tasks_added"] or summary["tasks_skipped"]:
-        text = f"{summary['tasks_added']} task(s) added"
-        if summary["tasks_skipped"]:
-            text += f", {summary['tasks_skipped']} duplicate(s) skipped"
+    if saved.weekly:
+        parts.append(f"{saved.weekly} weekly (replaced old)")
+    if saved.dated:
+        parts.append(f"{saved.dated} dated (replaced old)")
+    if saved.tasks_added or saved.tasks_skipped:
+        text = f"{saved.tasks_added} task(s) added"
+        if saved.tasks_skipped:
+            text += f", {saved.tasks_skipped} duplicate(s) skipped"
         if closed:
             text += f" ({closed} past one(s) kept as history)"
         parts.append(text)

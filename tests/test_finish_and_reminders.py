@@ -111,7 +111,7 @@ def test_finishing_a_task_gives_cut_hours_back_after_asking(conn, sid):
     lab, essay = _tight_day(conn, sid)
     shown = []
     result = finish_task(conn, sid, essay, NINE, ask=lambda _p: "", show=shown.append)  # Enter = yes
-    assert result["restored"] == {lab: 13}
+    assert result == {lab: 13}
     assert get_plan_cuts(conn, sid) == {}
     assert any("'Lab' +3h 15m" in l for l in shown)
 
@@ -119,7 +119,7 @@ def test_finishing_a_task_gives_cut_hours_back_after_asking(conn, sid):
 def test_declining_the_restore_keeps_the_cut(conn, sid):
     lab, essay = _tight_day(conn, sid)
     result = finish_task(conn, sid, essay, NINE, ask=lambda _p: "n", show=lambda _l: None)
-    assert result["restored"] == {} and get_plan_cuts(conn, sid) == {lab: 13}
+    assert result == {} and get_plan_cuts(conn, sid) == {lab: 13}
 
 
 def test_only_what_still_fits_is_restored(conn, sid):

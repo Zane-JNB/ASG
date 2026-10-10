@@ -116,8 +116,7 @@ def demo_make_room():
         print(f"\n=============== {label} ===============")
         add_task_with_fit(conn, sid, essay, now, ask=ask, show=print)
         print(f"Plan cuts saved: {get_plan_cuts(conn, sid)}")
-        anchor, fixed, items, warnings = plan_from_saved(conn, sid, now=now, time_limit_seconds=10)
-        print("\n".join(format_plan(anchor, fixed, items, warnings)))
+        print("\n".join(format_plan(plan_from_saved(conn, sid, now=now, time_limit_seconds=10))))
 
 
 def main():

@@ -117,11 +117,11 @@ def test_ask_mode_no_leaves_value_unchanged(monkeypatch, conn):
 def _fail_first(monkeypatch, error, times=1):
     """Make reflect_and_record raise `error` for the first `times` calls, then work normally."""
     calls = []
-    def flaky(conn, sid, text):
+    def flaky(conn, sid, text, now):
         calls.append(text)
         if len(calls) <= times:
             raise error
-        return reflect_and_record(conn, sid, text)
+        return reflect_and_record(conn, sid, text, now=now)
     monkeypatch.setattr(reflect, "reflect_and_record", flaky)
     return calls
 

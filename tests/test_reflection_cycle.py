@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -115,7 +116,7 @@ def test_user_owned_field_is_not_shown_to_the_model():
         call = SimpleNamespace(function=SimpleNamespace(arguments='{"summary": "", "proposals": []}'))
         return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(tool_calls=[call]))])
     client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
-    reflect_and_record(conn, sid, "felt rushed", client=client)
+    reflect_and_record(conn, sid, "felt rushed", now=datetime(2026, 10, 1, tzinfo=timezone.utc), client=client)
     assert "buffer_slots (deltas" not in seen["system"] and "bedtime_penalty (deltas" in seen["system"]
 
 def test_apply_and_log_skips_fields_the_student_owns(conn, student_id):

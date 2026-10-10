@@ -136,8 +136,7 @@ def _skip(conn, student_id: int, ask, show) -> None:
         show("Choose o or e.")
 
 
-def run_commute_menu(conn, student_id, ask=input, show=print, today: date | None = None) -> None:
-    today = today or date.today()
+def run_commute_menu(conn, student_id: int, ask=input, show=print, *, today: date) -> None:
     while True:
         choice = ask("Commutes: [a]dd  [l]ist  [s]kip/end  [d]elete  [b]ack: ").strip().lower()
         if choice == "b":

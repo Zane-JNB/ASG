@@ -18,10 +18,10 @@ def _iso(dt: datetime) -> str:
 
 
 def finish_task(conn, student_id: int, task_id: int, now: datetime, ask=input, show=print,
-                time_limit_seconds: float = FIT_CHECK_SECONDS, missed: bool = False) -> dict:
+                time_limit_seconds: float = FIT_CHECK_SECONDS, missed: bool = False) -> dict[int, int]:
     """Close a task as done (or missed=True: closed without being done), kept as history either
     way; free its time, and offer to give cut tasks their hours back.
-    Returns {"restored": {task id: slots}} -- empty if nothing was restored."""
+    Returns {task id: slots given back}, empty if nothing was restored."""
     task = EXTRACTED_TASKS.find(conn, student_id, task_id)
     if task is None or task.completed_at:
         raise ValueError("that task is not an open task")
@@ -34,19 +34,19 @@ def finish_task(conn, student_id: int, task_id: int, now: datetime, ask=input, s
     try:
         restores = plan_restores(conn, student_id, now, time_limit_seconds)
     except (ValueError, RuntimeError):
-        return {"restored": {}}  # could not verify a restore, so offer none
+        return {}  # could not verify a restore, so offer none
     if not restores:
-        return {"restored": {}}
+        return {}
     titles = {i: t.title for i, t in EXTRACTED_TASKS.get(conn, student_id)}
     show("That frees up time. These tasks can get hours back:")
     for tid, slots in restores.items():
         show(f"  - '{titles[tid]}' +{format_hours(slots)}")
     if not confirm(ask, "Restore them?", True):
-        return {"restored": {}}
+        return {}
     with transaction(conn):
         for tid, slots in restores.items():
             reduce_plan_cut(conn, student_id, tid, slots)
-    return {"restored": restores}
+    return restores
 
 
 def record_plan(conn, student_id: int, anchor: PlanAnchor, items, now: datetime) -> int:

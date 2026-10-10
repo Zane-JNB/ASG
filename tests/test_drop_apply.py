@@ -7,7 +7,7 @@ from scheduler.db import (
     DATED_BLOCKS, EXTRACTED_TASKS, add_plan_cut, apply_plan_changes, clear_plan_cut, connect,
     get_or_create_student, get_plan_cuts,
 )
-from scheduler.add_with_fit import apply_drop_choice
+from scheduler.add_with_fit import AddOutcome, apply_drop_choice
 from scheduler.dropping import dont_add_unverified, propose_drops
 from scheduler.models import DatedBlock, ExtractedTask
 from scheduler.fit_check import build_fit_inputs
@@ -143,7 +143,7 @@ def test_applying_a_cut_saves_it_for_the_plan_only(conn, sid):
     assert not report.fits_already
     best = report.proposals[0]
     summary = apply_drop_choice(conn, sid, best, planned, essay)
-    assert summary["new_task_id"] is not None
+    assert summary.new_task_id is not None
     assert sum(get_plan_cuts(conn, sid).values()) == sum(a.slots_lost for a in best.actions) > 0
     saved = {t.title: t.duration_slots for _, t in EXTRACTED_TASKS.get(conn, sid)}
     assert saved["Big project"] == 40 and saved["Essay"] == 16  # saved hours untouched, essay saved
@@ -166,7 +166,7 @@ def test_not_adding_saves_nothing(conn, sid):
     choice = next((p for p in report.proposals if p.added is None),
                   dont_add_unverified(extracted_task_to_dynamic_task(essay, START, 8), 9))
     summary = apply_drop_choice(conn, sid, choice, planned, essay)
-    assert summary == {"cuts": {}, "new_task_id": None}
+    assert summary == AddOutcome(cuts={}, new_task_id=None)
     assert get_plan_cuts(conn, sid) == {}
     assert all(t.title != "Essay" for _, t in EXTRACTED_TASKS.get(conn, sid))
 

@@ -4,9 +4,9 @@ import pytest
 
 from scheduler.db import connect, get_or_create_student, replace_extraction
 from scheduler.models import (
-    WeeklyPattern, DatedBlock, ExtractedTask, ExtractionResult, FixedBlock, PlanAnchor, ScheduledItem
+    WeeklyPattern, DatedBlock, ExtractedTask, ExtractionResult, PlanAnchor, ScheduledItem
 )
-from scheduler.planner import plan_from_saved, format_plan
+from scheduler.planner import Plan, format_plan, plan_from_saved
 
 MONDAY = date(2026, 9, 28)
 MON_MIDNIGHT = datetime(2026, 9, 28, 0, 0)  # plans start from `now`; midnight = the whole Monday
@@ -29,7 +29,7 @@ def _setup(tasks=None, blocks=None, patterns=None):
 def test_end_to_end_uses_real_dates_and_meets_deadline():
     conn, sid = _setup()
     anchor, fixed, items, warnings = plan_from_saved(conn, sid, 7, now=MON_MIDNIGHT, time_limit_seconds=10)
-    text = "\n".join(format_plan(anchor, fixed, items, warnings))
+    text = "\n".join(format_plan(Plan(anchor, fixed, items, warnings)))
     assert "Mon 28 Sep 2026" in text and "09:00-11:00  [fixed]  DS" in text
     assert "Tue 29 Sep 2026" in text and "10:00-12:00  [fixed]  Lab" in text
     hw = [i for i in items if i.title.startswith("HW")]
@@ -52,7 +52,7 @@ def test_other_students_items_are_not_used():
 def test_weekly_pattern_repeats_each_week():
     conn, sid = _setup(tasks=[], blocks=[])
     anchor, fixed, items, warnings = plan_from_saved(conn, sid, 14, now=MON_MIDNIGHT, time_limit_seconds=10)
-    text = "\n".join(format_plan(anchor, fixed, items, warnings))
+    text = "\n".join(format_plan(Plan(anchor, fixed, items, warnings)))
     assert "Mon 28 Sep 2026" in text and "Mon 05 Oct 2026" in text
 
 
@@ -68,16 +68,15 @@ def test_impossible_task_shows_up_as_a_warning():
     conn, sid = _setup(tasks=[huge], blocks=[])
     anchor, fixed, items, warnings = plan_from_saved(conn, sid, 3, now=MON_MIDNIGHT, time_limit_seconds=10)
     assert any("Thesis" in w.message for w in warnings)
-    assert "Warnings:" in "\n".join(format_plan(anchor, fixed, items, warnings))
+    assert "Warnings:" in "\n".join(format_plan(Plan(anchor, fixed, items, warnings)))
 
 
-def test_format_plan_groups_by_real_date_sorts_by_time_and_skips_duplicate_fixed():
+def test_format_plan_groups_by_real_date_and_sorts_by_time():
     anchor = PlanAnchor(start_date=MONDAY, num_days=2)
-    fixed = [FixedBlock(title="B", start_slot=40, end_slot=44, day=1),
-             FixedBlock(title="A", start_slot=36, end_slot=40, day=0)]
-    items = [ScheduledItem(title="T", start_slot=20, end_slot=24, kind="task", day=0),
-             ScheduledItem(title="A", start_slot=36, end_slot=40, kind="fixed", day=0)]  # must not repeat A
-    assert format_plan(anchor, fixed, items, []) == [
+    items = [ScheduledItem(title="B", start_slot=40, end_slot=44, kind="fixed", day=1),
+             ScheduledItem(title="T", start_slot=20, end_slot=24, kind="task", day=0),
+             ScheduledItem(title="A", start_slot=36, end_slot=40, kind="fixed", day=0)]
+    assert format_plan(Plan(anchor, [], items, [])) == [
         "Mon 28 Sep 2026",
         "  05:00-06:00  [task]  T",
         "  09:00-10:00  [fixed]  A",
@@ -109,7 +108,7 @@ def test_first_morning_sleep_is_shown_and_ends_at_wake_time():
     anchor, fixed, items, warnings = plan_from_saved(conn, sid, 2, now=MON_MIDNIGHT, time_limit_seconds=5)
     block = next(b for b in fixed if b.title == "Sleep (night before)")
     assert (block.day, block.start_slot, block.end_slot) == (0, 0, 28)
-    assert "00:00-07:00  [fixed]  Sleep (night before)" in "\n".join(format_plan(anchor, fixed, items, warnings))
+    assert "00:00-07:00  [fixed]  Sleep (night before)" in "\n".join(format_plan(Plan(anchor, fixed, items, warnings)))
 
 
 def test_an_early_class_on_day_zero_wins_over_the_assumed_sleep():
@@ -129,3 +128,11 @@ def test_plan_with_bedtime_fully_blocked_warns_instead_of_crashing():
     _, _, items, warnings = plan_from_saved(conn, sid, now=MON_MIDNIGHT, time_limit_seconds=10)
     assert any(w.kind == "sleep_short" and w.severity == "hard" and w.message.startswith("Night 0")
                for w in warnings)
+
+
+def test_a_plan_names_its_parts_and_its_items_hold_every_fixed_block():
+    conn, sid = _setup()
+    plan = plan_from_saved(conn, sid, 7, now=MON_MIDNIGHT, time_limit_seconds=10)
+    assert plan.anchor.start_date == MONDAY
+    shown = {(i.day, i.start_slot, i.end_slot, i.title) for i in plan.items if i.kind == "fixed"}
+    assert shown == {(b.day, b.start_slot, b.end_slot, b.title) for b in plan.fixed}

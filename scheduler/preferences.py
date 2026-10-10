@@ -1,7 +1,7 @@
 """Who may change which setting (tiers), and how reflections earn a change: evidence across
 separate reflections, a threshold, then an automatic change or the student's approval."""
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from enum import StrEnum
 
 import annotated_types
@@ -12,7 +12,7 @@ from scheduler.db import (clear_evidence, load_approval_mode, load_evidence, loa
                           transaction)
 from scheduler.models import ProfileSettings
 from scheduler.preference_policy import MAGNITUDES, POLICY, ApprovalMode, Direction, FieldPolicy, Magnitude, Tier
-from scheduler.reflection import PreferenceChangeProposal
+from scheduler.reflection import PreferenceChangeProposal, ReflectionResult
 
 EVIDENCE_THRESHOLD = 3
 EVIDENCE_TTL_DAYS = 14
@@ -231,11 +231,11 @@ def _why_ignored(field: str, vote, tiers: dict[str, Tier]) -> str | None:
     return None
 
 
-def process_reflection(conn, student_id, reflection_text, result, now=None) -> ReflectionOutcome:
+def process_reflection(conn, student_id: int, reflection_text: str, result: ReflectionResult,
+                       *, now: datetime) -> ReflectionOutcome:
     """Count one reflection's proposals as evidence. A field that reaches the threshold changes
     (auto mode) or waits for approval (ask mode). Evidence, settings and the log row are saved
     in one transaction."""
-    now = now or datetime.now(timezone.utc)
     tiers, evidence = load_tiers(conn, student_id), live_evidence(conn, student_id, now)
     mode = load_approval_mode(conn, student_id)
     before = settings = load_settings(conn, student_id)
@@ -314,11 +314,10 @@ class PendingChange:
     new: int
 
 
-def pending_approvals(conn, student_id, now=None) -> list[PendingChange]:
+def pending_approvals(conn, student_id: int, *, now: datetime) -> list[PendingChange]:
     """Changes that reached the threshold in ask mode and wait for the student's yes or no."""
     if load_approval_mode(conn, student_id) != ApprovalMode.ASK:
         return []
-    now = now or datetime.now(timezone.utc)
     tiers, settings, out = load_tiers(conn, student_id), load_settings(conn, student_id), []
     for field, (score, magnitude) in live_evidence(conn, student_id, now).items():
         if abs(score) < EVIDENCE_THRESHOLD or not _is_learnable(field, tiers):
@@ -331,8 +330,9 @@ def pending_approvals(conn, student_id, now=None) -> list[PendingChange]:
     return out
 
 
-def resolve_pending(conn, student_id, field, approve: bool, now=None) -> FieldResult:
-    pending = next((p for p in pending_approvals(conn, student_id, now) if p.field == field), None)
+def resolve_pending(conn, student_id: int, field: str, approve: bool, *, now: datetime) -> FieldResult:
+    """Apply (approve) or drop one pending change; its evidence is used up either way."""
+    pending = next((p for p in pending_approvals(conn, student_id, now=now) if p.field == field), None)
     if pending is None:
         raise PreferenceError("Nothing is waiting for your approval for that setting.")
     before = load_settings(conn, student_id)

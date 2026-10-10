@@ -396,26 +396,30 @@ def skip_commute_date(conn: sqlite3.Connection, student_id: int, item_id: int, d
         COMMUTES.update(conn, student_id, item_id, found)
     return True
 
-def replace_extraction(conn: sqlite3.Connection, student_id: int, result: ExtractionResult) -> dict[str, int]:
+class ImportCounts(NamedTuple):
+    weekly: int  # weekly classes saved (the old ones replaced)
+    dated: int  # dated sessions saved (the old ones replaced)
+    tasks_added: int
+    tasks_skipped: int  # repeats of a saved task
+
+def replace_extraction(conn: sqlite3.Connection, student_id: int, result: ExtractionResult) -> ImportCounts:
     """Save a reviewed import, all-or-nothing. Fixed blocks are REPLACED, tasks are ADDED:
     weekly patterns and dated blocks are each replaced only if the import contains some
     (so an exam sheet can't wipe your classes); tasks are appended, skipping exact repeats
-    (same title and due date, ignoring case; a different due time is still a repeat). Returns counts of what was written."""
+    (same title and due date, ignoring case; a different due time is still a repeat)."""
     if not (result.weekly_patterns or result.dated_blocks or result.tasks):
         raise ValueError("nothing was extracted; existing data left untouched")
 
     def repeat_key(title: object, day: object) -> tuple[str, object]:
         return str(title).strip().lower(), day
 
-    summary = {"weekly": 0, "dated": 0, "tasks_added": 0, "tasks_skipped": 0}
+    added = skipped = 0
     with transaction(conn):
-        for table, key, items in ((WEEKLY_PATTERNS, "weekly", result.weekly_patterns),
-                                  (DATED_BLOCKS, "dated", result.dated_blocks)):
+        for table, items in ((WEEKLY_PATTERNS, result.weekly_patterns), (DATED_BLOCKS, result.dated_blocks)):
             if items:  # an import with none of this type leaves the old ones alone
                 table.clear(conn, student_id)
                 for item in items:
                     table.add(conn, student_id, item)
-                summary[key] = len(items)
 
         # from the raw rows, so an unreadable saved task still counts as a repeat
         saved = (_raw_dict(data) for _, data in EXTRACTED_TASKS.rows(conn, student_id))
@@ -423,12 +427,12 @@ def replace_extraction(conn: sqlite3.Connection, student_id: int, result: Extrac
         for task in result.tasks:  # tasks are appended, never replaced
             key = repeat_key(task.title, task.date)
             if key in seen:
-                summary["tasks_skipped"] += 1
+                skipped += 1
                 continue
             seen.add(key)
             EXTRACTED_TASKS.add(conn, student_id, task)
-            summary["tasks_added"] += 1
-    return summary
+            added += 1
+    return ImportCounts(len(result.weekly_patterns), len(result.dated_blocks), added, skipped)
 
 def add_plan_cut(conn: sqlite3.Connection, student_id: int, task_id: int, slots: int) -> None:
     """Cut `slots` more from this task's plan. Cuts add up and never shrink the saved task."""

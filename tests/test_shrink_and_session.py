@@ -117,7 +117,7 @@ def test_shortening_the_new_task_keeps_full_hours_saved_and_records_a_plan_cut(c
     summary = apply_drop_choice(conn, sid, choice, fit.planned, essay)
     saved = {t.title: t.duration_slots for _, t in EXTRACTED_TASKS.get(conn, sid)}
     assert saved["Essay"] == 16  # saved at full hours
-    assert get_plan_cuts(conn, sid)[summary["new_task_id"]] == choice.added.slots_cut
+    assert get_plan_cuts(conn, sid)[summary.new_task_id] == choice.added.slots_cut
     planned = {t.title: t.duration_slots for _, t in _planned(conn, sid, D)}
     assert planned["Essay"] == 16 - choice.added.slots_cut
 
@@ -148,10 +148,10 @@ def test_the_students_session_length_reaches_the_solver_tasks(conn, sid):
 
 def test_prompt_asks_about_splitting_using_the_students_session_length():
     ask, shown = scripted(["Quiz", "2026-10-05", "2", "", "", "n"])
-    task = prompt_new_task(ask, shown.append, today=date(2026, 9, 28), session_cap=4)  # 2h > a 1h session
+    task = prompt_new_task(ask, shown.append, now=datetime(2026, 9, 28), session_cap=4)  # 2h > a 1h session
     assert task.splittable is False
     ask, shown = scripted(["Quiz", "2026-10-05", "2", "", ""])
-    assert prompt_new_task(ask, shown.append, today=date(2026, 9, 28)).splittable is True  # default 2h cap: no ask
+    assert prompt_new_task(ask, shown.append, now=datetime(2026, 9, 28), session_cap=8).splittable is True  # 2h cap: no ask
 
 
 def test_menu_session_time_saves_and_takes_effect_immediately(conn, sid):
@@ -211,7 +211,8 @@ def test_import_flow_uses_the_students_session_length(tmp_path, conn, sid):
     img.write_bytes(b"fake-image-bytes")
     ask, shown = scripted(["y", ""])  # confirm the Groq call, then accept everything
     run_import(conn, sid, str(img), ask=ask, show=shown.append,
-               extractor=lambda *a, **k: _long_task(), cache_path=str(tmp_path / "c.json"))
+               extractor=lambda *a, **k: _long_task(), cache_path=str(tmp_path / "c.json"),
+               now=datetime(2026, 9, 1, 9, 0))
     assert any("can be split" in l for l in shown)
 
 

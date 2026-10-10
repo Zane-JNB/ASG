@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 from scheduler.db import connect, get_or_create_student
 from scheduler.llm_backends import is_backend_failure
 from scheduler.paths import DB_PATH  # repo root, whatever folder you run from
@@ -27,7 +29,7 @@ def main():
     reflection_text = input("How did it go? ").strip()
     while True:  # a backend failure (rate limit, retired model, no key...) must not lose the text
         try:
-            outcome, summary = reflect_and_record(conn, student_id, reflection_text)
+            outcome, summary = reflect_and_record(conn, student_id, reflection_text, now=datetime.now(timezone.utc))
             break
         except Exception as e:
             if not is_backend_failure(e):
@@ -43,9 +45,10 @@ def main():
         print(f"- {r.message}")
     print(_STATUS[outcome.outcome])
 
-    for p in pending_approvals(conn, student_id):
+    now = datetime.now(timezone.utc)
+    for p in pending_approvals(conn, student_id, now=now):
         answer = input(f"  Apply this change? {describe_pending(p)} [y/N] ").strip().lower()
-        print(f"- {resolve_pending(conn, student_id, p.field, answer == 'y').message}")
+        print(f"- {resolve_pending(conn, student_id, p.field, answer == 'y', now=now).message}")
 
 if __name__ == "__main__":
     main()

@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -13,6 +14,8 @@ from scheduler.preferences import (
 from scheduler.reflection import (
     PreferenceChangeProposal as P, ReflectionResult, build_system_prompt, propose_preference_changes,
 )
+
+NOW = datetime(2026, 10, 1, 12, 0, tzinfo=timezone.utc)  # when these reflections happen
 
 
 @pytest.fixture
@@ -37,7 +40,7 @@ def raw(*proposals):
 
 
 def run(conn, sid, *items):
-    return process_reflection(conn, sid, "text", refl(*items))
+    return process_reflection(conn, sid, "text", refl(*items), now=NOW)
 
 
 def buf(conn, sid):
@@ -145,7 +148,7 @@ def test_locked_fields_reject_model_evidence_both_ways(conn, sid):
     change_tier(conn, sid, "buffer_slots", Tier.LOCKED, Actor.INTERNAL)          # tier-locked
     assert run(conn, sid, ("buffer_slots", "increase", "small")).results[0].message.endswith("protected, so it wasn't changed.")
     bypass = P.model_construct(field="presence_bonus", direction="increase", magnitude="large", reason="x")
-    o = process_reflection(conn, sid, "t", raw(bypass))                           # policy-locked
+    o = process_reflection(conn, sid, "t", raw(bypass), now=NOW)                           # policy-locked
     assert o.outcome == "proposal_ignored"
     assert load_evidence(conn, sid) == {} and load_settings(conn, sid).presence_bonus == 10_000
 
@@ -153,7 +156,7 @@ def test_locked_fields_reject_model_evidence_both_ways(conn, sid):
 def test_invalid_and_unauthorized_proposals_dont_block_valid_ones(conn, sid):
     unknown = P.model_construct(field="made_up", direction="increase", magnitude="small", reason="x")
     ps = refl(("default_max_session_slots", "decrease", "small"), ("buffer_slots", "increase", "small")).proposals
-    o = process_reflection(conn, sid, "t", raw(unknown, *ps))
+    o = process_reflection(conn, sid, "t", raw(unknown, *ps), now=NOW)
     assert o.outcome == "evidence_recorded"
     assert {r.field: r.status for r in o.results} == {
         "made_up": "proposal_ignored", "default_max_session_slots": "proposal_ignored",
