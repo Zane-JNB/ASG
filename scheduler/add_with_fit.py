@@ -34,9 +34,10 @@ def add_task_with_fit(conn, student_id: int, new_task: ExtractedTask, now: datet
             show(f"Warning: {w.message}")
 
     if fits is not None:  # later-deadline tasks were shuffled by the solver if needed
+        _, sleep_warns = fits
         new_id = EXTRACTED_TASKS.add(conn, student_id, new_task)
         show("Added.")
-        for w in fits[1]:  # it fits, but sleep was given up for it
+        for w in sleep_warns:  # it fits, but sleep was given up for it
             if w.kind == "sleep_short" or w.severity == "hard":
                 show(f"Warning: {w.message}")
         return {"cuts": {}, "new_task_id": new_id}

@@ -189,10 +189,9 @@ def propose_drops(frame: PlanFrame, tasks: list[DynamicTask], new_task: DynamicT
                   time_limit_seconds: float = FIT_CHECK_SECONDS) -> DropReport:
     """The best ways to make room for new_task, best first. RuntimeError if the first check (as
     things stand) finds no plan in time: then the fit can't be checked at all."""
-    base = frame.solve_all_fit(tasks + [new_task], time_limit_seconds)
-    if base:
+    if frame.solve_all_fit(tasks + [new_task], time_limit_seconds):
         return DropReport(new_task_title=new_task.title, fits_already=True, proposals=[],
-                          checks_used=1, search_exhausted=True, fit_warnings=base[1])
+                          checks_used=1, search_exhausted=True)
 
     checks, found = 1, []
     if not must_add:

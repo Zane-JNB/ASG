@@ -25,3 +25,6 @@ Zane will review and correct each. Referenced from `CLAUDE.md`.
 21. Duplicate helpers: `task_manager._ask_field` ~ `menu_input.ask_until`; `task_manager._rating` ~ `settings_menu._rating`; `commute_menu._clock` and `settings_menu._clock` re-parse HH:MM instead of using `units.parse_time` (see 15).
 
 24. Preference storage in `db.py` (for G7): `load_tiers` writes (backfills default tiers) on every read; `load_evidence` and `load_evidence_times` read the same table in two queries; `get_reflections` returns loose dicts instead of a typed row (only tests read it).
+
+25. Found in the Branch 2 review (for G6/G7): pyflakes reports unused imports in `preferences.py`, `preference_policy.py`, `reflection.py`, `reflection_cycle.py`, `reflect.py` and several tests, and two shadowed duplicate tests (`test_evidence.py` line 85 and `test_preference_policy.py` line 42 redefine an earlier test of the same name, so the first copy never runs).
+26. `propose_drops` re-solves "as things stand" before searching, although `add_task_with_fit` has just done that check (one extra solve per search). Keep it while `propose_drops` is also called directly (tests); drop it if the base check moves out of the engine.
