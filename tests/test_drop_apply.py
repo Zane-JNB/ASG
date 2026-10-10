@@ -163,7 +163,7 @@ def test_not_adding_saves_nothing(conn, sid):
     _busy_student(conn, sid)
     essay = _task("Essay", 4, 4)
     planned, report = _propose(conn, sid, essay, must_add=False)
-    choice = next((p for p in report.proposals if not p.new_task_added),
+    choice = next((p for p in report.proposals if p.added is None),
                   dont_add_unverified(extracted_task_to_dynamic_task(essay, START, 8), 9))
     summary = apply_drop_choice(conn, sid, choice, planned, essay)
     assert summary == {"cuts": {}, "new_task_id": None}

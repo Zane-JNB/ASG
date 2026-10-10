@@ -4,7 +4,8 @@ from datetime import datetime
 from scheduler.db import EXTRACTED_TASKS, apply_plan_changes
 from scheduler.dropping import NEW_TASK, dont_add_unverified, manual_actions, propose_drops, try_cuts
 from scheduler.fit_check import FitInputs, build_fit_inputs
-from scheduler.make_room import CutState, ask_mode, choose_automatic, choose_drop_proposal, run_manual_edit
+from scheduler.make_room import (CutState, ManualChoice, ask_mode, choose_automatic, choose_drop_proposal,
+                                 run_manual_edit)
 from scheduler.models import DropProposal, DynamicTask, ExtractedTask
 from scheduler.solver import chunk_sizes
 from scheduler.units import format_hours
@@ -67,11 +68,11 @@ def add_task_with_fit(conn, student_id: int, new_task: ExtractedTask, now: datet
         show(f"Added '{new_task.title}'.")
         for a in choice.actions:
             show(f"  For this plan only: '{a.title}' -{format_hours(a.slots_lost)} (its saved hours are unchanged)")
-        if choice.new_task_slots_cut:
+        if choice.added.slots_cut:
             full_slots = new_task.duration_slots
-            show(f"  For this plan only: '{new_task.title}' is planned at {format_hours(full_slots - choice.new_task_slots_cut)} "
+            show(f"  For this plan only: '{new_task.title}' is planned at {format_hours(full_slots - choice.added.slots_cut)} "
                  f"(saved as {format_hours(full_slots)})")
-        if choice.new_task_may_cut_sleep:
+        if choice.added.may_cut_sleep:
             show(f"  '{new_task.title}' may use sleep below your target (saved with the task)")
     return summary
 
@@ -94,7 +95,7 @@ def _choose_manual(fit: FitInputs, must_add: bool, ask, show) -> DropProposal | 
 
     state = CutState({i: t.duration_slots for i, t in everyone.items()}, sizes_fn)
     action, proposal = run_manual_edit(state, {i: t.title for i, t in everyone.items()}, fits, ask, show, must_add)
-    if action == "dont_add":
+    if action == ManualChoice.DONT_ADD:
         return dont_add_unverified(fit.new_task, 1)
     return proposal  # None for cancel
 
@@ -104,16 +105,17 @@ def apply_drop_choice(conn, student_id: int, proposal: DropProposal,
                       new_task: ExtractedTask | None = None) -> dict:
     """`planned` is the (saved task id, DynamicTask) list given to propose_drops, same order.
     That is how a proposal's task_index maps back to a saved task."""
-    if proposal.new_task_added and new_task is None:
+    added = proposal.added
+    if added is not None and new_task is None:
         raise ValueError("this proposal adds the new task, but no new_task was given")
     cuts = {}
     for a in proposal.actions:
         task_id = planned[a.task_index][0]
         cuts[task_id] = cuts.get(task_id, 0) + a.slots_lost
-    new_cut = proposal.new_task_slots_cut if proposal.new_task_added else 0
-    if proposal.new_task_may_cut_sleep:  # unlike a cut, this is saved with the task
+    new_cut = added.slots_cut if added else 0
+    if added and added.may_cut_sleep:  # unlike a cut, this is saved with the task
         new_task = new_task.model_copy(update={"may_cut_sleep": True})
-    new_id = apply_plan_changes(conn, student_id, cuts, new_task if proposal.new_task_added else None, new_cut)
+    new_id = apply_plan_changes(conn, student_id, cuts, new_task if added else None, new_cut)
     if new_cut:
         cuts[new_id] = new_cut
     return {"cuts": cuts, "new_task_id": new_id}

@@ -3,7 +3,8 @@ cheapest first, or to let the new task use sleep below target; each verified by 
 scored for the student to choose from."""
 import heapq
 from scheduler.models import (
-    DropAction, DropProposal, DropReport, DynamicTask, ProfileSettings, ScheduledItem, ScheduleWarning,
+    AddedTask, DropAction, DropProposal, DropReport, DynamicTask, ProfileSettings, ScheduledItem, ScheduleWarning,
+    SleepRule,
 )
 from scheduler.solver import FIT_CHECK_SECONDS, PlanFrame, chunk_sizes, merge_fixed_spans, reachable_sleep
 from scheduler.units import SLOTS_PER_DAY
@@ -121,7 +122,7 @@ def _free_slots(frame: PlanFrame, tasks: list[DynamicTask]) -> int:
     return max(0, end - lo - covered)
 
 
-def _sleep_sacrificed(sleep_rules, items: list[ScheduledItem]) -> int:
+def _sleep_sacrificed(sleep_rules: list[SleepRule], items: list[ScheduledItem]) -> int:
     """Sleep below what the nights allow; a cap from the morning after's early start isn't the cuts' fault."""
     target = sum(reachable_sleep(r) for r in sleep_rules)
     slept = sum(i.end_slot - i.start_slot for i in items if i.kind == "sleep")
@@ -144,8 +145,8 @@ def _proposal(frame: PlanFrame, tasks: list[DynamicTask], new_task: DynamicTask,
     score = (sum(loss_cost(tasks[a.task_index], a.slots_lost, s) for a in actions)
              + loss_cost(new_task, new_lost, s)
              + s.drop_sleep_weight * sleep + s.drop_hard_flag_penalty * len(flags))
-    return DropProposal(actions=list(actions), new_task_added=new_added, new_task_slots_cut=new_cut,
-                        new_task_may_cut_sleep=new_added and new_task.may_cut_sleep, score=score,
+    added = AddedTask(slots_cut=new_cut, may_cut_sleep=new_task.may_cut_sleep) if new_added else None
+    return DropProposal(actions=list(actions), added=added, score=score,
                         slots_freed=sum(a.slots_lost for a in actions), sleep_sacrificed_slots=sleep,
                         flags=flags, schedule=items)
 
@@ -181,7 +182,7 @@ def dont_add_unverified(new_task: DynamicTask, rank: int) -> DropProposal:
     flags = ["Not verified: your existing tasks may still not all fit without it"]
     if new_task.deadline_day is not None:
         flags.append(f"'{new_task.title}' would not be done by its deadline")
-    return DropProposal(rank=rank, actions=[], new_task_added=False, score=float("inf"),
+    return DropProposal(rank=rank, actions=[], added=None, score=float("inf"),
                         slots_freed=0, sleep_sacrificed_slots=0, flags=flags, schedule=[])
 
 

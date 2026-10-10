@@ -7,8 +7,9 @@ from scheduler.db import (
 )
 from scheduler.units import MINUTES_PER_SLOT, format_hours
 from scheduler.models import PlanAnchor
-from scheduler.restore import plan_restores
 from scheduler.prompts import confirm
+from scheduler.restore import plan_restores
+from scheduler.solver import FIT_CHECK_SECONDS
 from scheduler.task_filter import wants_reminder
 
 
@@ -17,7 +18,7 @@ def _iso(dt: datetime) -> str:
 
 
 def finish_task(conn, student_id: int, task_id: int, now: datetime, ask=input, show=print,
-                time_limit_seconds: float = 5.0, missed: bool = False) -> dict:
+                time_limit_seconds: float = FIT_CHECK_SECONDS, missed: bool = False) -> dict:
     """Close a task as done (or missed=True: closed without being done), kept as history either
     way; free its time, and offer to give cut tasks their hours back.
     Returns {"restored": {task id: slots}} -- empty if nothing was restored."""
@@ -67,7 +68,7 @@ def record_plan(conn, student_id: int, anchor: PlanAnchor, items, now: datetime)
 class Checkin:
     task_id: int
     title: str
-    ended: str  # ISO time the latest unanswered session ended
+    ended: datetime  # when the latest unanswered session ended
 
 
 def _ended(conn, student_id: int, now: datetime) -> tuple[list[Checkin], set[int]]:
@@ -81,7 +82,7 @@ def _ended(conn, student_id: int, now: datetime) -> tuple[list[Checkin], set[int
         if task is None or task.completed_at or not wants_reminder(task, settings):
             quiet.add(task_id)
         else:
-            ask[task_id] = Checkin(task_id, task.title, end)  # the latest session wins
+            ask[task_id] = Checkin(task_id, task.title, datetime.fromisoformat(end))  # the latest session wins
     return list(ask.values()), quiet
 
 
@@ -98,8 +99,7 @@ def run_checkin(conn, student_id: int, now: datetime, ask=input, show=print) -> 
         for task_id in quiet:
             mark_sessions_asked(conn, student_id, task_id, _iso(now))
     for c in checkins:
-        when = datetime.fromisoformat(c.ended)
-        show(f"Your time for '{c.title}' ended {when:%a %d %b %H:%M}.")
+        show(f"Your time for '{c.title}' ended {c.ended:%a %d %b %H:%M}.")
         if confirm(ask, f"Did you finish '{c.title}'?", False):
             finish_task(conn, student_id, c.task_id, now, ask, show)
         else:

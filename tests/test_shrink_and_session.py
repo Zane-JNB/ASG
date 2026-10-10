@@ -98,7 +98,7 @@ def test_a_one_block_new_task_can_be_offered_shortened(conn, sid):
     essay = _tight_day(conn, sid)
     fit = build_fit_inputs(conn, sid, NOW, essay)
     report = propose_drops(fit.frame, fit.tasks, fit.new_task)
-    assert any(p.new_task_added and p.new_task_slots_cut > 0 for p in report.proposals)
+    assert any(p.added is not None and p.added.slots_cut > 0 for p in report.proposals)
 
 
 def test_a_multi_session_new_task_is_not_offered_shortened(conn, sid):
@@ -106,20 +106,20 @@ def test_a_multi_session_new_task_is_not_offered_shortened(conn, sid):
     big = ExtractedTask(title="Project", date=D.isoformat(), duration_slots=24, priority=5, difficulty=3)
     fit = build_fit_inputs(conn, sid, NOW, big)  # 6h, splittable: several sessions
     report = propose_drops(fit.frame, fit.tasks, fit.new_task)
-    assert all(p.new_task_slots_cut == 0 for p in report.proposals)
+    assert all(p.added is None or p.added.slots_cut == 0 for p in report.proposals)
 
 
 def test_shortening_the_new_task_keeps_full_hours_saved_and_records_a_plan_cut(conn, sid):
     essay = _tight_day(conn, sid)
     fit = build_fit_inputs(conn, sid, NOW, essay)
     report = propose_drops(fit.frame, fit.tasks, fit.new_task)
-    choice = next(p for p in report.proposals if p.new_task_slots_cut)
+    choice = next(p for p in report.proposals if p.added is not None and p.added.slots_cut)
     summary = apply_drop_choice(conn, sid, choice, fit.planned, essay)
     saved = {t.title: t.duration_slots for _, t in EXTRACTED_TASKS.get(conn, sid)}
     assert saved["Essay"] == 16  # saved at full hours
-    assert get_plan_cuts(conn, sid)[summary["new_task_id"]] == choice.new_task_slots_cut
+    assert get_plan_cuts(conn, sid)[summary["new_task_id"]] == choice.added.slots_cut
     planned = {t.title: t.duration_slots for _, t in _planned(conn, sid, D)}
-    assert planned["Essay"] == 16 - choice.new_task_slots_cut
+    assert planned["Essay"] == 16 - choice.added.slots_cut
 
 
 def test_screen_and_summary_say_shorten_and_still_one_block(conn, sid):
@@ -132,7 +132,7 @@ def test_screen_and_summary_say_shorten_and_still_one_block(conn, sid):
     assert "shortened to" in text
     fit = build_fit_inputs(conn, sid, NOW, essay)
     report = propose_drops(fit.frame, fit.tasks, fit.new_task)
-    lines = "\n".join(describe_proposal(1, next(p for p in report.proposals if p.new_task_slots_cut), fit.new_task))
+    lines = "\n".join(describe_proposal(1, next(p for p in report.proposals if p.added is not None and p.added.slots_cut), fit.new_task))
     assert "shortened to" in lines
 
 

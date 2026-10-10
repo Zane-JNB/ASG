@@ -1,5 +1,8 @@
 """The "make room" screens for a new task that doesn't fit: the mode prompt, the ranked options
 (semi-automatic and automatic), and the manual editor with its undo-able cuts. Nothing is saved here."""
+from collections.abc import Callable
+from enum import StrEnum
+
 from scheduler.dropping import NEW_TASK, dont_add_unverified
 from scheduler.models import DropAction, DropProposal, DropReport, DynamicTask
 from scheduler.prompts import parse_hours, parse_whole
@@ -39,14 +42,14 @@ def describe_proposal(n: int, p: DropProposal, new_task: DynamicTask) -> list[st
     tag = "  <- best" if n == 1 else ""
     lines = [f"{n}.{tag}"]
     about_new = f"priority {new_task.priority}, difficulty {new_task.difficulty}"
-    if p.new_task_added:
+    if p.added is not None:
         lines += [f"   - {_action_line(a)}" for a in p.actions]
-        if p.new_task_slots_cut:
-            lines.append(f"   - Adds '{new_task.title}' shortened to {format_hours(new_task.duration_slots - p.new_task_slots_cut)} "
+        if p.added.slots_cut:
+            lines.append(f"   - Adds '{new_task.title}' shortened to {format_hours(new_task.duration_slots - p.added.slots_cut)} "
                          f"(from {format_hours(new_task.duration_slots)}, still one block; {about_new})")
         else:
             lines.append(f"   - Adds '{new_task.title}' ({format_hours(new_task.duration_slots)}, {about_new})"
-                         + (" and lets it use sleep below your target" if p.new_task_may_cut_sleep else ""))
+                         + (" and lets it use sleep below your target" if p.added.may_cut_sleep else ""))
     else:
         lines.append(f"   - Don't add '{new_task.title}' ({format_hours(new_task.duration_slots)}, "
                      f"{about_new}); nothing else changes")
@@ -58,8 +61,8 @@ def describe_proposal(n: int, p: DropProposal, new_task: DynamicTask) -> list[st
 
 def _ranked_options(report: DropReport, new_task: DynamicTask, must_add: bool) -> list[DropProposal]:
     """Best first. Shared by semi-automatic and automatic mode so both offer the same options."""
-    options = [p for p in report.proposals if p.new_task_added or not must_add]
-    if not must_add and not any(not p.new_task_added for p in options):
+    options = [p for p in report.proposals if p.added is not None or not must_add]
+    if not must_add and not any(p.added is None for p in options):
         options.append(dont_add_unverified(new_task, len(options) + 1))
     return options
 
@@ -108,10 +111,18 @@ def choose_automatic(report: DropReport, new_task: DynamicTask, must_add: bool =
 
 # ---------- manual: the student cuts, the solver only verifies ----------
 
-class CutState:
-    """durations: {task index: planned slots}. sizes_fn(index, remaining_slots) -> chunk sizes."""
+class ManualChoice(StrEnum):
+    """How the manual editor ended."""
+    SAVE = "save"
+    DONT_ADD = "dont_add"
+    CANCEL = "cancel"
 
-    def __init__(self, durations: dict[int, int], sizes_fn):
+
+class CutState:
+    """An undo-able ledger of the student's cuts. durations: {task index: planned slots};
+    sizes_fn(index, remaining slots) -> its chunk sizes (dropping's chunk rule in the app)."""
+
+    def __init__(self, durations: dict[int, int], sizes_fn: Callable[[int, int], list[int]]):
         self.durations = dict(durations)
         self.sizes_fn = sizes_fn
         self.lost: dict[int, int] = {}          # total slots cut per task so far
@@ -164,7 +175,7 @@ class CutState:
         return bool(self.lost)
 
 
-def _show_list(state: CutState, titles: dict, order: list, show) -> None:
+def _show_list(state: CutState, titles: dict[int, str], order: list[int], show) -> None:
     show("Your tasks (you can cut any of them, including the new one):")
     for n, i in enumerate(order, 1):
         left = state.remaining(i)
@@ -204,10 +215,10 @@ def _edit_task(state: CutState, i: int, ask, show) -> bool:
     return True
 
 
-def run_manual_edit(state: CutState, titles: dict, fits, ask=input, show=print,
-                    must_add: bool = False) -> tuple[str, DropProposal | None]:
+def run_manual_edit(state: CutState, titles: dict[int, str], fits: Callable[[dict[int, int]], DropProposal | None],
+                    ask=input, show=print, must_add: bool = False) -> tuple[ManualChoice, DropProposal | None]:
     """fits(lost) -> a verified proposal if everything fits after those cuts, else None.
-    Returns ("save", proposal), ("dont_add", None) or ("cancel", None). Nothing is saved here."""
+    Returns (SAVE, proposal), (DONT_ADD, None) or (CANCEL, None). Nothing is saved here."""
     order = sorted(i for i in state.durations if i != NEW_TASK) + [NEW_TASK]
     result = None
     while True:
@@ -229,10 +240,10 @@ def run_manual_edit(state: CutState, titles: dict, fits, ask=input, show=print,
         if raw == "":
             if state.touched and ask("Discard your cuts and cancel? [y/N]: ").strip().lower() != "y":
                 continue
-            return "cancel", None
+            return ManualChoice.CANCEL, None
         if raw == "s":
             if result:
-                return "save", result
+                return ManualChoice.SAVE, result
             show("It doesn't fit yet, so there is nothing to save.")
         elif raw == "u":
             if state.undo():
@@ -241,7 +252,7 @@ def run_manual_edit(state: CutState, titles: dict, fits, ask=input, show=print,
             else:
                 show("Nothing to undo.")
         elif raw == "n" and not must_add:
-            return "dont_add", None
+            return ManualChoice.DONT_ADD, None
         elif raw.isdigit() and 1 <= int(raw) <= len(order):
             if _edit_task(state, order[int(raw) - 1], ask, show):
                 result = fits(state.lost)

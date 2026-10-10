@@ -340,17 +340,22 @@ class DropAction(BaseModel):
     def is_full_drop(self) -> bool:
         return self.slots_kept == 0
 
+class AddedTask(BaseModel):
+    """How a proposal adds the new task: shortened by slots_cut for this plan only, and maybe with
+    leave to use sleep below target (saved with the task)."""
+    slots_cut: int = Field(default=0, ge=0)
+    may_cut_sleep: bool = False
+
+
 class DropProposal(BaseModel):
     rank: int = 0
     actions: list[DropAction]
-    new_task_added: bool  # False = "don't add the new task"
+    added: AddedTask | None  # None = "don't add the new task"
     score: float  # lower is better
     slots_freed: int
     sleep_sacrificed_slots: int
     flags: list[str]  # hard problems the student must see
     schedule: list[ScheduledItem]  # already solved
-    new_task_slots_cut: int = 0
-    new_task_may_cut_sleep: bool = False  # it is added with leave to use sleep below target
 
 class DropReport(BaseModel):
     new_task_title: str

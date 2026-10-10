@@ -1,6 +1,6 @@
 import pytest
 from scheduler.make_room import choose_automatic
-from scheduler.models import DropAction, DropProposal, DropReport, DynamicTask
+from scheduler.models import AddedTask, DropAction, DropProposal, DropReport, DynamicTask
 
 NEW_TASK = DynamicTask(title="Essay", duration_slots=16, priority=4, difficulty=3)
 
@@ -11,7 +11,7 @@ def _action():
 
 
 def _proposal(rank, adds=True, sleep=0, flags=()):
-    return DropProposal(rank=rank, actions=[_action()] if adds else [], new_task_added=adds, score=float(rank),
+    return DropProposal(rank=rank, actions=[_action()] if adds else [], added=AddedTask() if adds else None, score=float(rank),
                         slots_freed=8, sleep_sacrificed_slots=sleep, flags=list(flags), schedule=[])
 
 
@@ -55,7 +55,7 @@ def test_search_limit_note_appears_only_when_the_search_was_cut_short():
 def test_must_add_never_picks_a_dont_add_plan():
     report = _report([_proposal(1, adds=False), _proposal(2)])
     picked, _ = _run(report, ["y"], must_add=True)
-    assert picked is report.proposals[1] and picked.new_task_added
+    assert picked is report.proposals[1] and picked.added is not None
 
 
 def test_no_plan_at_all_says_so_and_does_not_ask():
@@ -65,7 +65,7 @@ def test_no_plan_at_all_says_so_and_does_not_ask():
 
 def test_only_a_dont_add_option_left_is_offered_as_the_best_plan():
     picked, shown = _run(_report([]), ["y"])
-    assert picked is not None and not picked.new_task_added
+    assert picked is not None and picked.added is None
     assert any("Don't add 'Essay'" in l for l in shown)
 
 

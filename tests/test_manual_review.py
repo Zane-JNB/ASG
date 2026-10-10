@@ -120,3 +120,8 @@ def test_ask_mode_accepts_m_s_and_a_and_rejects_anything_else():
     it = iter(["z", "m"])
     assert ask_mode(ask=lambda _p: next(it), show=shown.append) == "m"
     assert shown == ["Choose m, s or a."]
+
+def test_the_manual_editor_returns_a_typed_choice():
+    from scheduler.make_room import ManualChoice
+    (action, _), _ = run(["2", "d", "n"], fits_after_freeing(99))
+    assert action is ManualChoice.DONT_ADD

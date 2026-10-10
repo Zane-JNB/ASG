@@ -513,3 +513,10 @@ def test_sleep_an_early_start_already_cuts_does_not_use_up_the_permission():
     blocks, rule = _evening(latest_wake=112)  # only 7h fit even with no task
     items, unscheduled = build_schedule(blocks, [_tonight("Quiz", may_cut_sleep=True)], sleep_rules=[rule])
     assert unscheduled == [] and _slept(items) == 25
+
+
+def test_unplaced_names_positions_not_objects():
+    """The same task object listed twice, room for only one: one position is left out, not both."""
+    task = DynamicTask(title="Block", duration_slots=20, priority=3, splittable=False)  # 21 with its buffer: one fits in 40
+    frame = PlanFrame([FixedBlock(title="Day", start_slot=40, end_slot=96)], num_days=1)
+    assert frame.unplaced([task, task]) in ([0], [1])
