@@ -190,7 +190,7 @@ def test_pdf_uses_the_local_pdf_path_not_the_default_extractor(env, monkeypatch,
     def fake_from_pdf(file_bytes, call_text_llm=None, call_vision=None):
         return _extraction("PDF-DS")
 
-    monkeypatch.setattr("scheduler.import_flow.extract_schedule_from_pdf", fake_from_pdf)
+    monkeypatch.setattr("scheduler.pdf_extraction.extract_schedule_from_pdf", fake_from_pdf)
     ask = Recorder(YES + KEEP_ALL)
     ok = run_import(conn, sid, str(pdf_path), ask=ask, show=lambda _: None, cache_path=cache)
     assert ok and _titles(conn, sid)[0] == ["PDF-DS"]
@@ -288,7 +288,7 @@ def _partial_pdf_import(env, monkeypatch, tmp_path, answers):
     pdf_path.write_bytes(buf.getvalue())
     def partly(file_bytes, call_text_llm=None, call_vision=None):
         raise PartialExtraction(_extraction("Read"), [2, 3], RuntimeError("rate limit"))
-    monkeypatch.setattr("scheduler.import_flow.extract_schedule_from_pdf", partly)
+    monkeypatch.setattr("scheduler.pdf_extraction.extract_schedule_from_pdf", partly)
     ask, shown = Recorder(answers), []
     ok = run_import(conn, sid, str(pdf_path), ask=ask, show=shown.append, cache_path=cache)
     return ok, ask, shown
@@ -321,7 +321,7 @@ def _pdf_reads(monkeypatch, result, failed):
     from scheduler.pdf_extraction import PartialExtraction
     def partly(file_bytes, call_text_llm=None, call_vision=None):
         raise PartialExtraction(result, failed, RuntimeError("rate limit"))
-    monkeypatch.setattr("scheduler.import_flow.extract_schedule_from_pdf", partly)
+    monkeypatch.setattr("scheduler.pdf_extraction.extract_schedule_from_pdf", partly)
 
 def _replay_with(tmp_path, failed_json):
     saved = tmp_path / "saved.json"

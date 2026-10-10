@@ -59,7 +59,7 @@ def offline_backend(request, monkeypatch):
 @pytest.fixture
 def real_groq_code(monkeypatch):
     """Put the real Groq functions back in the provider tables (still no key, no network):
-    for tests that drive _groq_call through a stand-in OpenAI client."""
+    for tests that drive the Groq request code through a stand-in OpenAI client."""
     monkeypatch.setitem(llm_backends._BACKENDS, "groq", llm_backends._groq_call)
     monkeypatch.setitem(llm_backends._VISION_BACKENDS, "groq", llm_backends._groq_vision_call)
 

@@ -390,3 +390,20 @@ def test_a_task_sent_as_json_text_gets_the_same_due_time_handling():
     as_object = extraction_from_dict({"tasks": [task]}).tasks
     as_text = extraction_from_dict({"tasks": [json.dumps(task)]}).tasks
     assert [(t.title, t.due_time) for t in as_text] == [(t.title, t.due_time) for t in as_object] == [("HW", None)]
+
+
+# ---- one door for any document: images go to the vision path, PDFs page by page ----
+from scheduler import pdf_extraction
+
+
+def test_page_count_reads_the_pdf_once_without_any_call():
+    assert pdf_extraction.page_count(_multi_page_pdf([["one"], ["two"], None])) == 3
+
+
+def test_extract_document_routes_pdfs_to_the_page_reader_and_images_to_vision(monkeypatch):
+    seen = []
+    monkeypatch.setattr(pdf_extraction, "extract_schedule_from_pdf", lambda b: seen.append(("pdf", b)) or ExtractionResult())
+    monkeypatch.setattr(pdf_extraction, "extract_schedule", lambda b, m: seen.append((m, b)) or ExtractionResult())
+    pdf_extraction.extract_document(b"%PDF", "application/pdf")
+    pdf_extraction.extract_document(b"png", "image/png")
+    assert seen == [("pdf", b"%PDF"), ("image/png", b"png")]

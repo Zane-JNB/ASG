@@ -12,9 +12,8 @@ from scheduler.llm_backends import is_backend_failure
 from scheduler.models import ExtractionResult
 from scheduler.paths import CACHE_PATH
 from scheduler.prompts import ask_missed, confirm
+from scheduler.pdf_extraction import PartialExtraction, extract_document, page_count
 from scheduler.review import review_extraction
-from scheduler.schedule_extraction import extract_schedule
-from scheduler.pdf_extraction import PartialExtraction, extract_schedule_from_pdf
 
 class _SavedExtraction(ExtractionResult):
     """The replay copy: the extraction plus the PDF pages that weren't read, so replaying a
@@ -68,24 +67,17 @@ def _load_result(source_path, ask, show, extractor, cache_path):
 
     page_note = ""
     if ext == ".pdf":  # each page can be its own call (text or rendered-image)
-        import io
-        import pdfplumber
         try:
-            with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:  # from bytes, matches
-                num_pages = len(pdf.pages)                        # extract_schedule_from_pdf exactly
+            page_note = f" This PDF has {page_count(file_bytes)} page(s); each may use its own call."
         except Exception:  # pdfplumber/pdfminer raise their own types for a broken or invalid PDF
             show(f"'{source_path}' could not be opened as a PDF.")
             return None, [], None
-        page_note = f" This PDF has {num_pages} page(s); each may use its own call."
     if not confirm(ask, f"Groq (free tier, but a real API call).{page_note} Continue?", default=False):
         show("Aborted.")
         return None, [], None
     failed = []
     try:
-        if ext == ".pdf" and extractor is extract_schedule:  # default PDF path avoids
-            result = extract_schedule_from_pdf(file_bytes)   # Groq's vision model rejecting PDFs
-        else:
-            result = extractor(file_bytes, MEDIA_TYPES[ext])
+        result = extractor(file_bytes, MEDIA_TYPES[ext])
     except PartialExtraction as e:  # keep the pages already read (and paid for)
         show(f"Warning: only part of the PDF was read -- {e}")
         result, failed = e.result, e.failed_pages
@@ -145,7 +137,7 @@ def _clashes_with_saved(conn, student_id, reviewed: ExtractionResult, today: dat
 
 
 def run_import(conn, student_id, source_path, ask=input, show=print,
-               extractor=extract_schedule, cache_path=CACHE_PATH, now: datetime | None = None) -> bool:
+               extractor=extract_document, cache_path=CACHE_PATH, now: datetime | None = None) -> bool:
     """Extract -> review -> replace the student's saved schedule items. True only if saved."""
     now = now or datetime.now()
     result, failed, kept_in = _load_result(source_path, ask, show, extractor, cache_path)

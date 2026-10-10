@@ -1,12 +1,16 @@
+"""An uploaded document -> ExtractionResult: the prompt, the request, and a lenient reading of
+the model's answer (one bad entry is dropped, never the whole answer)."""
 import base64
 import json
 from datetime import datetime
 
 from pydantic import ValidationError
 
-from scheduler.llm_backends import BadModelOutput
+from scheduler.llm_backends import NONE_WORDS, BadModelOutput, as_items, call_vision_llm
+from scheduler.models import DatedBlock, ExtractedTask, ExtractionResult, WeeklyPattern
+from scheduler.units import WEEKDAYS
 
-from scheduler.models import WeeklyPattern, DatedBlock, ExtractedTask, ExtractionResult
+TOOL_NAME = "extract_schedule"
 
 
 def build_extraction_system_prompt() -> str:
@@ -33,47 +37,20 @@ def build_extraction_system_prompt() -> str:
     )
 
 
-_WEEKDAY_ORDER = {"Mon": 0, "Tue": 1, "Wed": 2, "Thu": 3, "Fri": 4, "Sat": 5, "Sun": 6}
-
-
-def _sort_result(result: ExtractionResult) -> ExtractionResult:
-    """Sort every list into a predictable, readable order -- done in code, not left to the
-    model, since asking an LLM to also get the ordering right on top of everything else isn't
-    reliable. weekly_patterns: by weekday then time. dated_blocks: by date then time.
-    tasks: by due date and time.
-    """
-    weekly_patterns = sorted(result.weekly_patterns, key=lambda p: (_WEEKDAY_ORDER[p.day], p.start_time))
-    dated_blocks = sorted(result.dated_blocks, key=lambda b: (b.date, b.start_time))
-    tasks = sorted(result.tasks, key=lambda t: (t.date, t.due_slot()))
-    return ExtractionResult(weekly_patterns=weekly_patterns, dated_blocks=dated_blocks, tasks=tasks)
+def combine(results: list[ExtractionResult]) -> ExtractionResult:
+    """Every result's items in one, each list in a predictable, readable order -- done in code, not
+    left to the model, since asking an LLM to also get the ordering right isn't reliable.
+    weekly_patterns: by weekday then time. dated_blocks: by date then time. tasks: by due date and time."""
+    return ExtractionResult(
+        weekly_patterns=sorted((p for r in results for p in r.weekly_patterns),
+                               key=lambda p: (WEEKDAYS.index(p.day), p.start_time)),
+        dated_blocks=sorted((b for r in results for b in r.dated_blocks), key=lambda b: (b.date, b.start_time)),
+        tasks=sorted((t for r in results for t in r.tasks), key=lambda t: (t.date, t.due_slot())),
+    )
 
 
 _LOOSE_TIME_FORMATS = ("%H:%M", "%H:%M:%S", "%H", "%I%p", "%I %p", "%I:%M%p", "%I:%M %p")
-_NONE_WORDS = {"", "none", "null", "n/a", "na", "-"}  # what models write for "nothing"
-_NO_TIME = _NONE_WORDS | {"0", "tbd", "tba"}  # ...and for "no time stated"
-
-
-def _as_items(key: str, value, marker: str = "title") -> list:
-    """A list key's value as a list. Also accepts what models send for "none" (null, {}, "",
-    "N/A"...), one item on its own (recognised by its `marker` key), and a list sent as JSON text. Each entry is then
-    validated on its own by the caller, so a bad entry is dropped and the rest kept. Anything
-    else (a number, true/false, other text, an object without a title) raises BadModelOutput: the
-    answer can't be trusted, so the caller fails it (and warns) instead of crashing."""
-    sent = type(value).__name__
-    if isinstance(value, str):
-        if value.strip().lower() in _NONE_WORDS:
-            return []
-        try:
-            value = json.loads(value)
-        except ValueError:
-            raise BadModelOutput(f"The model sent '{key}' in the wrong shape ({sent}). Try again.") from None
-    if value is None or value == {}:
-        return []
-    if isinstance(value, list):
-        return value
-    if isinstance(value, dict) and marker in value:
-        return [value]
-    raise BadModelOutput(f"The model sent '{key}' in the wrong shape ({sent}). Try again.")
+_NO_TIME = NONE_WORDS | {"0", "tbd", "tba"}  # what models write for "no time stated"
 
 
 def _task_with_loose_time(item: dict) -> list[ExtractedTask]:
@@ -101,13 +78,13 @@ def extraction_from_dict(raw: dict) -> ExtractionResult:
     only problem is its due time is never dropped: a time like '5pm' or '17:00:00' is read as
     17:00; one that can't be read at all is left out and named in the title, so the student
     sees it in the review and sets it. An answer, or a list key, in a shape that can't be read
-    raises BadModelOutput (see _as_items)."""
+    raises BadModelOutput (see llm_backends.as_items)."""
     if not isinstance(raw, dict):
         raise BadModelOutput(f"The model sent an answer in the wrong shape ({type(raw).__name__}). Try again.")
     found = {}
     for key, model in (("weekly_patterns", WeeklyPattern), ("dated_blocks", DatedBlock), ("tasks", ExtractedTask)):
         found[key] = []
-        for item in _as_items(key, raw.get(key)):
+        for item in as_items(key, raw.get(key)):
             if isinstance(item, str) and item.strip().startswith("{"):  # one entry sent as JSON text
                 try:
                     item = json.loads(item)
@@ -123,21 +100,17 @@ def extraction_from_dict(raw: dict) -> ExtractionResult:
     return ExtractionResult(**found)
 
 
+def image_request(image_bytes: bytes, media_type: str, what: str = "this document") -> dict:
+    """The vision call's arguments for one image (llm_backends.call_vision_llm)."""
+    return dict(system_prompt=build_extraction_system_prompt(),
+                user_text=("Extract the recurring weekly class schedule, any one-off dated sessions, "
+                           f"and any dated tasks/deadlines from {what}."),
+                image_base64=base64.standard_b64encode(image_bytes).decode("utf-8"),
+                media_type=media_type, tool_name=TOOL_NAME, tool_schema=ExtractionResult.model_json_schema())
+
+
 def extract_schedule(file_bytes: bytes, media_type: str, client=None) -> ExtractionResult:
-    """Extract weekly patterns, dated sessions, and dated tasks from an uploaded image or PDF.
-
-    media_type: e.g. "image/png", "image/jpeg", "application/pdf".
-    client: optional OpenAI-SDK-shaped override (for testing). When omitted, dispatches
-    through llm_backends.call_vision_llm, which calls Groq (images only, not PDFs).
-    """
-    image_base64 = base64.standard_b64encode(file_bytes).decode("utf-8")
-    schema = ExtractionResult.model_json_schema()
-    user_text = ("Extract the recurring weekly class schedule, any one-off dated sessions, "
-                "and any dated tasks/deadlines from this document.")
-
-    from scheduler.llm_backends import _groq_vision_call, call_vision_llm
-    args = dict(system_prompt=build_extraction_system_prompt(), user_text=user_text,
-                image_base64=image_base64, media_type=media_type,
-                tool_name="extract_schedule", tool_schema=schema)
-    raw = _groq_vision_call(**args, client=client) if client is not None else call_vision_llm(**args)
-    return _sort_result(extraction_from_dict(raw))
+    """Extract weekly patterns, dated sessions, and dated tasks from an uploaded image, through
+    llm_backends.call_vision_llm (Groq: images only; PDFs go through pdf_extraction).
+    client: optional OpenAI-SDK-shaped stand-in (for testing)."""
+    return combine([extraction_from_dict(call_vision_llm(**image_request(file_bytes, media_type), client=client))])

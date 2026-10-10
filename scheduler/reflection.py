@@ -3,6 +3,7 @@ from typing import Literal
 import annotated_types
 from pydantic import BaseModel, Field, ValidationError, model_validator
 
+from scheduler.llm_backends import as_items, call_llm
 from scheduler.models import ProfileSettings
 from scheduler.preference_policy import MODEL_DELTAS
 
@@ -89,27 +90,24 @@ def _tool_schema(fields):
     return schema
 
 
-def propose_preference_changes(reflection_text: str, client=None, allowed_fields = None) -> ReflectionResult:
+def propose_preference_changes(reflection_text: str, client=None,
+                               allowed_fields: list[str] | None = None) -> ReflectionResult:
     """Ask the LLM to propose bounded preference changes from a reflection.
 
-    client is an optional OpenAI-SDK-shaped override (exposing .chat.completions.create(...)),
-    used mainly for testing. When omitted, this dispatches through llm_backends.call_llm,
-    which calls Groq (needs GROQ_API_KEY; see llm_backends.py).
+    Goes through llm_backends.call_llm (Groq; needs GROQ_API_KEY). client: optional
+    OpenAI-SDK-shaped stand-in (exposing .chat.completions.create(...)), for testing.
     """
     if allowed_fields is not None and not allowed_fields:  # nothing learnable -> skip the API call
         return ReflectionResult(summary="", proposals=[])
 
-    from scheduler.llm_backends import _groq_call, call_llm
-    args = dict(system_prompt=build_system_prompt(allowed_fields), user_message=reflection_text,
-                tool_name="propose_preference_changes", tool_schema=_tool_schema(allowed_fields))
-    raw = _groq_call(**args, client=client) if client is not None else call_llm(**args)
+    raw = call_llm(system_prompt=build_system_prompt(allowed_fields), user_message=reflection_text,
+                   tool_name="propose_preference_changes", tool_schema=_tool_schema(allowed_fields), client=client)
 
     # validate each proposal individually -- one hallucinated/locked field shouldn't
     # discard every other, otherwise valid, proposal in the same response
     # null / "none" / JSON text are read loosely; an unreadable shape raises BadModelOutput
-    from scheduler.schedule_extraction import _as_items
     proposals = []
-    for item in _as_items("proposals", raw.get("proposals"), marker="field"):
+    for item in as_items("proposals", raw.get("proposals"), marker="field"):
         try:
             proposals.append(PreferenceChangeProposal(**item))
         except (ValidationError, TypeError):  # TypeError: an entry that isn't an object
