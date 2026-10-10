@@ -65,3 +65,7 @@ def test_validation_error_from_the_domain_layer_is_shown(conn, sid):
     shown = run(conn, sid, ["m", f, "e", f, "10:00", "q"])
     assert any("Invalid value" in s for s in shown)
     assert load_settings(conn, sid).default_preferred_bed == 92
+
+def test_enter_at_the_settings_menu_gets_the_same_hint_as_every_menu(conn, sid):
+    shown = run(conn, sid, ["", "q"])
+    assert "Choose l, e, m, a, i, o or q." in shown

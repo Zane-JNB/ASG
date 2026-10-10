@@ -4,6 +4,7 @@ from scheduler.db import connect, get_or_create_student
 from scheduler.llm_backends import is_backend_failure
 from scheduler.paths import DB_PATH  # repo root, whatever folder you run from
 from scheduler.preferences import Outcome, pending_approvals, resolve_pending
+from scheduler.prompts import confirm
 from scheduler.reflection_cycle import reflect_and_record
 from scheduler.settings_menu import describe_pending
 
@@ -17,8 +18,7 @@ _STATUS = {
 }
 
 def main():
-    confirm = input("Groq (free tier, but a real API call). Continue? [y/N] ").strip().lower()
-    if confirm != "y":
+    if not confirm(input, "Groq (free tier, but a real API call). Continue?", default=False):
         print("Aborted.")
         return
 
@@ -35,7 +35,7 @@ def main():
             if not is_backend_failure(e):
                 raise  # a real bug: keep the traceback
             print(f"Could not process your reflection: {e}")
-            if input("Try again? Your text is kept. [y/N] ").strip().lower() != "y":
+            if not confirm(input, "Try again? Your text is kept.", default=False):
                 print(f"Nothing was saved. Your reflection was:\n{reflection_text}")
                 return
 
@@ -47,8 +47,8 @@ def main():
 
     now = datetime.now(timezone.utc)
     for p in pending_approvals(conn, student_id, now=now):
-        answer = input(f"  Apply this change? {describe_pending(p)} [y/N] ").strip().lower()
-        print(f"- {resolve_pending(conn, student_id, p.field, answer == 'y', now=now).message}")
+        approve = confirm(input, f"  Apply this change? {describe_pending(p)}", default=False)
+        print(f"- {resolve_pending(conn, student_id, p.field, approve, now=now).message}")
 
 if __name__ == "__main__":
     main()

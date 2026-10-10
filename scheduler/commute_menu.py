@@ -5,7 +5,7 @@ from scheduler.calendar_utils import expand_fixed_blocks, overlap_lines, window_
 from scheduler.commutes import commute_overlaps, expand_commutes
 from scheduler.db import COMMUTES, DATED_BLOCKS, WEEKLY_PATTERNS, skip_commute_date, transaction
 from scheduler.models import Commute
-from scheduler.prompts import ask_until, confirm, parse_whole, pick
+from scheduler.prompts import ask_until, confirm, parse_whole, pick, run_choices
 from scheduler.units import WEEKDAYS, parse_date, parse_time, parse_weekday, weekday_name
 
 
@@ -136,25 +136,19 @@ def _skip(conn, student_id: int, ask, show) -> None:
         show("Choose o or e.")
 
 
+def _delete(conn, student_id: int, ask, show) -> None:
+    items = _sorted(conn, student_id)
+    _show_list(items, show)
+    picked = pick(ask, show, items, "Number to delete (Enter to cancel): ") if items else None
+    if picked:
+        COMMUTES.delete(conn, student_id, picked[0])
+        show("Deleted.")
+
+
 def run_commute_menu(conn, student_id: int, ask=input, show=print, *, today: date) -> None:
-    while True:
-        choice = ask("Commutes: [a]dd  [l]ist  [s]kip/end  [d]elete  [b]ack: ").strip().lower()
-        if choice == "b":
-            return
-        if choice == "a":
-            _add(conn, student_id, ask, show, today)
-        elif choice == "l":
-            _show_list(_sorted(conn, student_id), show)
-        elif choice == "s":
-            _skip(conn, student_id, ask, show)
-        elif choice == "d":
-            items = _sorted(conn, student_id)
-            _show_list(items, show)
-            if not items:
-                continue
-            picked = pick(ask, show, items, "Number to delete (Enter to cancel): ")
-            if picked:
-                COMMUTES.delete(conn, student_id, picked[0])
-                show("Deleted.")
-        else:
-            show("Choose a, l, s, d or b.")
+    run_choices(ask, show, "Commutes", {
+        "a": ("[a]dd", lambda: _add(conn, student_id, ask, show, today)),
+        "l": ("[l]ist", lambda: _show_list(_sorted(conn, student_id), show)),
+        "s": ("[s]kip/end", lambda: _skip(conn, student_id, ask, show)),
+        "d": ("[d]elete", lambda: _delete(conn, student_id, ask, show)),
+    }, done=("b", "[b]ack"))

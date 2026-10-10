@@ -1,6 +1,8 @@
 """The CLI menus' shared prompts, answer parsers and task description. Every menu asks, parses
 and describes through these, so a rule (what Enter does, how hours are typed) lives in one place.
 Parsers take the typed text and raise ValueError with a message the student can act on."""
+from collections.abc import Callable
+
 from scheduler.models import ExtractedTask
 from scheduler.units import hours_to_slots, parse_date, parse_due_time, slots_to_hours
 
@@ -19,6 +21,23 @@ def ask_until(ask, show, label: str, parse, default=None, required: bool = False
             return parse(raw)
         except ValueError as e:
             show(f"  Invalid: {e}")
+
+
+def run_choices(ask, show, title: str, actions: dict[str, tuple[str, Callable[[], None]]],
+                done: tuple[str, str]) -> None:
+    """A menu: 'Title: [a]dd  [l]ist  [q]uit: ' asked until the done key. actions maps a key to
+    (its label, what it does); anything else, Enter too, gets a hint naming the keys."""
+    done_key, done_label = done
+    prompt = f"{title}: " + "  ".join(label for label, _ in actions.values()) + f"  {done_label}: "
+    hint = f"Choose {', '.join(actions)} or {done_key}."
+    while True:
+        choice = ask(prompt).strip().lower()
+        if choice == done_key:
+            return
+        if choice in actions:
+            actions[choice][1]()
+        else:
+            show(hint)
 
 
 def pick(ask, show, items, prompt: str):

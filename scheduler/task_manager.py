@@ -10,7 +10,7 @@ from scheduler.db import EXTRACTED_TASKS, get_unreadable_items, load_settings, t
 from scheduler.models import ExtractedTask, ProfileSettings
 from scheduler.preferences import Actor, PreferenceError, set_values
 from scheduler.prompts import (ask_missed, ask_until, confirm, describe_task, parse_due, parse_hours,
-                               parse_rating, pick)
+                               parse_rating, pick, run_choices)
 from scheduler.settings_menu import run_settings_menu
 from scheduler.task_filter import describe_reminders
 from scheduler.units import parse_time, plan_start, slots_to_hours
@@ -229,8 +229,6 @@ _ACTIONS = {  # key -> (menu label, handler), in menu order
     "u": ("[u]nreadable", _unreadable),
     "x": ("[x] delete ALL open", _delete_all),
 }
-_PROMPT = "Tasks: " + "  ".join(label for label, _ in _ACTIONS.values()) + "  [q]uit: "
-_CHOOSE = f"Choose {', '.join(_ACTIONS)} or q."
 
 
 def run_menu(conn, student_id: int, ask=input, show=print, today: date | None = None,
@@ -241,11 +239,9 @@ def run_menu(conn, student_id: int, ask=input, show=print, today: date | None = 
     if fixed_now:
         clock = lambda: fixed_now  # noqa: E731
     run_checkin(conn, student_id, clock(), ask, show)
-    while True:
-        choice = ask(_PROMPT).strip().lower()
-        if choice == "q":
-            return
-        if choice not in _ACTIONS:
-            show(_CHOOSE)
-            continue
-        _ACTIONS[choice][1](_Menu(conn, student_id, ask, show, clock()))
+
+    def run(action: Callable[[_Menu], None]) -> Callable[[], None]:
+        return lambda: action(_Menu(conn, student_id, ask, show, clock()))
+
+    run_choices(ask, show, "Tasks", {key: (label, run(action)) for key, (label, action) in _ACTIONS.items()},
+                done=("q", "[q]uit"))

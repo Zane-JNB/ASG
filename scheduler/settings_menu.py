@@ -3,8 +3,9 @@ from typing import Any, NamedTuple
 
 from scheduler.db import load_approval_mode, load_settings, load_tiers
 from scheduler.preference_policy import POLICY, ApprovalMode, Tier
-from scheduler.preferences import Actor, PreferenceError, change_tier, check_may_edit, set_approval_mode, set_values
-from scheduler.prompts import ask_until, parse_hours, parse_rating, parse_whole, pick
+from scheduler.preferences import (Actor, PendingChange, PreferenceError, change_tier, check_may_edit,
+                                   set_approval_mode, set_values)
+from scheduler.prompts import ask_until, parse_hours, parse_rating, parse_whole, pick, run_choices
 from scheduler.units import MINUTES_PER_SLOT, SLOTS_PER_DAY, parse_time, slot_to_time, slots_to_hours, time_to_slot
 
 _CANCEL = object()  # Enter = cancel; separate sentinel because "none" is a legal value (None)
@@ -66,7 +67,7 @@ _UI = {  # Every user_editable POLICY field must be here (tested).
 }
 
 
-def describe_pending(p) -> str:
+def describe_pending(p: PendingChange) -> str:
     if p.field in _UI:
         fmt = _UI[p.field].fmt
         return f"{p.label}: {fmt(p.old)} -> {fmt(p.new)}"
@@ -75,7 +76,7 @@ def describe_pending(p) -> str:
 
 # ---------- the menu ----------
 
-def _approval(conn, student_id, ask, show) -> None:
+def _approval(conn, student_id: int, ask, show) -> None:
     show(f"Learned changes currently {_MODE_WORDS[load_approval_mode(conn, student_id)]}.")
     raw = ask("Switch to: ask (approve each change) / auto (apply after repeated evidence); Enter to keep: ").strip().lower()
     if not raw:
@@ -91,14 +92,15 @@ def _user_facing():
     return [n for n, p in POLICY.items() if p.user_editable]
 
 
-def show_settings(conn, student_id, show):
+def show_settings(conn, student_id: int, show) -> list[str]:
+    """Number and show every setting the student can see; returns their names in that order."""
     settings, tiers, fields = load_settings(conn, student_id), load_tiers(conn, student_id), _user_facing()
     for n, name in enumerate(fields, 1):
         show(f"{n}. {POLICY[name].label}: {_UI[name].fmt(getattr(settings, name))}  [{_TIER_WORDS[tiers[name]]}]")
     return fields
 
 
-def show_internal(conn, student_id, show):
+def show_internal(conn, student_id: int, show) -> None:
     tiers = load_tiers(conn, student_id)
     show("Managed by the app (you can't edit these):")
     for name, p in POLICY.items():
@@ -106,7 +108,7 @@ def show_internal(conn, student_id, show):
             show(f"  - {p.label}  [{_TIER_WORDS[tiers[name]]}]")
 
 
-def _edit(conn, student_id, name, ask, show):
+def _edit(conn, student_id: int, name: str, ask, show) -> None:
     try:  # same friendly messages as the API, and we don't ask for a value we'd then reject
         check_may_edit(name, load_tiers(conn, student_id), Actor.USER)
     except PreferenceError as e:
@@ -126,7 +128,7 @@ def _edit(conn, student_id, name, ask, show):
     show(f"Saved: {POLICY[name].label} is now {ui.fmt(after)}." if after != before else "No change.")
 
 
-def _switch(conn, student_id, name, new_tier, show):
+def _switch(conn, student_id: int, name: str, new_tier: Tier, show) -> None:
     label = POLICY[name].label
     try:
         changed = change_tier(conn, student_id, name, new_tier, Actor.USER)
@@ -142,27 +144,24 @@ def _switch(conn, student_id, name, new_tier, show):
         show(f"'{label}' is automatic again, starting from {value}.")
 
 
-def run_settings_menu(conn, student_id, ask=input, show=print):
+def run_settings_menu(conn, student_id: int, ask=input, show=print) -> None:
     fields = show_settings(conn, student_id, show)
-    while True:
-        choice = ask("Settings: [l]ist  [e]dit  [m]anual (take control)  [a]utomatic (let the app learn)  "
-                     "[i]nternal  [o] approval mode  [q]uit: ").strip().lower()
-        if choice == "q":
-            return
-        if choice == "l":
+
+    def on_picked(act: Callable[[str], None]) -> Callable[[], None]:
+        """List the settings, let the student pick one by number, then act on it."""
+        def pick_then_act() -> None:
             show_settings(conn, student_id, show)
-        elif choice == "i":
-            show_internal(conn, student_id, show)
-        elif choice == "o":
-            _approval(conn, student_id, ask, show)
-        elif choice in ("e", "m", "a"):
-            show_settings(conn, student_id, show)
-            item = pick(ask, show, fields, "Number (Enter to cancel): ")
-            if item is None:
-                continue
-            if choice == "e":
-                _edit(conn, student_id, item, ask, show)
-            else:
-                _switch(conn, student_id, item, Tier.USER if choice == "m" else Tier.MODEL_LEARNED, show)
-        elif choice:
-            show("Choose l, e, m, a, i, o or q.")
+            name = pick(ask, show, fields, "Number (Enter to cancel): ")
+            if name is not None:
+                act(name)
+        return pick_then_act
+
+    run_choices(ask, show, "Settings", {
+        "l": ("[l]ist", lambda: show_settings(conn, student_id, show)),
+        "e": ("[e]dit", on_picked(lambda name: _edit(conn, student_id, name, ask, show))),
+        "m": ("[m]anual (take control)", on_picked(lambda name: _switch(conn, student_id, name, Tier.USER, show))),
+        "a": ("[a]utomatic (let the app learn)",
+              on_picked(lambda name: _switch(conn, student_id, name, Tier.MODEL_LEARNED, show))),
+        "i": ("[i]nternal", lambda: show_internal(conn, student_id, show)),
+        "o": ("[o] approval mode", lambda: _approval(conn, student_id, ask, show)),
+    }, done=("q", "[q]uit"))

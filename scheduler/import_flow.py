@@ -1,7 +1,7 @@
 import json
 import os
 from datetime import date, datetime
-from typing import Annotated
+from typing import Annotated, NamedTuple
 
 from pydantic import Field, ValidationError, field_validator
 
@@ -38,21 +38,26 @@ MEDIA_TYPES = {
 }
 
 
-def _load_result(source_path, ask, show, extractor, cache_path):
-    """Get an ExtractionResult from a saved .json (free) or a real image/PDF (LLM call).
-    Returns (result, failed PDF page numbers, replay file holding it or None); result is None if
-    the student declines the cost prompt or the call fails."""
+class _Loaded(NamedTuple):
+    result: ExtractionResult
+    failed_pages: list[int]  # PDF pages that weren't read
+    kept_in: str | None  # the replay file that holds it, if any
+
+
+def _load_result(source_path: str, ask, show, extractor, cache_path: str) -> _Loaded | None:
+    """An ExtractionResult from a saved .json (free) or a real image/PDF (LLM call). None (after
+    saying why) if the file can't be used, the student declines the cost prompt, or the call fails."""
     ext = os.path.splitext(source_path)[1].lower()
     if ext != ".json" and ext not in MEDIA_TYPES:
         show(f"Unsupported file type '{ext}'. Use png, jpg, jpeg, pdf, or a saved .json.")
-        return None, [], None
+        return None
 
     try:
         with open(source_path, "rb") as f:  # read once, reused below for the page count too
             file_bytes = f.read()
     except OSError as e:  # missing file, no permission, a folder...
         show(f"Could not read '{source_path}': {e.strerror or e}")
-        return None, [], None
+        return None
 
     if ext == ".json":
         try:
@@ -61,8 +66,8 @@ def _load_result(source_path, ask, show, extractor, cache_path):
             result = ExtractionResult.model_validate(saved.model_dump(exclude={"failed_pages"}))
         except ValidationError:  # bad JSON, wrong shape, or page numbers that aren't page numbers
             show(f"'{source_path}' is not a valid saved extraction.")
-            return None, [], None
-        return result, saved.failed_pages, source_path  # the replayed file still holds it
+            return None
+        return _Loaded(result, saved.failed_pages, source_path)  # the replayed file still holds it
 
     page_note = ""
     if ext == ".pdf":  # each page can be its own call (text or rendered-image)
@@ -70,10 +75,10 @@ def _load_result(source_path, ask, show, extractor, cache_path):
             page_note = f" This PDF has {page_count(file_bytes)} page(s); each may use its own call."
         except Exception:  # pdfplumber/pdfminer raise their own types for a broken or invalid PDF
             show(f"'{source_path}' could not be opened as a PDF.")
-            return None, [], None
+            return None
     if not confirm(ask, f"Groq (free tier, but a real API call).{page_note} Continue?", default=False):
         show("Aborted.")
-        return None, [], None
+        return None
     failed = []
     try:
         result = extractor(file_bytes, MEDIA_TYPES[ext])
@@ -84,7 +89,7 @@ def _load_result(source_path, ask, show, extractor, cache_path):
         if not is_backend_failure(e):
             raise  # a bug in our own code: keep the traceback
         show(f"Extraction failed: {e}")  # report it, save nothing, don't crash
-        return None, [], None
+        return None
 
     tmp_path = os.fspath(cache_path) + ".tmp"
     try:  # saved before review; written aside first so a failed write keeps the old copy
@@ -100,8 +105,8 @@ def _load_result(source_path, ask, show, extractor, cache_path):
             os.remove(tmp_path)  # it holds the student's timetable: don't leave it lying around
         except OSError:
             pass
-        return result, failed, None
-    return result, failed, cache_path
+        return _Loaded(result, failed, None)
+    return _Loaded(result, failed, cache_path)
 
 
 def _close_past_tasks(reviewed: ExtractionResult, now: datetime, ask, show) -> tuple[ExtractionResult, int]:
@@ -118,7 +123,7 @@ def _close_past_tasks(reviewed: ExtractionResult, now: datetime, ask, show) -> t
     return reviewed.model_copy(update={"tasks": tasks}), closed
 
 
-def _clashes_with_saved(conn, student_id, reviewed: ExtractionResult, today: date) -> list[str]:
+def _clashes_with_saved(conn, student_id: int, reviewed: ExtractionResult, today: date) -> list[str]:
     """Overlaps between the blocks being imported and the saved table this import does NOT
     replace (weekly classes vs dated sessions), from today on. Clashes inside the import itself
     are already shown by the review. Lines as overlap_lines prints them; [] if none."""
@@ -136,9 +141,10 @@ def _clashes_with_saved(conn, student_id, reviewed: ExtractionResult, today: dat
 def run_import(conn, student_id: int, source_path: str, ask=input, show=print,
                extractor=extract_document, cache_path=CACHE_PATH, *, now: datetime) -> bool:
     """Extract -> review -> replace the student's saved schedule items. True only if saved."""
-    result, failed, kept_in = _load_result(source_path, ask, show, extractor, cache_path)
-    if result is None:
+    loaded = _load_result(source_path, ask, show, extractor, cache_path)
+    if loaded is None:
         return False
+    result, failed, kept_in = loaded
     pages = ", ".join(map(str, failed))
     if not (result.weekly_patterns or result.dated_blocks or result.tasks):
         if failed:

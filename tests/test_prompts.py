@@ -97,3 +97,19 @@ def test_describe_task_notes_one_block_split_and_sleep_leave():
 def test_parse_hours_rejects_non_finite_numbers(text):  # #16
     with pytest.raises(ValueError):
         parse_hours(text)
+
+
+# ---- one menu loop for every menu ----
+from scheduler.prompts import run_choices
+
+
+def test_run_choices_builds_the_prompt_runs_actions_and_stops_at_the_done_key():
+    ran, shown = [], []
+    ask, _ = scripted(["b", "x", "", "a", "q"])
+    prompts = []
+    run_choices(lambda p: prompts.append(p) or ask(p), shown.append, "Things",
+                {"a": ("[a]dd", lambda: ran.append("a")), "b": ("[b]rowse", lambda: ran.append("b"))},
+                done=("q", "[q]uit"))
+    assert prompts[0] == "Things: [a]dd  [b]rowse  [q]uit: "
+    assert ran == ["b", "a"]
+    assert shown == ["Choose a, b or q."] * 2  # junk and a bare Enter both get the hint
