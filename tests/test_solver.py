@@ -135,17 +135,6 @@ def test_tasks_do_not_overlap_sleep():
     tasks = [DynamicTask(title=f"T{i}", duration_slots=20, priority=3, difficulty=2,
                          splittable=False) for i in range(3)] 
     rule = SleepRule() 
-    items, _ = build_schedule([], tasks, num_days=2, sleep_rules=[rule]) 
-    used = [] 
-    for item in items:
-        used.extend(range(item.day * SLOTS_PER_DAY + item.start_slot,
-                          item.day * SLOTS_PER_DAY + item.end_slot)) 
-    assert len(used) == len(set(used)) 
-
-def test_tasks_do_not_overlap_sleep(): 
-    tasks = [DynamicTask(title=f"T{i}", duration_slots=20, priority=3, difficulty=2,
-                         splittable=False) for i in range(3)] 
-    rule = SleepRule() 
     items, _ = build_schedule([], tasks, num_days=2, sleep_rules=[rule])  
     used = []  
     for item in items: 
