@@ -109,3 +109,12 @@ def test_a_plan_anchor_lists_its_dates_and_names_the_date_of_a_day():
     anchor = PlanAnchor(start_date=_date(2026, 10, 30), num_days=3)
     assert anchor.dates == [_date(2026, 10, 30), _date(2026, 10, 31), _date(2026, 11, 1)]
     assert anchor.date_of(2) == _date(2026, 11, 1)
+
+
+def test_a_task_carries_no_reminder_fields_and_old_rows_with_them_still_load():  # #14
+    """Reminders are profile settings; the per-task copies were never read but were sent to Groq."""
+    from scheduler.models import ExtractionResult
+    schema = str(ExtractionResult.model_json_schema())
+    assert "reminder" not in schema
+    old_row = '{"title": "HW", "date": "2026-10-02", "reminders_enabled": false, "reminder_min_priority": 4}'
+    assert _ET.model_validate_json(old_row).title == "HW"

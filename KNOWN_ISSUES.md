@@ -13,7 +13,6 @@ Zane will review and correct each. Referenced from `CLAUDE.md`.
 9. `requirements.txt` is a full pip freeze of the Windows/Python 3.14 `.venv`, including indirect packages. Before CI, split it into direct dependencies plus a lock file. Keep it UTF-8: in PowerShell 5.1, `pip freeze > requirements.txt` writes UTF-16 and breaks `pip install -r`. Use `pip freeze | Out-File -Encoding utf8 requirements.txt` or run it from Git Bash.
 10. PDF text extraction often fails on `gpt-oss-120b` (`tool_use_failed`), so each page falls back to vision and costs two calls, which is the main cause of free-tier 429s. Address in model routing (4.0/4.1): retry once, trim the schema, or use another model; make the live PDF test catch the fallback.
 12. Hard-coded search tunables: `propose_drops` (`max_actions`, `max_proposals`, `max_checks`, `time_limit_seconds`) and the `restore.plan_restores` steps should be `ProfileSettings` fields with `POLICY` entries. Do this with the optimal-schedule work.
-14. Unused reminder fields on `ExtractedTask` (`reminders_enabled`, `reminder_min_*`) are sent in the Groq extraction schema. Remove them or mark them `SkipJsonSchema` (see 10).
 
 
 26. `propose_drops` re-solves "as things stand" before searching, although `add_task_with_fit` has just done that check (one extra solve per search). Keep it while `propose_drops` is also called directly (tests); drop it if the base check moves out of the engine.

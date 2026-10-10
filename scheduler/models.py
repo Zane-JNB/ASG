@@ -219,9 +219,6 @@ class ExtractedTask(BaseModel):
     difficulty: int = Field(default=3, ge=1, le=5)  # placeholder: medium
     splittable: SkipJsonSchema[bool] = True  # placeholder: can be split into sessions
     may_cut_sleep: SkipJsonSchema[bool] = False  # chosen when making room for it (see DynamicTask)
-    reminders_enabled: bool = True
-    reminder_min_difficulty: int | None = Field(default=None, ge=1, le=5)  # None = ignore difficulty
-    reminder_min_priority: int | None = Field(default=None, ge=1, le=5)  # None = ignore priority
     completed_at: SkipJsonSchema[str | None] = None
     missed: SkipJsonSchema[bool] = False  # closed without being done (kept as history, like completed_at)
 
