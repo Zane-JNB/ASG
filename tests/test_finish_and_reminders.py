@@ -157,6 +157,22 @@ def test_restore_window_stays_within_the_plan_horizon(conn, sid):
     assert plan_restores(conn, sid, NINE) == {far: 8}  # fits inside the capped 3-day window
 
 
+def test_a_task_that_cannot_fit_anyway_does_not_block_restores(conn, sid):
+    # #18: 'Lab' (8h, due in an hour) never fits, so every restore check used to fail
+    EXTRACTED_TASKS.add(conn, sid, ExtractedTask(title="Lab", date=D.isoformat(), due_time="10:00",
+                                                 duration_slots=32, priority=3))
+    far = EXTRACTED_TASKS.add(conn, sid, _task("Far", hours=2, due=D + timedelta(days=7)))
+    add_plan_cut(conn, sid, far, 8)
+    assert plan_restores(conn, sid, NINE) == {far: 8}
+
+
+def test_a_cut_task_that_cannot_fit_anyway_gets_no_time_back(conn, sid):
+    lab = EXTRACTED_TASKS.add(conn, sid, ExtractedTask(title="Lab", date=D.isoformat(), due_time="10:00",
+                                                       duration_slots=32, priority=3))
+    add_plan_cut(conn, sid, lab, 4)  # still 7h, due in an hour: even a little more can't be planned
+    assert plan_restores(conn, sid, NINE) == {}
+
+
 def test_higher_priority_cut_task_is_restored_first(conn, sid):
     DATED_BLOCKS.add(conn, sid, DatedBlock(title="Class", date=D.isoformat(), start_time="09:00", end_time="17:00"))
     low = EXTRACTED_TASKS.add(conn, sid, _task("Low", hours=4, priority=2, due=D))
