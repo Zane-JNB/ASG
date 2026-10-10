@@ -77,7 +77,7 @@ def test_non_splittable_task_is_planned_as_one_block_and_splittable_as_sessions(
 
 def test_menu_split_option_changes_and_saves_the_setting(conn, sid):
     EXTRACTED_TASKS.add(conn, sid, _task("Essay", 3, splittable=True))
-    ask, shown = scripted(["s", "1", "n", "q"])
+    ask, shown = scripted(["s", "1", "n", "", "q"])
     run_menu(conn, sid, ask, shown.append, today=TODAY)
     assert EXTRACTED_TASKS.get(conn, sid)[0][1].splittable is False
     assert any("one block" in l for l in shown)
@@ -85,7 +85,7 @@ def test_menu_split_option_changes_and_saves_the_setting(conn, sid):
 
 def test_menu_split_option_enter_keeps_the_current_setting(conn, sid):
     EXTRACTED_TASKS.add(conn, sid, _task("Essay", 3, splittable=False))
-    ask, shown = scripted(["s", "1", "", "q"])
+    ask, shown = scripted(["s", "1", "", "", "q"])
     run_menu(conn, sid, ask, shown.append, today=TODAY)
     assert EXTRACTED_TASKS.get(conn, sid)[0][1].splittable is False
 
@@ -99,6 +99,17 @@ def test_menu_split_option_handles_empty_cancel_and_bad_numbers(conn, sid):
     run_menu(conn, sid, ask, shown.append, today=TODAY)
     assert any("between 1 and 1" in l for l in shown)
     assert EXTRACTED_TASKS.get(conn, sid)[0][1].splittable is True
+
+
+def test_menu_task_settings_let_a_saved_task_use_sleep_below_target_and_take_it_back(conn, sid):
+    EXTRACTED_TASKS.add(conn, sid, _task("Essay", 3))
+    it, shown = iter(["s", "1", "", "y", "q"]), []
+    run_menu(conn, sid, lambda p: (shown.append(p), next(it))[1], shown.append, today=TODAY)
+    assert EXTRACTED_TASKS.get(conn, sid)[0][1].may_cut_sleep is True
+    assert "  May 'Essay' use sleep below your target (never below your minimum)? [y/N] " in shown
+    ask, shown = scripted(["s", "1", "", "n", "q"])
+    run_menu(conn, sid, ask, shown.append, today=TODAY)
+    assert EXTRACTED_TASKS.get(conn, sid)[0][1].may_cut_sleep is False
 
 
 def test_update_only_touches_the_owners_task(conn, sid):

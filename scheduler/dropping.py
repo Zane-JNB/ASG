@@ -1,5 +1,6 @@
 """Making room for a new task: ways to cut existing tasks (and shorten the new one), tried
-cheapest first, each verified by the solver and scored for the student to choose from."""
+cheapest first, or to let the new task use sleep below target; each verified by the solver and
+scored for the student to choose from."""
 import heapq
 from scheduler.models import (
     DropAction, DropProposal, DropReport, DynamicTask, ProfileSettings, ScheduledItem, ScheduleWarning,
@@ -145,14 +146,15 @@ def _proposal(frame: PlanFrame, tasks: list[DynamicTask], new_task: DynamicTask,
              + loss_cost(new_task, new_lost, s)
              + s.drop_sleep_weight * sleep + s.drop_hard_flag_penalty * len(flags))
     return DropProposal(actions=list(actions), new_task_added=new_added, new_task_slots_cut=new_cut,
-                        score=score, slots_freed=sum(a.slots_lost for a in actions),
-                        sleep_sacrificed_slots=sleep, flags=flags, schedule=items)
+                        new_task_may_cut_sleep=new_added and new_task.may_cut_sleep, score=score,
+                        slots_freed=sum(a.slots_lost for a in actions), sleep_sacrificed_slots=sleep,
+                        flags=flags, schedule=items)
 
 
 def try_cuts(frame: PlanFrame, tasks: list[DynamicTask], new_task: DynamicTask, actions, new_cut: int = 0,
              time_limit_seconds: float = FIT_CHECK_SECONDS) -> DropProposal | None:
     """The scored proposal for these cuts (and new_cut slots off the new task) if everything then
-    fits, else None."""
+    fits, else None. A new task with may_cut_sleep is tried with that leave."""
     shorter_new = new_task.model_copy(update={"duration_slots": new_task.duration_slots - new_cut})
     solved = frame.trial(_apply(tasks, actions) + [shorter_new], time_limit_seconds)
     return None if solved is None else _proposal(frame, tasks, new_task, actions, new_cut, solved)
@@ -193,16 +195,24 @@ def propose_drops(frame: PlanFrame, tasks: list[DynamicTask], new_task: DynamicT
         return DropReport(new_task_title=new_task.title, fits_already=True, proposals=[],
                           checks_used=1, search_exhausted=True)
 
-    checks, found = 1, []
+    checks, found, exhausted = 1, [], True
     if not must_add:
         checks += 1
         solved = frame.trial(tasks, time_limit_seconds)
         if solved:
             found.append(_proposal(frame, tasks, new_task, (), 0, solved, new_added=False))
+    if checks < max_checks:  # nothing cut: the new task may use sleep below target instead
+        checks += 1
+        sleepy = try_cuts(frame, tasks, new_task.model_copy(update={"may_cut_sleep": True}), (), 0,
+                          time_limit_seconds)
+        if sleepy:
+            found.append(sleepy)
+    else:
+        exhausted = False
 
     # the least that must be freed: all task time minus every free slot (an over-count of the room)
     need = sum(t.duration_slots for t in tasks + [new_task]) - _free_slots(frame, tasks + [new_task])
-    feasible_cuts, exhausted = [], True
+    feasible_cuts = []
     for _, pick, new_cut in _cut_combos(tasks, new_task, frame.settings, max_actions, need):
         cuts = {a.task_index: a.slots_lost for a in pick}
         if new_cut:

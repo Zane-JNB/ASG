@@ -45,7 +45,8 @@ def describe_proposal(n: int, p: DropProposal, new_task: DynamicTask) -> list[st
             lines.append(f"   - Adds '{new_task.title}' shortened to {format_hours(new_task.duration_slots - p.new_task_slots_cut)} "
                          f"(from {format_hours(new_task.duration_slots)}, still one block; {about_new})")
         else:
-            lines.append(f"   - Adds '{new_task.title}' ({format_hours(new_task.duration_slots)}, {about_new})")
+            lines.append(f"   - Adds '{new_task.title}' ({format_hours(new_task.duration_slots)}, {about_new})"
+                         + (" and lets it use sleep below your target" if p.new_task_may_cut_sleep else ""))
     else:
         lines.append(f"   - Don't add '{new_task.title}' ({format_hours(new_task.duration_slots)}, "
                      f"{about_new}); nothing else changes")

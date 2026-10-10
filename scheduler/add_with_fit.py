@@ -33,13 +33,9 @@ def add_task_with_fit(conn, student_id: int, new_task: ExtractedTask, now: datet
         if w.kind == "saved_row_unreadable":
             show(f"Warning: {w.message}")
 
-    if fits is not None:  # later-deadline tasks were shuffled by the solver if needed
-        _, sleep_warns = fits
+    if fits is not None:  # later-deadline tasks were shuffled if needed; target sleep never is (#11)
         new_id = EXTRACTED_TASKS.add(conn, student_id, new_task)
         show("Added.")
-        for w in sleep_warns:  # it fits, but sleep was given up for it
-            if w.kind == "sleep_short" or w.severity == "hard":
-                show(f"Warning: {w.message}")
         return {"cuts": {}, "new_task_id": new_id}
 
     full = None  # the ranked search, run at most once and shared by semi and automatic
@@ -75,6 +71,8 @@ def add_task_with_fit(conn, student_id: int, new_task: ExtractedTask, now: datet
             full_slots = new_task.duration_slots
             show(f"  For this plan only: '{new_task.title}' is planned at {format_hours(full_slots - choice.new_task_slots_cut)} "
                  f"(saved as {format_hours(full_slots)})")
+        if choice.new_task_may_cut_sleep:
+            show(f"  '{new_task.title}' may use sleep below your target (saved with the task)")
     return summary
 
 
@@ -87,7 +85,12 @@ def _choose_manual(fit: FitInputs, must_add: bool, ask, show) -> DropProposal | 
         return chunk_sizes(everyone[i].model_copy(update={"duration_slots": remaining}))
 
     def fits(lost: dict[int, int]) -> DropProposal | None:
-        return try_cuts(fit.frame, tasks, fit.new_task, manual_actions(tasks, lost), lost.get(NEW_TASK, 0))
+        """The cuts as they are, else the same cuts with the new task using sleep below target
+        (the editor shows that sleep before the student saves)."""
+        actions, new_cut = manual_actions(tasks, lost), lost.get(NEW_TASK, 0)
+        sleepy = fit.new_task.model_copy(update={"may_cut_sleep": True})
+        return (try_cuts(fit.frame, tasks, fit.new_task, actions, new_cut)
+                or try_cuts(fit.frame, tasks, sleepy, actions, new_cut))
 
     state = CutState({i: t.duration_slots for i, t in everyone.items()}, sizes_fn)
     action, proposal = run_manual_edit(state, {i: t.title for i, t in everyone.items()}, fits, ask, show, must_add)
@@ -108,6 +111,8 @@ def apply_drop_choice(conn, student_id: int, proposal: DropProposal,
         task_id = planned[a.task_index][0]
         cuts[task_id] = cuts.get(task_id, 0) + a.slots_lost
     new_cut = proposal.new_task_slots_cut if proposal.new_task_added else 0
+    if proposal.new_task_may_cut_sleep:  # unlike a cut, this is saved with the task
+        new_task = new_task.model_copy(update={"may_cut_sleep": True})
     new_id = apply_plan_changes(conn, student_id, cuts, new_task if proposal.new_task_added else None, new_cut)
     if new_cut:
         cuts[new_id] = new_cut

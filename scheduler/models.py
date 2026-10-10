@@ -15,6 +15,8 @@ EndTime = Annotated[str, AfterValidator(lambda v: parse_time(v, end=True))]  # m
 DueTime = Annotated[str, AfterValidator(parse_due_time)]  # rounded down to its slot
 IsoDate = Annotated[str, AfterValidator(parse_date)]  # "YYYY-MM-DD"
 
+MAX_PRIORITY = 5
+
 class FixedBlock(BaseModel):
     title: str
     start_slot: int = Field(ge=0, lt=SLOTS_PER_DAY)
@@ -42,9 +44,10 @@ class FixedBlock(BaseModel):
 class DynamicTask(BaseModel):
     title: str
     duration_slots: int = Field(gt=0)  # 4 slots = 1 hour
-    priority: int = Field(ge=1, le=5)
+    priority: int = Field(ge=1, le=MAX_PRIORITY)
     difficulty: int = Field(default=3, ge=1, le=5)
     splittable: SkipJsonSchema[bool] = True
+    may_cut_sleep: SkipJsonSchema[bool] = False  # the student let it take sleep below target (never below minimum)
     max_session_slots: int = Field(default=8, gt=0)  # 8 slots = 2 hours
     deadline_day: int | None = Field(default=None, ge=0)  # None = no deadline
     deadline_slot: int = Field(default=SLOTS_PER_DAY, gt=0, le=SLOTS_PER_DAY)  # exclusive
@@ -172,9 +175,10 @@ class ExtractedTask(BaseModel):
     due_time: DueTime | None = Field(  # None = due at the end of that day
         default=None, description="Time the task is due, HH:MM 24-hour, only if the document states one")
     duration_slots: int = Field(default=4, gt=0)  # placeholder: 1 hour
-    priority: int = Field(default=3, ge=1, le=5)  # placeholder: medium
+    priority: int = Field(default=3, ge=1, le=MAX_PRIORITY)  # placeholder: medium
     difficulty: int = Field(default=3, ge=1, le=5)  # placeholder: medium
     splittable: SkipJsonSchema[bool] = True  # placeholder: can be split into sessions
+    may_cut_sleep: SkipJsonSchema[bool] = False  # chosen when making room for it (see DynamicTask)
     reminders_enabled: bool = True
     reminder_min_difficulty: int | None = Field(default=None, ge=1, le=5)  # None = ignore difficulty
     reminder_min_priority: int | None = Field(default=None, ge=1, le=5)  # None = ignore priority
@@ -293,6 +297,7 @@ class DropProposal(BaseModel):
     flags: list[str]  # hard problems the student must see
     schedule: list[ScheduledItem]  # already solved
     new_task_slots_cut: int = 0
+    new_task_may_cut_sleep: bool = False  # it is added with leave to use sleep below target
 
 class DropReport(BaseModel):
     new_task_title: str

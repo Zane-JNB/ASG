@@ -461,3 +461,55 @@ def test_plan_frame_trial_counts_running_out_of_time_as_not_fitting():
     with pytest.raises(RuntimeError, match="No schedule found within"):
         frame.solve_all_fit(tasks, time_limit_seconds=0.001)  # a fit that can't be checked is an error
     assert frame.trial(tasks, time_limit_seconds=0.001) is None  # one trial of many: just "no"
+
+
+# ---------- #11: sleep target vs task fit ----------
+
+def _evening(latest_wake=116):
+    """Busy until 21:00; sleep may start at 21:00 and must end by 05:00, so the full 8h target
+    only fits when bed is at 21:00 sharp: any task tonight comes out of target sleep."""
+    work = FixedBlock(title="Work", start_slot=0, end_slot=84)
+    rule = SleepRule(earliest_bed=84, preferred_bed=84, latest_bed=100, latest_wake=latest_wake)
+    return [work], rule
+
+
+def _tonight(title, slots=1, may_cut_sleep=False):
+    return DynamicTask(title=title, duration_slots=slots, priority=5, deadline_day=0,
+                       may_cut_sleep=may_cut_sleep)
+
+
+def _slept(items):
+    return sum(i.end_slot - i.start_slot for i in sleep_items(items))
+
+
+def test_a_short_top_priority_task_never_takes_target_sleep_without_permission():
+    blocks, rule = _evening()
+    items, unscheduled = build_schedule(blocks, [_tonight("Quiz")], sleep_rules=[rule])
+    assert [t.title for t in unscheduled] == ["Quiz"] and _slept(items) == 32
+
+
+def test_a_task_with_permission_may_take_target_sleep():
+    blocks, rule = _evening()
+    items, unscheduled = build_schedule(blocks, [_tonight("Quiz", may_cut_sleep=True)], sleep_rules=[rule])
+    assert unscheduled == [] and _slept(items) == 29  # its 15 min plus a break on each side
+
+
+def test_permission_never_reaches_below_minimum_sleep():
+    blocks, rule = _evening()
+    items, unscheduled = build_schedule(blocks, [_tonight("Essay", slots=10, may_cut_sleep=True)],
+                                        sleep_rules=[rule])
+    assert [t.title for t in unscheduled] == ["Essay"] and _slept(items) == 32
+
+
+def test_permission_covers_only_the_permitted_tasks_own_time():
+    blocks, rule = _evening()
+    tasks = [_tonight("Allowed", may_cut_sleep=True), _tonight("Not allowed")]
+    items, unscheduled = build_schedule(blocks, tasks, sleep_rules=[rule])
+    assert [i.title for i in items if i.kind == "task"] == ["Allowed"]
+    assert [t.title for t in unscheduled] == ["Not allowed"]
+
+
+def test_sleep_an_early_start_already_cuts_does_not_use_up_the_permission():
+    blocks, rule = _evening(latest_wake=112)  # only 7h fit even with no task
+    items, unscheduled = build_schedule(blocks, [_tonight("Quiz", may_cut_sleep=True)], sleep_rules=[rule])
+    assert unscheduled == [] and _slept(items) == 25

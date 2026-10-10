@@ -214,16 +214,42 @@ def _long_day_then_early_class(conn, sid):
                                            start_time="06:00", end_time="08:00"))
 
 
-def test_fits_already_still_shows_sleep_given_up_for_it(conn, sid):
+def test_a_task_that_only_fits_by_cutting_target_sleep_is_never_added_silently(conn, sid):
+    # #11: it used to be added with a warning after "Added."; now the student is asked first
     _long_day_then_early_class(conn, sid)
-    result, shown = _run(conn, sid, _task("Essay", 1.5, 3, D), [])
-    assert result is not None and "Added." in shown
-    assert any(s.startswith("Warning:") and "sleep" in s for s in shown)
+    result, shown = _run(conn, sid, _task("Essay", 1.5, 3, D), [""])
+    assert result is None and "Added." not in shown and EXTRACTED_TASKS.get(conn, sid) == []
+
+
+def test_letting_the_new_task_use_sleep_is_saved_with_it_and_planned(conn, sid):
+    _long_day_then_early_class(conn, sid)
+    result, shown = _run(conn, sid, _task("Essay", 1.5, 3, D), ["a", "y"])
+    assert result["cuts"] == {} and dict(EXTRACTED_TASKS.get(conn, sid))[result["new_task_id"]].may_cut_sleep
+    assert "  'Essay' may use sleep below your target (saved with the task)" in shown
+    _, _, items, warnings = plan_from_saved(conn, sid, now=NINE_AM)
+    assert "Essay" in [i.title for i in items if i.kind == "task"]
+    assert [(w.severity, w.kind) for w in warnings if w.kind.startswith("sleep")] == [("soft", "sleep_short")]
 
 
 def test_easy_fit_shows_no_sleep_warning(conn, sid):
     result, shown = _run(conn, sid, _task("Essay", 1.5, 3, D + timedelta(days=3)), [])
     assert shown == ["Added."]
+
+
+def test_manual_cuts_that_only_fit_with_sleep_below_target_show_it_and_save_the_leave(conn, sid):
+    _long_day_then_early_class(conn, sid)
+    # manual: shorten the new task (the only one, number 1) by 15 min; it still needs sleep, so
+    # the check falls back to letting it use sleep below target, shown before saving
+    result, shown = _run(conn, sid, _task("Essay", 1.5, 3, D), ["m", "1", "t", "0.25", "s"])
+    assert "Everything fits now." in shown and any(l.startswith("  !! Sleep:") for l in shown)
+    assert dict(EXTRACTED_TASKS.get(conn, sid))[result["new_task_id"]].may_cut_sleep
+    assert "  'Essay' may use sleep below your target (saved with the task)" in shown
+
+
+def test_manual_cuts_that_fit_on_their_own_keep_target_sleep(conn, sid):
+    essay = _tight_day(conn, sid)
+    result, _ = _run(conn, sid, essay, ["m", "1", "d", "s"])
+    assert not dict(EXTRACTED_TASKS.get(conn, sid))[result["new_task_id"]].may_cut_sleep
 
 
 def test_a_failed_full_search_returns_to_the_mode_prompt(conn, sid, monkeypatch):

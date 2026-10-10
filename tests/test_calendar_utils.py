@@ -97,3 +97,10 @@ def test_find_overlaps_sees_a_block_that_crosses_midnight():
     late = FixedBlock(title="Shift", day=0, start_slot=time_to_slot("22:00"), end_slot=96 + time_to_slot("02:00"))
     early = _fb("Class", 1, "01:00", "03:00")
     assert len(find_overlaps([late, early])) == 1
+
+
+def test_extracted_task_to_dynamic_task_carries_the_sleep_permission():
+    allowed = ExtractedTask(title="Essay", date="2026-10-06", may_cut_sleep=True)
+    assert extracted_task_to_dynamic_task(allowed, START, 8).may_cut_sleep
+    assert not extracted_task_to_dynamic_task(allowed.model_copy(update={"may_cut_sleep": False}),
+                                              START, 8).may_cut_sleep
