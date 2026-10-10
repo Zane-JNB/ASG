@@ -2,7 +2,8 @@ from datetime import date
 
 import pytest
 
-from scheduler.calendar_utils import day_index_for_date, expand_fixed_blocks, extracted_task_to_dynamic_task, find_overlaps
+from scheduler.calendar_utils import (day_index_for_date, expand_fixed_blocks, extracted_task_to_dynamic_task,
+                                      find_overlaps, window_through)
 from scheduler.models import DatedBlock, ExtractedTask, FixedBlock, PlanAnchor, WeeklyPattern
 from scheduler.units import time_to_slot
 
@@ -104,3 +105,11 @@ def test_extracted_task_to_dynamic_task_carries_the_sleep_permission():
     assert extracted_task_to_dynamic_task(allowed, START, 8).may_cut_sleep
     assert not extracted_task_to_dynamic_task(allowed.model_copy(update={"may_cut_sleep": False}),
                                               START, 8).may_cut_sleep
+
+
+def test_window_through_covers_today_to_the_last_date_and_at_least_a_week():
+    today = date(2026, 10, 5)
+    assert window_through(today, []) == PlanAnchor(start_date=today, num_days=7)
+    assert window_through(today, ["2026-10-07", None]) == PlanAnchor(start_date=today, num_days=7)
+    assert window_through(today, ["2026-11-02"]) == PlanAnchor(start_date=today, num_days=29)
+    assert window_through(today, ["2026-09-01"]) == PlanAnchor(start_date=today, num_days=7)  # the past is ignored

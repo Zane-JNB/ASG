@@ -52,6 +52,13 @@ def expand_fixed_blocks(patterns: list[WeeklyPattern], dated_blocks: list[DatedB
             + [_block(b, day_of[b.date]) for b in dated_blocks if b.date in day_of])
 
 
+def window_through(today: date, dates: list[str | None]) -> PlanAnchor:
+    """A window from today through the last of dates (None and past dates ignored), and at least
+    a full week, so every weekly class and commute is in it once. For overlap checks only."""
+    last = max([today] + [date.fromisoformat(d) for d in dates if d])
+    return PlanAnchor(start_date=today, num_days=max((last - today).days + 1, 7))
+
+
 def find_overlaps(blocks: list[FixedBlock]) -> list[tuple[FixedBlock, FixedBlock]]:
     """Pairs of fixed blocks whose time ranges overlap. Back-to-back (end == next start) is fine."""
     ordered = sorted(blocks, key=lambda b: b.span)

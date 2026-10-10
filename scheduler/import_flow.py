@@ -5,11 +5,11 @@ from typing import Annotated
 
 from pydantic import Field, ValidationError, field_validator
 
-from scheduler.calendar_utils import expand_fixed_blocks, find_overlaps
+from scheduler.calendar_utils import expand_fixed_blocks, find_overlaps, window_through
 from scheduler.db import DATED_BLOCKS, WEEKLY_PATTERNS, replace_extraction, load_settings
 from scheduler.fit_check import overlap_lines
 from scheduler.llm_backends import is_backend_failure
-from scheduler.models import ExtractionResult, PlanAnchor
+from scheduler.models import ExtractionResult
 from scheduler.paths import CACHE_PATH
 from scheduler.prompts import ask_missed, confirm
 from scheduler.review import review_extraction
@@ -136,8 +136,7 @@ def _clashes_with_saved(conn, student_id, reviewed: ExtractionResult, today: dat
         return []
     old_weekly = [] if new_weekly else [p for _, p in WEEKLY_PATTERNS.get(conn, student_id)]
     old_dated = [] if new_dated else [b for _, b in DATED_BLOCKS.get(conn, student_id)]
-    last = max([today] + [date.fromisoformat(b.date) for b in new_dated + old_dated])
-    anchor = PlanAnchor(start_date=today, num_days=max((last - today).days + 1, 7))  # a full week of classes
+    anchor = window_through(today, [b.date for b in new_dated + old_dated])
     new_blocks = expand_fixed_blocks(new_weekly, new_dated, anchor)
     old_blocks = expand_fixed_blocks(old_weekly, old_dated, anchor)
     new_ids = {id(b) for b in new_blocks}

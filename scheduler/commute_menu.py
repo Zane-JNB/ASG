@@ -1,7 +1,10 @@
 import re
 from datetime import date
 
-from scheduler.db import COMMUTES, skip_commute_date, transaction
+from scheduler.calendar_utils import expand_fixed_blocks, window_through
+from scheduler.commutes import commute_overlaps, expand_commutes
+from scheduler.db import COMMUTES, DATED_BLOCKS, WEEKLY_PATTERNS, skip_commute_date, transaction
+from scheduler.fit_check import overlap_lines
 from scheduler.models import Commute
 from scheduler.prompts import ask_until, confirm, parse_whole, pick
 from scheduler.units import WEEKDAYS, parse_date, parse_time, parse_weekday, weekday_name
@@ -43,6 +46,17 @@ def _show_list(items, show) -> None:
         show(f"{n}. {_describe(c)}")
 
 
+def _clashes(conn, student_id: int, made: list[Commute], today: date) -> list[str]:
+    """Overlaps between the new commutes and the saved classes, sessions and commutes, from
+    today on. Lines as overlap_lines prints them; [] if none."""
+    weekly = [p for _, p in WEEKLY_PATTERNS.get(conn, student_id)]
+    dated = [b for _, b in DATED_BLOCKS.get(conn, student_id)]
+    saved = [c for _, c in COMMUTES.get(conn, student_id)]
+    anchor = window_through(today, [b.date for b in dated] + [c.date for c in saved + made])
+    others = expand_fixed_blocks(weekly, dated, anchor) + expand_commutes(saved, anchor)
+    return overlap_lines(today, commute_overlaps(others, expand_commutes(made, anchor)))
+
+
 def _add(conn, student_id: int, ask, show, today: date) -> None:
     def not_past(s: str) -> str:
         day = parse_date(s)
@@ -69,6 +83,14 @@ def _add(conn, student_id: int, ask, show, today: date) -> None:
     else:
         when = ask_until(ask, show, f"Date [{today.isoformat()}]", not_past, default=today.isoformat())
         made = [Commute(**base, date=when)]
+    clashes = _clashes(conn, student_id, made, today)
+    if clashes:  # commutes outrank tasks, so never save a clash without asking
+        show("WARNING -- this overlaps what you already have saved:")
+        for line in clashes:
+            show(f"  {line}")
+        if not confirm(ask, "Save anyway? Both are kept and plans avoid both (with a warning).", False):
+            show("Not saved.")
+            return
     with transaction(conn):  # every weekday of a recurring commute, or none
         for c in made:
             COMMUTES.add(conn, student_id, c)
