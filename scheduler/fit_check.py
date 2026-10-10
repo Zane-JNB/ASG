@@ -1,19 +1,36 @@
+"""Everything one plan needs, read from the student's saved rows: the window from now to the
+last deadline in play, fixed blocks, open tasks with their plan cuts, sleep, and warnings."""
 import math
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from scheduler.commutes import commute_overlaps, expand_commutes, overlap_warnings
 from scheduler.calendar_utils import expand_fixed_blocks, extracted_task_to_dynamic_task, find_overlaps
 from scheduler.db import (
     COMMUTES, DATED_BLOCKS, EXTRACTED_TASKS, PLANNER_TABLES, WEEKLY_PATTERNS, Unreadable, get_plan_cuts,
     load_settings,
 )
-from scheduler.units import MINUTES_PER_SLOT, SLOTS_PER_DAY, clock_range, format_hours, slot_to_time
 from scheduler.models import (
     DynamicTask, ExtractedTask, FixedBlock, PlanAnchor, ProfileSettings, ScheduleWarning, SleepRule,
 )
+from scheduler.nights import sleep_setup
+from scheduler.units import SLOTS_PER_DAY, clock_range, format_hours, next_slot
+
+MAX_OVERLAPS_SHOWN = 5
+
+
+@dataclass
+class FitInputs:
+    anchor: PlanAnchor
+    fixed: list[FixedBlock]
+    planned: list[tuple[int, DynamicTask]]  # (saved task id, task with its plan cut applied)
+    new_task: DynamicTask | None
+    sleep_rules: list[SleepRule]
+    settings: ProfileSettings
+    warnings: list[ScheduleWarning] = field(default_factory=list)
+
 
 def _planned_and_overdue(saved_tasks: list[tuple[int, ExtractedTask]], cuts: dict[int, int],
-                         anchor: PlanAnchor, now: datetime, session: int):
+                         start: date, now: datetime, session: int):
     """One pass over the saved open tasks: ([(saved task id, DynamicTask)] with plan cuts
     applied, warnings). A task whose due time is at or before `now` is left out of the plan with
     a hard task_overdue warning; a fully cut task gets a hard task_dropped warning, a partly cut
@@ -23,25 +40,24 @@ def _planned_and_overdue(saved_tasks: list[tuple[int, ExtractedTask]], cuts: dic
         if saved.completed_at:
             continue
         if saved.due_at() <= now:
-            warnings.append(ScheduleWarning(
-                severity="hard", kind="task_overdue",
-                message=f"'{saved.title}' was due {saved.due_label()} and isn't closed. Mark it done or missed in manage_tasks.py ([f])."))
+            warnings.append(ScheduleWarning.hard("task_overdue", (
+                f"'{saved.title}' was due {saved.due_label()} and isn't closed. "
+                "Mark it done or missed in manage_tasks.py ([f]).")))
             continue
-        task = extracted_task_to_dynamic_task(saved, anchor.start_date, session)
+        task = extracted_task_to_dynamic_task(saved, start, session)
         remaining = task.duration_slots - cuts.get(task_id, 0)
         if remaining <= 0:  # every saved task has a due date, so a full drop misses it: never silent
-            warnings.append(ScheduleWarning(
-                severity="hard", kind="task_dropped",
-                message=f"'{saved.title}' is left out of the plan (all its time was cut to make room) "
-                        f"and won't be done by {saved.due_label()}. It gets time back when you finish another task."))
+            warnings.append(ScheduleWarning.hard("task_dropped", (
+                f"'{saved.title}' is left out of the plan (all its time was cut to make room) and won't be "
+                f"done by {saved.due_label()}. It gets time back when you finish another task.")))
             continue
         if remaining < task.duration_slots:
-            warnings.append(ScheduleWarning(
-                severity="soft", kind="task_cut",
-                message=f"'{saved.title}' is planned at {format_hours(remaining)} of its {format_hours(task.duration_slots)} "
-                        "(cut to make room for another task)."))
+            warnings.append(ScheduleWarning.soft("task_cut", (
+                f"'{saved.title}' is planned at {format_hours(remaining)} of its "
+                f"{format_hours(task.duration_slots)} (cut to make room for another task).")))
         planned.append((task_id, task.model_copy(update={"duration_slots": remaining, "saved_id": task_id})))
     return planned, warnings
+
 
 def planned_tasks(conn, student_id: int, anchor: PlanAnchor):
     """[(saved task id, DynamicTask)] with plan cuts applied, as at the start of the anchor's
@@ -49,78 +65,18 @@ def planned_tasks(conn, student_id: int, anchor: PlanAnchor):
     start = datetime.combine(anchor.start_date, datetime.min.time())
     session = load_settings(conn, student_id).default_max_session_slots
     return _planned_and_overdue(EXTRACTED_TASKS.get(conn, student_id), get_plan_cuts(conn, student_id),
-                                anchor, start, session)[0]
+                                anchor.start_date, start, session)[0]
+
 
 def unreadable_warnings(unreadable: list[Unreadable]) -> list[ScheduleWarning]:
     """Hard warnings for saved rows that no longer pass their checks; they are left out of the plan."""
-    return [ScheduleWarning(
-                severity="hard", kind="saved_row_unreadable",
-                message=f"A saved {u.table.label} (id {u.row_id}) can't be read ({u.reason}) and is left out of the plan. "
-                        "Delete it in manage_tasks.py ([u]) and add it again.")
+    return [ScheduleWarning.hard("saved_row_unreadable", (
+                f"A saved {u.table.label} (id {u.row_id}) can't be read ({u.reason}) and is left out of the "
+                "plan. Delete it in manage_tasks.py ([u]) and add it again."))
             for u in unreadable if not u.closed]  # a closed task is history
 
-def wake_before(day_blocks: list[FixedBlock], settings: ProfileSettings) -> tuple[int, str] | None:
-    """(latest wake-up within that day, why) from the day's first class or commute minus the
-    wake buffer, or None if nothing is on that day. The one wake-up rule, for every morning."""
-    if not day_blocks:
-        return None
-    first = min(day_blocks, key=lambda b: b.start_slot)
-    reason = f"'{first.title}' at {slot_to_time(first.start_slot)} the next day"
-    if settings.wake_buffer_slots:
-        reason += f" (minus your {settings.wake_buffer_slots * MINUTES_PER_SLOT} min wake-up buffer)"
-    return first.start_slot - settings.wake_buffer_slots, reason
 
-def with_wake_limit(rule: SleepRule, next_day: list[FixedBlock], settings: ProfileSettings) -> SleepRule:
-    """Cap one night's sleep at the next day's wake-up (never before its earliest bedtime), and
-    say why. Unchanged if nothing is on that day."""
-    limit = wake_before(next_day, settings)
-    if limit is None:
-        return rule
-    wake, reason = limit
-    return rule.model_copy(update={"latest_wake": max(wake + SLOTS_PER_DAY, rule.earliest_bed),
-                                   "latest_wake_reason": reason})
-
-def sleep_setup(fixed: list[FixedBlock], morning_after: list[FixedBlock], num_days: int,
-                settings: ProfileSettings, now: datetime) -> tuple[list[FixedBlock], list[SleepRule]]:
-    """(fixed blocks with this morning's sleep added, one sleep rule per night). The one place
-    sleep is set up for a plan:
-      - this morning: if it is still sleep time, "Sleep (night before)" runs from 00:00 to the
-        wake-up (the usual one, or the first class/commute minus the wake buffer), and "Getting
-        ready" keeps the rest of the wake buffer free (also when the plan starts inside it);
-      - tonight: bedtime is never before now;
-      - every night: ends by the next day's first class/commute minus the wake buffer, and says
-        so. The last night's next day (the morning after the window) is only looked at.
-    The solver keeps the wake buffer after every night's sleep."""
-    start_day, start_slot = divmod(next_slot(now), SLOTS_PER_DAY)
-    sleep_rules = [settings.default_sleep_rule(night=n) for n in range(num_days)]
-    rule0 = sleep_rules[0]
-    today = [b for b in fixed if b.day == 0]
-    wake = rule0.preferred_bed + rule0.length_slots - SLOTS_PER_DAY
-    limit = wake_before(today, settings)
-    wake = max(0, min(wake, limit[0]) if limit else wake)
-    if start_day == 0:
-        added = []
-        if wake > start_slot:  # still morning-sleep hours: keep them free
-            added.append(FixedBlock(title="Sleep (night before)", day=0, start_slot=0, end_slot=wake))
-        # the normal buffer after a block makes up the rest of the wake buffer; never past the
-        # day's first block (a class just after midnight leaves no room for it)
-        ready_end = min([wake + settings.wake_buffer_slots - settings.buffer_slots] + [b.start_slot for b in today])
-        ready_start = max(wake, start_slot)
-        if ready_start < ready_end <= SLOTS_PER_DAY:
-            added.append(FixedBlock(title="Getting ready", day=0, start_slot=ready_start, end_slot=ready_end))
-        fixed = fixed + added
-    # tonight's bedtime cannot be earlier than now
-    bed = max(rule0.earliest_bed, next_slot(now))
-    sleep_rules[0] = rule0.model_copy(update={"earliest_bed": bed,
-                                              "preferred_bed": max(rule0.preferred_bed, bed),
-                                              "latest_bed": max(rule0.latest_bed, bed)})
-    blocks = fixed + morning_after
-    return fixed, [with_wake_limit(rule, [b for b in blocks if b.day == rule.night + 1], settings)
-                   for rule in sleep_rules]
-
-MAX_OVERLAPS_SHOWN = 5
-
-def overlap_lines(start_date, overlaps) -> list[str]:
+def overlap_lines(start_date: date, overlaps: list[tuple[FixedBlock, FixedBlock]]) -> list[str]:
     """'Mon 05 Oct: 'A' 10:00-12:00 overlaps 'B' 11:00-13:00', the first few pairs, then '...and N more'."""
     lines = []
     for a, b in overlaps[:MAX_OVERLAPS_SHOWN]:
@@ -131,52 +87,29 @@ def overlap_lines(start_date, overlaps) -> list[str]:
         lines.append(f"...and {len(overlaps) - MAX_OVERLAPS_SHOWN} more overlap(s)")
     return lines
 
-def overlap_warnings_for_blocks(anchor: PlanAnchor, overlaps) -> list[ScheduleWarning]:
+
+def _block_overlap_warnings(anchor: PlanAnchor, overlaps) -> list[ScheduleWarning]:
     """Saved classes/sessions that overlap are a hard warning, not an error: both are kept and the
     solver plans around their union (merge_fixed_spans), so one bad import never blocks planning."""
-    return [ScheduleWarning(severity="hard", kind="block_overlap",
-                            message=f"{line} (both kept; tasks avoid both). If one is wrong, "
-                                    "re-run import_schedule.py to replace it.")
+    return [ScheduleWarning.hard("block_overlap", (
+                f"{line} (both kept; tasks avoid both). If one is wrong, re-run import_schedule.py to replace it."))
             for line in overlap_lines(anchor.start_date, overlaps)]
 
-@dataclass
-class FitInputs: 
-    anchor: PlanAnchor #stores all relevant dates, start_date, num_dates
-    fixed: list[FixedBlock]
-    #planned: (saved task id, task) which also ensure that when space is freed up for a task that was cut, it is properly reallocated
-    planned: list[tuple[int, DynamicTask]] 
-    new_task: DynamicTask | None 
-    sleep_rules: list[SleepRule]
-    settings: ProfileSettings
-    warnings: list[ScheduleWarning] = field(default_factory=list)
 
-def with_commutes(fixed: list[FixedBlock], commute_blocks: list[FixedBlock], anchor: PlanAnchor,
-                  after_slot: int = 0):
-    """(fixed + commute blocks, soft overlap warnings). Commutes are never rejected for overlapping."""
-    blocks = [b for b in commute_blocks
-              if not (b.day == 0 and b.end_slot <= after_slot)]  # skip commutes already over
-    return fixed + blocks, overlap_warnings(commute_overlaps(fixed, blocks), anchor)
-    
-def next_slot(now: datetime) -> int:   
-    """First 15-minute slot that has not started yet, counted from midnight today (96 = tomorrow 00:00)."""
-    seconds = now.hour * 3600 + now.minute * 60 + now.second + now.microsecond / 1e6
-    return math.ceil(seconds / (MINUTES_PER_SLOT * 60))
-
-#ensures the earliest start ate for a task is not before or after today.
 def starts_from(task: DynamicTask, now: datetime) -> DynamicTask:
+    """The task, never planned before the first slot that hasn't started yet."""
     day, slot = divmod(next_slot(now), SLOTS_PER_DAY)
     return task.model_copy(update={"earliest_start_day": day, "earliest_start_slot": slot})
 
+
 def build_fit_inputs(conn, student_id: int, now: datetime,
-                     new_task: ExtractedTask | None = None, min_days: int = 1) -> FitInputs:   
+                     new_task: ExtractedTask | None = None, min_days: int = 1) -> FitInputs:
     """Everything the solver needs, from `now` until the last deadline in play. Nothing is placed
     in the past, weekly classes are expanded across the whole window, and the window reaches the
     LATEST deadline (not just the new task's) so later-deadline tasks have room to move."""
     settings = load_settings(conn, student_id)
-    today = now.date() #makes day 0 = today
-    day0 = PlanAnchor(start_date=today, num_days=1) #anchor's plan with today's date.
-    def from_now(t: DynamicTask) -> DynamicTask:
-        return starts_from(t, now)
+    today, first_slot = now.date(), next_slot(now)
+    session = settings.default_max_session_slots
 
     # each planner table is read once: its readable rows are planned, its unreadable ones warned about
     reads = {table: table.read(conn, student_id) for table in PLANNER_TABLES}
@@ -184,15 +117,15 @@ def build_fit_inputs(conn, student_id: int, now: datetime,
     unreadable = [u for _, bad in reads.values() for u in bad]
 
     open_tasks, overdue_warnings = _planned_and_overdue(reads[EXTRACTED_TASKS][0], get_plan_cuts(conn, student_id),
-                                                        day0, now, settings.default_max_session_slots)
-    planned = [(i, from_now(t)) for i, t in open_tasks]
-    new_dyn = from_now(extracted_task_to_dynamic_task(new_task, today, settings.default_max_session_slots)) if new_task else None
+                                                        today, now, session)
+    planned = [(i, starts_from(t, now)) for i, t in open_tasks]
+    new_dyn = starts_from(extracted_task_to_dynamic_task(new_task, today, session), now) if new_task else None
 
     tasks = [t for _, t in planned] + ([new_dyn] if new_dyn else [])
     last_deadline = max((t.deadline_day for t in tasks if t.deadline_day is not None), default=0)
-    num_days = max(min(last_deadline + 1, settings.plan_horizon_max_days), min_days)   
+    num_days = max(min(last_deadline + 1, settings.plan_horizon_max_days), min_days)
     # every task's start range must fit inside the window even when it is too late to finish
-    num_days = max([num_days] + [math.ceil((next_slot(now) + t.duration_slots) / SLOTS_PER_DAY) for t in tasks])
+    num_days = max([num_days] + [math.ceil((first_slot + t.duration_slots) / SLOTS_PER_DAY) for t in tasks])
     anchor = PlanAnchor(start_date=today, num_days=num_days)
 
     # expand once, for the window plus the morning after (only looked at, for the wake-up)
@@ -200,11 +133,14 @@ def build_fit_inputs(conn, student_id: int, now: datetime,
     classes = expand_fixed_blocks(saved[WEEKLY_PATTERNS], saved[DATED_BLOCKS], look)
     commute_blocks = expand_commutes(saved[COMMUTES], look)
     morning_after = [b for b in classes + commute_blocks if b.day == num_days]
-    fixed = [b for b in classes if b.day < num_days]
-    fixed = [b for b in fixed if not (b.day == 0 and b.end_slot <= next_slot(now))]
-    block_warnings = overlap_warnings_for_blocks(anchor, find_overlaps(fixed))  # only clashes not already over
-    fixed, commute_warnings = with_commutes(fixed, [b for b in commute_blocks if b.day < num_days],
-                                            anchor, next_slot(now))
-    fixed, sleep_rules = sleep_setup(fixed, morning_after, num_days, settings, now)
-    warnings = block_warnings + commute_warnings + overdue_warnings + unreadable_warnings(unreadable)
-    return FitInputs(anchor, fixed, planned, new_dyn, sleep_rules, settings, warnings)  
+
+    def ahead(blocks):  # inside the window and not already over
+        return [b for b in blocks if b.day < num_days and not (b.day == 0 and b.end_slot <= first_slot)]
+
+    fixed, commutes = ahead(classes), ahead(commute_blocks)
+    # overlapping commutes are never rejected, only noted
+    warnings = (_block_overlap_warnings(anchor, find_overlaps(fixed))
+                + overlap_warnings(commute_overlaps(fixed, commutes), anchor))
+    fixed, sleep_rules = sleep_setup(fixed + commutes, morning_after, num_days, settings, now)
+    warnings += overdue_warnings + unreadable_warnings(unreadable)
+    return FitInputs(anchor, fixed, planned, new_dyn, sleep_rules, settings, warnings)

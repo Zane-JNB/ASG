@@ -1,6 +1,7 @@
 """The app's time axis: 15-minute slots, clock times, dates, weekdays, and how hours are shown.
 Every other module uses these instead of re-parsing 'HH:MM' or re-deriving hours from slots."""
-from datetime import date
+import math
+from datetime import date, datetime
 from typing import Literal, get_args
 
 MINUTES_PER_SLOT = 15
@@ -67,6 +68,12 @@ def slot_to_time(slot: int) -> str:
     """38 -> '09:30'"""
     minutes = slot * MINUTES_PER_SLOT
     return f"{minutes // 60:02d}:{minutes % 60:02d}"
+
+
+def next_slot(now: datetime) -> int:
+    """First 15-minute slot that has not started yet, counted from midnight today (96 = tomorrow 00:00)."""
+    seconds = now.hour * 3600 + now.minute * 60 + now.second + now.microsecond / 1e6
+    return math.ceil(seconds / (MINUTES_PER_SLOT * 60))
 
 
 def clock_range(start_slot: int, end_slot: int) -> str:

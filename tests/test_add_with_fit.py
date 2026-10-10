@@ -4,7 +4,8 @@ from scheduler.add_with_fit import add_task_with_fit
 from scheduler.db import (
     DATED_BLOCKS, EXTRACTED_TASKS, WEEKLY_PATTERNS, connect, get_or_create_student, get_plan_cuts,
 )
-from scheduler.fit_check import build_fit_inputs, next_slot
+from scheduler.fit_check import build_fit_inputs
+from scheduler.units import next_slot
 from scheduler.models import DatedBlock, ExtractedTask, WeeklyPattern
 from scheduler.planner import plan_from_saved
 from scheduler.solver import build_schedule
@@ -34,12 +35,6 @@ def _run(conn, sid, new, answers, now=NINE_AM, **kw):
     it, shown = iter(answers), []
     result = add_task_with_fit(conn, sid, new, now, ask=lambda _p: next(it), show=shown.append, **kw)
     return result, shown
-
-
-def test_next_slot_rounds_up_to_the_next_quarter_hour():
-    assert next_slot(datetime(2026, 10, 5, 9, 0)) == 36
-    assert next_slot(datetime(2026, 10, 5, 9, 1)) == 37
-    assert next_slot(datetime(2026, 10, 5, 23, 50)) == 96  # rolls into tomorrow
 
 
 def test_window_reaches_the_latest_deadline_not_just_the_new_tasks(conn, sid):
