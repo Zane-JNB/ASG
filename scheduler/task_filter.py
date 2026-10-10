@@ -1,7 +1,7 @@
 from scheduler.models import ProfileSettings
 
 
-def task_matters(task, min_difficulty: int | None = None, min_priority: int | None = None) -> bool:   
+def task_matters(task, min_difficulty: int | None = None, min_priority: int | None = None) -> bool:
     """True if the task meets EITHER threshold (difficulty at/above, or priority at/above).
     A threshold of None is ignored; with both None, every task matters. Works on saved and planned
     tasks alike, so reminders and the coming task-dropping features can share one rule."""
@@ -11,12 +11,12 @@ def task_matters(task, min_difficulty: int | None = None, min_priority: int | No
             or (min_priority is not None and task.priority >= min_priority))
 
 
-def wants_reminder(task, settings: ProfileSettings) -> bool:   
+def wants_reminder(task, settings: ProfileSettings) -> bool:
     return settings.reminders_enabled and task_matters(
         task, settings.reminder_min_difficulty, settings.reminder_min_priority)
 
 
-def describe_reminders(settings: ProfileSettings) -> str:   
+def describe_reminders(settings: ProfileSettings) -> str:
     if not settings.reminders_enabled:
         return "Reminders are off."
     parts = []

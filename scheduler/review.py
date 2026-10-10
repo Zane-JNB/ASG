@@ -66,6 +66,7 @@ def _parse_picks(text: str, count: int) -> list[int]:
         raise ValueError
     return picks
 
+
 def _overlap_notes(items) -> list[str]:
     """Numbered items that clash: weekly ones on the same weekday, sessions on the same date."""
     notes = []
@@ -79,7 +80,6 @@ def _overlap_notes(items) -> list[str]:
                              and time_to_slot(b.start_time) < time_to_slot(a.end_time)):
                 notes.append(f"{i + 1} and {j + 1}")
     return notes
-
 
 
 def review_extraction(result: ExtractionResult, ask=input, show=print, session_cap: int | None = None) -> ExtractionResult:
