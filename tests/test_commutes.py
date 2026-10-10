@@ -98,3 +98,13 @@ def test_skipping_a_commute_date_stores_the_normalised_date():
     assert skip_commute_date(conn, sid, cid, "2026-10-12") is True
     assert skip_commute_date(conn, sid, cid, "20261012") is True  # the same day: no duplicate
     assert COMMUTES.get(conn, sid)[0][1].skip_dates == ["2026-10-12"]
+
+
+def test_commute_overlap_warnings_read_like_class_overlaps_and_are_capped():
+    """One overlap format for the student: quoted titles, and at most five lines plus a count."""
+    cls = FixedBlock(title="Class", day=0, start_slot=30, end_slot=40)
+    commute = commute_to_block(recurring(), 0)  # 07:00-07:45
+    [w] = overlap_warnings([(commute, cls)], anchor())
+    assert w.message == "Mon 05 Oct: 'Commute' 07:00-07:45 overlaps 'Class' 07:30-10:00 (both kept; tasks avoid both)"
+    many = overlap_warnings([(commute, cls)] * 7, anchor())
+    assert len(many) == 6 and many[-1].message.startswith("...and 2 more overlap(s)")

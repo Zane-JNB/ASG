@@ -1,5 +1,6 @@
+from scheduler.calendar_utils import overlap_lines
 from scheduler.models import Commute, FixedBlock, PlanAnchor, ScheduleWarning
-from scheduler.units import MINUTES_PER_SLOT, clock_range, time_to_minutes
+from scheduler.units import MINUTES_PER_SLOT, time_to_minutes
 
 
 def commute_to_block(commute: Commute, day_index: int) -> FixedBlock:
@@ -22,10 +23,6 @@ def commute_overlaps(others: list[FixedBlock], commute_blocks: list[FixedBlock])
 
 
 def overlap_warnings(pairs: list[tuple[FixedBlock, FixedBlock]], anchor: PlanAnchor) -> list[ScheduleWarning]:
-    return [
-        ScheduleWarning.soft("commute_overlap", (
-            f"{anchor.date_of(c.day):%a %d %b}: "
-            f"{c.title} {clock_range(c.start_slot, c.end_slot)} "
-            f"overlaps {o.title} {clock_range(o.start_slot, o.end_slot)} (both kept; tasks avoid both)"))
-        for c, o in pairs
-    ]
+    """Soft warnings for commutes that share time with something: both are kept."""
+    return [ScheduleWarning.soft("commute_overlap", f"{line} (both kept; tasks avoid both)")
+            for line in overlap_lines(anchor.start_date, pairs)]

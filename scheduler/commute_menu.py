@@ -1,10 +1,9 @@
 import re
 from datetime import date
 
-from scheduler.calendar_utils import expand_fixed_blocks, window_through
+from scheduler.calendar_utils import expand_fixed_blocks, overlap_lines, window_through
 from scheduler.commutes import commute_overlaps, expand_commutes
 from scheduler.db import COMMUTES, DATED_BLOCKS, WEEKLY_PATTERNS, skip_commute_date, transaction
-from scheduler.fit_check import overlap_lines
 from scheduler.models import Commute
 from scheduler.prompts import ask_until, confirm, parse_whole, pick
 from scheduler.units import WEEKDAYS, parse_date, parse_time, parse_weekday, weekday_name

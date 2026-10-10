@@ -5,9 +5,8 @@ from typing import Annotated
 
 from pydantic import Field, ValidationError, field_validator
 
-from scheduler.calendar_utils import expand_fixed_blocks, find_overlaps, window_through
-from scheduler.db import DATED_BLOCKS, WEEKLY_PATTERNS, replace_extraction, load_settings
-from scheduler.fit_check import overlap_lines
+from scheduler.calendar_utils import expand_fixed_blocks, overlap_lines, overlaps_between, window_through
+from scheduler.db import DATED_BLOCKS, WEEKLY_PATTERNS, load_settings, replace_extraction
 from scheduler.llm_backends import is_backend_failure
 from scheduler.models import ExtractionResult
 from scheduler.paths import CACHE_PATH
@@ -129,10 +128,8 @@ def _clashes_with_saved(conn, student_id, reviewed: ExtractionResult, today: dat
     old_weekly = [] if new_weekly else [p for _, p in WEEKLY_PATTERNS.get(conn, student_id)]
     old_dated = [] if new_dated else [b for _, b in DATED_BLOCKS.get(conn, student_id)]
     anchor = window_through(today, [b.date for b in new_dated + old_dated])
-    new_blocks = expand_fixed_blocks(new_weekly, new_dated, anchor)
-    old_blocks = expand_fixed_blocks(old_weekly, old_dated, anchor)
-    new_ids = {id(b) for b in new_blocks}
-    pairs = [(a, b) for a, b in find_overlaps(new_blocks + old_blocks) if (id(a) in new_ids) != (id(b) in new_ids)]
+    pairs = overlaps_between(expand_fixed_blocks(new_weekly, new_dated, anchor),
+                             expand_fixed_blocks(old_weekly, old_dated, anchor))
     return overlap_lines(today, pairs)
 
 

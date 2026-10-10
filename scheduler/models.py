@@ -162,8 +162,9 @@ class ScheduledItem(_OnAxis, BaseModel):
     day: int = 0
     saved_id: int | None = None  # task items: the saved task's id, if it has one
 
-class _TimeRange(BaseModel):
-    """Base for a block with a start_time and end_time on one day: the end must come after the start."""
+class TimeRange(BaseModel):
+    """Base for a saved block with a start_time and end_time on one day (`when`: a weekday or a
+    date): the end must come after the start."""
 
     @model_validator(mode="after")
     def times_make_sense(self):
@@ -171,7 +172,19 @@ class _TimeRange(BaseModel):
             raise ValueError("end_time must be after start_time")
         return self
 
-class WeeklyPattern(_TimeRange):
+    @property
+    def slots(self) -> tuple[int, int]:
+        """(start, end) slots within its day."""
+        return time_to_slot(self.start_time), time_to_slot(self.end_time)
+
+    def clashes(self, other: "TimeRange") -> bool:
+        """Same kind on the same day, sharing time. Back to back is fine."""
+        if type(self) is not type(other) or self.when != other.when:
+            return False
+        (s1, e1), (s2, e2) = self.slots, other.slots
+        return s1 < e2 and s2 < e1
+
+class WeeklyPattern(TimeRange):
     """A recurring fixed commitment on ONE specific day of the week -- e.g. 'Data Structures,
     Monday, 09:00-11:00'. If a class meets on several days, that's several WeeklyPattern
     entries, one per day -- this model deliberately cannot represent more than one day per
@@ -184,6 +197,10 @@ class WeeklyPattern(_TimeRange):
     day: Weekday
     start_time: ClockTime
     end_time: EndTime
+
+    @property
+    def when(self) -> Weekday:
+        return self.day
 
 class ExtractedTask(BaseModel):
     """A task/assignment found in an uploaded document, with a real calendar deadline.
@@ -236,7 +253,7 @@ class ExtractedTask(BaseModel):
         return SLOTS_PER_DAY if self.due_time is None else time_to_slot(self.due_time)
 
 
-class DatedBlock(_TimeRange):
+class DatedBlock(TimeRange):
     """A one-off commitment on a specific calendar date with a specific time -- e.g. a module
     timetable that lists individual class sessions by date rather than a recurring weekly
     pattern. Distinct from WeeklyPattern (recurs every week) and ExtractedTask (a deadline
@@ -246,6 +263,10 @@ class DatedBlock(_TimeRange):
     date: IsoDate
     start_time: ClockTime
     end_time: EndTime
+
+    @property
+    def when(self) -> str:
+        return self.date
 
 
 class ExtractionResult(BaseModel):

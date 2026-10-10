@@ -113,3 +113,35 @@ def test_window_through_covers_today_to_the_last_date_and_at_least_a_week():
     assert window_through(today, ["2026-10-07", None]) == PlanAnchor(start_date=today, num_days=7)
     assert window_through(today, ["2026-11-02"]) == PlanAnchor(start_date=today, num_days=29)
     assert window_through(today, ["2026-09-01"]) == PlanAnchor(start_date=today, num_days=7)  # the past is ignored
+
+
+# ---- one home for overlaps: finding them and the lines a student reads ----
+from scheduler.calendar_utils import overlap_lines, overlaps_between
+
+
+def test_overlaps_between_pairs_one_block_from_each_list_in_time_order():
+    saved = FixedBlock(title="Saved", day=0, start_slot=40, end_slot=48)
+    new = [FixedBlock(title="New", day=0, start_slot=44, end_slot=52),
+           FixedBlock(title="Early", day=0, start_slot=36, end_slot=41),
+           FixedBlock(title="Apart", day=1, start_slot=40, end_slot=48)]
+    other_saved = FixedBlock(title="Other", day=0, start_slot=50, end_slot=60)
+    assert overlaps_between(new, [saved, other_saved]) == [
+        (new[1], saved), (saved, new[0]), (new[0], other_saved)]  # earlier block first, earliest pair first
+
+
+def test_overlap_lines_quote_both_titles_and_cap_the_list():
+    a = FixedBlock(title="A", day=1, start_slot=40, end_slot=48)
+    b = FixedBlock(title="B", day=1, start_slot=44, end_slot=52)
+    assert overlap_lines(date(2026, 10, 4), [(a, b)]) == ["Mon 05 Oct: 'A' 10:00-12:00 overlaps 'B' 11:00-13:00"]
+    lines = overlap_lines(date(2026, 10, 4), [(a, b)] * 7)
+    assert len(lines) == 6 and lines[-1] == "...and 2 more overlap(s)"
+
+
+def test_a_class_or_session_clashes_only_with_its_own_kind_on_the_same_day():
+    mon = WeeklyPattern(title="A", day="Mon", start_time="09:00", end_time="10:00")
+    assert mon.clashes(WeeklyPattern(title="B", day="Mon", start_time="09:30", end_time="11:00"))
+    assert not mon.clashes(WeeklyPattern(title="B", day="Tue", start_time="09:30", end_time="11:00"))
+    assert not mon.clashes(WeeklyPattern(title="B", day="Mon", start_time="10:00", end_time="11:00"))  # back to back
+    dated = DatedBlock(title="C", date="2026-10-05", start_time="09:30", end_time="11:00")  # a Monday
+    assert dated.clashes(DatedBlock(title="D", date="2026-10-05", start_time="10:30", end_time="12:00"))
+    assert not mon.clashes(dated) and not dated.clashes(mon)
