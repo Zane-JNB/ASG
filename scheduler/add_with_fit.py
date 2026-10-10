@@ -84,9 +84,13 @@ def _choose_manual(fit: FitInputs, must_add: bool, ask, show) -> DropProposal | 
     def sizes_fn(i, remaining):
         return chunk_sizes(everyone[i].model_copy(update={"duration_slots": remaining}))
 
-    def fits(lost: dict[int, int], may_cut_sleep: bool) -> DropProposal | None:
-        new = fit.new_task.model_copy(update={"may_cut_sleep": may_cut_sleep})
-        return try_cuts(fit.frame, tasks, new, manual_actions(tasks, lost), lost.get(NEW_TASK, 0))
+    def fits(lost: dict[int, int]) -> DropProposal | None:
+        """The cuts as they are, else the same cuts with the new task using sleep below target
+        (the editor shows that sleep before the student saves)."""
+        actions, new_cut = manual_actions(tasks, lost), lost.get(NEW_TASK, 0)
+        sleepy = fit.new_task.model_copy(update={"may_cut_sleep": True})
+        return (try_cuts(fit.frame, tasks, fit.new_task, actions, new_cut)
+                or try_cuts(fit.frame, tasks, sleepy, actions, new_cut))
 
     state = CutState({i: t.duration_slots for i, t in everyone.items()}, sizes_fn)
     action, proposal = run_manual_edit(state, {i: t.title for i, t in everyone.items()}, fits, ask, show, must_add)

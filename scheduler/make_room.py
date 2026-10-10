@@ -115,17 +115,13 @@ class CutState:
         self.durations = dict(durations)
         self.sizes_fn = sizes_fn
         self.lost: dict[int, int] = {}          # total slots cut per task so far
-        self.may_cut_sleep = False              # the new task may use sleep below target
-        self._undo: list[tuple[dict[int, int], bool]] = []  # snapshots, one per successful edit
+        self._undo: list[dict[int, int]] = []   # snapshots, one per successful edit
 
     def remaining(self, i: int) -> int:
         return self.durations[i] - self.lost.get(i, 0)
 
-    def _snapshot(self) -> None:
-        self._undo.append((dict(self.lost), self.may_cut_sleep))  # BEFORE changing, so undo is exact
-
     def _commit(self, i: int, slots: int) -> None:
-        self._snapshot()
+        self._undo.append(dict(self.lost))      # snapshot BEFORE changing, so undo is exact
         self.lost[i] = self.lost.get(i, 0) + slots
 
     def _check(self, i: int) -> int:
@@ -157,21 +153,15 @@ class CutState:
         self._commit(i, slots)
         return slots
 
-    def allow_sleep(self) -> None:
-        if self.may_cut_sleep:
-            raise ValueError("it may already use sleep below target")
-        self._snapshot()
-        self.may_cut_sleep = True
-
     def undo(self) -> bool:
         if not self._undo:
             return False
-        self.lost, self.may_cut_sleep = self._undo.pop()
+        self.lost = self._undo.pop()
         return True
 
     @property
     def touched(self) -> bool:
-        return bool(self.lost) or self.may_cut_sleep
+        return bool(self.lost)
 
 
 def _show_list(state: CutState, titles: dict, order: list, show) -> None:
@@ -184,8 +174,7 @@ def _show_list(state: CutState, titles: dict, order: list, show) -> None:
             k = len(state.sizes_fn(i, left))
             what = f"{format_hours(left)}, {k} session{'s' if k != 1 else ''}"
         was = f" (was {format_hours(state.durations[i])})" if state.lost.get(i) else ""
-        sleep = ", may use sleep below target" if i == NEW_TASK and state.may_cut_sleep else ""
-        show(f"  {n}. {titles[i]}{' (new)' if i == NEW_TASK else ''} -- {what}{was}{sleep}")
+        show(f"  {n}. {titles[i]}{' (new)' if i == NEW_TASK else ''} -- {what}{was}")
 
 
 def _hours_or_error(text: str) -> int:
@@ -201,9 +190,7 @@ def _edit_task(state: CutState, i: int, ask, show) -> bool:
         show("  That task is already fully cut. Undo to bring it back.")
         return False
     sessions = len(state.sizes_fn(i, left))
-    may_allow_sleep = i == NEW_TASK and not state.may_cut_sleep
-    options = (([] if i == NEW_TASK else ["[d]rop it"]) + (["[s]essions"] if sessions > 1 else []) + ["[t]ime"]
-               + (["[z] let it use sleep below target"] if may_allow_sleep else []))
+    options = ([] if i == NEW_TASK else ["[d]rop it"]) + (["[s]essions"] if sessions > 1 else []) + ["[t]ime"]
     raw = ask("  " + "  ".join(options) + "  (Enter to go back): ").strip().lower()
     try:
         if raw == "":
@@ -217,8 +204,6 @@ def _edit_task(state: CutState, i: int, ask, show) -> bool:
             state.cut_chunks(i, int(text))
         elif raw == "t":
             state.reduce(i, _hours_or_error(ask(f"  Reduce by how many hours (up to {slots_to_hours(left - 1):g}, e.g. 1.5)? ").strip()))
-        elif raw == "z" and may_allow_sleep:
-            state.allow_sleep()
         else:
             show("  Choose one of the options shown.")
             return False
@@ -230,8 +215,7 @@ def _edit_task(state: CutState, i: int, ask, show) -> bool:
 
 def run_manual_edit(state: CutState, titles: dict, fits, ask=input, show=print,
                     must_add: bool = False) -> tuple[str, DropProposal | None]:
-    """fits(lost, may_cut_sleep) -> a verified proposal if everything fits after those cuts (and
-    with that leave for the new task), else None.
+    """fits(lost) -> a verified proposal if everything fits after those cuts, else None.
     Returns ("save", proposal), ("dont_add", None) or ("cancel", None). Nothing is saved here."""
     order = sorted(i for i in state.durations if i != NEW_TASK) + [NEW_TASK]
     result = None
@@ -261,7 +245,7 @@ def run_manual_edit(state: CutState, titles: dict, fits, ask=input, show=print,
             show("It doesn't fit yet, so there is nothing to save.")
         elif raw == "u":
             if state.undo():
-                result = fits(state.lost, state.may_cut_sleep) if state.touched else None
+                result = fits(state.lost) if state.touched else None
                 show("Undid the last edit.")
             else:
                 show("Nothing to undo.")
@@ -269,6 +253,6 @@ def run_manual_edit(state: CutState, titles: dict, fits, ask=input, show=print,
             return "dont_add", None
         elif raw.isdigit() and 1 <= int(raw) <= len(order):
             if _edit_task(state, order[int(raw) - 1], ask, show):
-                result = fits(state.lost, state.may_cut_sleep)
+                result = fits(state.lost)
         else:
             show(f"Enter a number from 1 to {len(order)}" + (", or one of the letters shown." if extras else "."))

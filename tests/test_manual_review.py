@@ -19,7 +19,7 @@ def state():
 
 def fits_after_freeing(n, flags=(), sleep=0):
     """Fake solver: everything fits once at least n slots have been cut in total."""
-    return lambda lost, may_cut_sleep: (SimpleNamespace(flags=list(flags), sleep_sacrificed_slots=sleep)
+    return lambda lost: (SimpleNamespace(flags=list(flags), sleep_sacrificed_slots=sleep)
                          if sum(lost.values()) >= n else None)
 
 
@@ -78,7 +78,7 @@ def test_the_new_task_can_be_shortened_but_not_dropped():
     # pick Essay (3), try "d" (refused, back to the list), pick it again, reduce by 1h, save
     (action, _), shown = run(["3", "d", "3", "t", "1", "s"], fits_after_freeing(4), st=st)
     assert action == "save" and st.lost == {NEW: 4}
-    assert "  [t]ime  [z] let it use sleep below target  (Enter to go back): " in shown  # no [d]rop for the new task
+    assert "  [t]ime  (Enter to go back): " in shown      # no [d]rop offered for the new task
     assert "  Choose one of the options shown." in shown
 
 
@@ -111,35 +111,6 @@ def test_flags_and_sleep_shortfall_are_shown_before_saving():
         6, flags=["'Lab' would fall short of its deadline"], sleep=8))
     assert any("Sleep: 2h below target" in l for l in shown)
     assert any("fall short of its deadline" in l for l in shown)
-
-
-def fits_with_sleep(flags=()):
-    """Fake solver: everything fits once the new task may use sleep below target."""
-    return lambda lost, may_cut_sleep: (SimpleNamespace(flags=list(flags), sleep_sacrificed_slots=3)
-                                        if may_cut_sleep else None)
-
-
-def test_the_new_task_can_be_let_use_sleep_below_target():
-    st = state()
-    (action, p), shown = run(["3", "z", "s"], fits_with_sleep(), st=st)
-    assert action == "save" and p is not None and st.may_cut_sleep and st.lost == {}
-    assert "  3. Essay (new) -- 2h, 1 session, may use sleep below target" in shown
-    assert "Everything fits now." in shown and "  !! Sleep: 45m below target" in shown
-
-
-def test_sleep_below_target_is_offered_only_for_the_new_task_and_only_once():
-    (action, _), shown = run(["1", "z", "3", "z", "3", "", "", "y"], fits_with_sleep())
-    edit_prompts = [l for l in shown if l.startswith("  [")]
-    assert "[z]" not in edit_prompts[0]                   # Lab: an existing task
-    assert "  Choose one of the options shown." in shown  # so "z" did nothing for it
-    assert "[z]" in edit_prompts[1] and "[z]" not in edit_prompts[2]  # already allowed
-    assert action == "cancel"
-
-
-def test_undo_takes_back_the_sleep_permission():
-    st = state()
-    (action, _), shown = run(["3", "z", "u", ""], fits_with_sleep(), st=st)
-    assert action == "cancel" and not st.may_cut_sleep and "Undid the last edit." in shown
 
 
 def test_ask_mode_accepts_m_s_and_a_and_rejects_anything_else():

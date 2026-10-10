@@ -236,6 +236,22 @@ def test_easy_fit_shows_no_sleep_warning(conn, sid):
     assert shown == ["Added."]
 
 
+def test_manual_cuts_that_only_fit_with_sleep_below_target_show_it_and_save_the_leave(conn, sid):
+    _long_day_then_early_class(conn, sid)
+    # manual: shorten the new task (the only one, number 1) by 15 min; it still needs sleep, so
+    # the check falls back to letting it use sleep below target, shown before saving
+    result, shown = _run(conn, sid, _task("Essay", 1.5, 3, D), ["m", "1", "t", "0.25", "s"])
+    assert "Everything fits now." in shown and any(l.startswith("  !! Sleep:") for l in shown)
+    assert dict(EXTRACTED_TASKS.get(conn, sid))[result["new_task_id"]].may_cut_sleep
+    assert "  'Essay' may use sleep below your target (saved with the task)" in shown
+
+
+def test_manual_cuts_that_fit_on_their_own_keep_target_sleep(conn, sid):
+    essay = _tight_day(conn, sid)
+    result, _ = _run(conn, sid, essay, ["m", "1", "d", "s"])
+    assert not dict(EXTRACTED_TASKS.get(conn, sid))[result["new_task_id"]].may_cut_sleep
+
+
 def test_a_failed_full_search_returns_to_the_mode_prompt(conn, sid, monkeypatch):
     def fail_the_full_search(*a, **k):
         raise RuntimeError("No schedule found within 5.0s")
