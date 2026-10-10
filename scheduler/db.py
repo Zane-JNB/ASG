@@ -382,8 +382,8 @@ def get_unreadable_items(conn: sqlite3.Connection, student_id: int) -> list[Unre
     return [u for table in PLANNER_TABLES for u in table.read(conn, student_id)[1]]
 
 def has_saved_items(conn: sqlite3.Connection, student_id: int) -> bool:
-    """Any saved class, dated session or task (readable or not). Commutes alone are not a schedule."""
-    return any(table.rows(conn, student_id) for table in (WEEKLY_PATTERNS, DATED_BLOCKS, EXTRACTED_TASKS))
+    """Anything saved to plan around: a class, dated session, task or commute (readable or not)."""
+    return any(table.rows(conn, student_id) for table in PLANNER_TABLES)
 
 def skip_commute_date(conn: sqlite3.Connection, student_id: int, item_id: int, day: str) -> bool:
     """Leave one date out of a recurring commute. False if there is no such recurring commute."""

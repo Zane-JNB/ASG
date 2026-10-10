@@ -17,4 +17,3 @@ Zane will review and correct each. Referenced from `CLAUDE.md`.
 
 
 26. `propose_drops` re-solves "as things stand" before searching, although `add_task_with_fit` has just done that check (one extra solve per search). Keep it while `propose_drops` is also called directly (tests); drop it if the base check moves out of the engine.
-28. Commutes don't count in `db.has_saved_items`, so `plan_schedule.py` stops with an error when only commutes are saved. Found in G6.

@@ -291,12 +291,11 @@ def test_extraction_leaves_classes_without_a_due_time_key():
     raw = {"weekly_patterns": [{"title": "Lab", "day": "Mon", "start_time": "09:00", "end_time": "10:00"}]}
     assert len(extraction_from_dict(raw).weekly_patterns) == 1
 
-def test_only_commutes_is_still_no_schedule(conn, sid):
+def test_only_commutes_still_gives_a_plan(conn, sid):  # #28
     from scheduler.db import COMMUTES
     from scheduler.models import Commute
     COMMUTES.add(conn, sid, Commute(start_time="08:00", length_minutes=30, date="2026-10-06"))
-    with pytest.raises(ValueError, match="no saved schedule items"):
-        plan_from_saved(conn, sid, now=EVENING)
+    assert plan_from_saved(conn, sid, now=EVENING, time_limit_seconds=5).anchor.start_date == EVENING.date()
 
 
 def test_building_a_plan_reads_each_saved_table_once(conn, sid, monkeypatch):

@@ -136,3 +136,13 @@ def test_a_plan_names_its_parts_and_its_items_hold_every_fixed_block():
     assert plan.anchor.start_date == MONDAY
     shown = {(i.day, i.start_slot, i.end_slot, i.title) for i in plan.items if i.kind == "fixed"}
     assert shown == {(b.day, b.start_slot, b.end_slot, b.title) for b in plan.fixed}
+
+
+def test_commutes_alone_are_enough_to_plan():  # #28
+    from scheduler.db import COMMUTES
+    from scheduler.models import Commute
+    conn = connect(":memory:")
+    sid = get_or_create_student(conn, "Commuter")
+    COMMUTES.add(conn, sid, Commute(start_time="08:00", length_minutes=30, recurring=True, weekday="Mon"))
+    plan = plan_from_saved(conn, sid, 1, now=MON_MIDNIGHT, time_limit_seconds=5)
+    assert any(i.title == "Commute" for i in plan.items)

@@ -238,12 +238,14 @@ def test_get_unreadable_items_covers_every_planner_table_in_order(conn):
     assert [u.table.label for u in get_unreadable_items(conn, sid)] == ["class", "commute"]
 
 
-def test_has_saved_items_ignores_commutes(conn):
+def test_has_saved_items_counts_commutes_and_unreadable_rows(conn):  # #28
     sid = get_or_create_student(conn, "Zane")
-    COMMUTES.add(conn, sid, ONE_OF_EACH[3][1])
     assert has_saved_items(conn, sid) is False
-    _raw_row(conn, sid, "dated_blocks", "{}")  # unreadable still counts: it is saved
+    COMMUTES.add(conn, sid, ONE_OF_EACH[3][1])
     assert has_saved_items(conn, sid) is True
+    other = get_or_create_student(conn, "Other")
+    _raw_row(conn, other, "dated_blocks", "{}")  # unreadable still counts: it is saved
+    assert has_saved_items(conn, other) is True
 
 
 def test_migration_backfills_old_evidence_rows_once(tmp_path):
