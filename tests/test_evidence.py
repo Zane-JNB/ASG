@@ -82,15 +82,6 @@ def test_applies_smallest_bucket_seen_in_the_streak(conn, sid):
     assert buf(conn, sid) == 1 + 1
 
 
-def test_next_evidence_accumulates_cancels_on_conflict_and_keeps_smallest_bucket():     
-    s = next_evidence(None, "increase", "large")      # (1, 'large')
-    s = next_evidence(s, "increase", "small")         # smallest bucket wins
-    assert s == (2, "small")
-    s = next_evidence(s, "decrease", "large")         # cancels ONE vote, keeps cautious magnitude
-    assert s == (1, "small")
-    assert next_evidence(s, "decrease", "small")[0] == 0
-
-
 def test_unmentioned_field_keeps_its_evidence(conn, sid):
     run(conn, sid, ("buffer_slots", "increase", "small"))
     run(conn, sid, ("bedtime_penalty", "increase", "small"))

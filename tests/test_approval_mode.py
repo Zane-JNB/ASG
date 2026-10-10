@@ -1,7 +1,7 @@
 import pytest
-from scheduler.db import _now, connect, get_or_create_student, load_approval_mode, get_reflections, load_evidence, load_settings
+from scheduler.db import connect, get_or_create_student, load_approval_mode, get_reflections, load_evidence, load_settings
 from scheduler.preference_policy import Tier
-from scheduler.preferences import (APPROVAL_ASK, APPROVAL_AUTO, EVIDENCE_THRESHOLD, Actor, Outcome, PreferenceError,
+from scheduler.preferences import (APPROVAL_ASK, EVIDENCE_THRESHOLD, Actor, Outcome, PreferenceError,
                                    change_tier, pending_approvals, process_reflection,
                                    resolve_pending, set_approval_mode)
 from scheduler.reflection import PreferenceChangeProposal, ReflectionResult

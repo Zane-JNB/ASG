@@ -1,6 +1,5 @@
 from dataclasses import dataclass
 from enum import Enum
-from scheduler.models import ProfileSettings
 
 class Tier(str, Enum):  
     LOCKED = "locked"

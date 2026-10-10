@@ -1,12 +1,10 @@
+from types import SimpleNamespace
+
 import pytest
 
-from scheduler.db import connect, get_or_create_student, load_settings, get_reflections, save_settings
-from scheduler.reflection import ReflectionResult, PreferenceChangeProposal
-from scheduler.reflection import propose_preference_changes
+from scheduler.db import connect, get_or_create_student, get_reflections, load_settings
+from scheduler.reflection import PreferenceChangeProposal, ReflectionResult, propose_preference_changes
 from scheduler.reflection_cycle import apply_and_log
-from scheduler.models import DynamicTask, ProfileSettings
-from types import SimpleNamespace
-from scheduler.db import connect, get_or_create_student
 from scheduler.preferences import Actor, change_tier
 from scheduler.preference_policy import Tier
 from scheduler.reflection import build_system_prompt

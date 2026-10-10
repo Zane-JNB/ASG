@@ -1,6 +1,6 @@
 """Branch fix/saved-data: unreadable saved rows are skipped (never dropped) with a hard warning,
 and tasks can have an optional due time that the plan and the overdue check respect."""
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 
 import pytest
 

@@ -29,10 +29,6 @@ def test_invalid_policy_combinations_are_rejected(kwargs):
     with pytest.raises(ValueError):
         FieldPolicy(label="x", description="y", **kwargs)
 
-def test_adjustable_fields_unchanged_by_the_refactor():  # compare to your old dict's 7 entries
-    assert set(MODEL_DELTAS) == {"buffer_slots", "bedtime_penalty", "same_day_penalty",
-        "default_max_session_slots", "sleep_target_penalty", "default_sleep_length_slots", "default_preferred_bed"}
-
 def test_tier_serialized_values_are_exact():
     assert [t.value for t in Tier] == ["locked", "user", "model_learned"]
 

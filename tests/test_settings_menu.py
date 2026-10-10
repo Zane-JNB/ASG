@@ -1,5 +1,5 @@
 import pytest
-from scheduler.db import connect, get_or_create_student, load_evidence, load_settings, load_tiers
+from scheduler.db import connect, get_or_create_student, load_settings, load_tiers
 from scheduler.preference_policy import POLICY, Tier
 from scheduler.settings_menu import _UI, _user_facing, run_settings_menu
 

@@ -4,7 +4,7 @@ import reflect
 from scheduler.reflection_cycle import reflect_and_record
 from scheduler.db import connect, get_or_create_student, get_reflections
 from scheduler.db import load_evidence, load_settings
-from scheduler.preferences import Actor, change_tier, set_approval_mode, APPROVAL_ASK, Actor, Outcome
+from scheduler.preferences import APPROVAL_ASK, Actor, Outcome, change_tier, set_approval_mode
 from scheduler.preference_policy import Tier
 
 @pytest.fixture

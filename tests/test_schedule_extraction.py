@@ -24,18 +24,6 @@ def make_client(extraction: dict) -> FakeClient:
 def test_client_override_extracts_weekly_pattern():
     client = make_client({
         "weekly_patterns": [
-            {"title": "Class", "days_of_week": ["Mon", "Wed"], "start_time": "09:00", "end_time": "11:00"}
-        ],
-        "tasks": [],
-    })
-    result = extract_schedule(b"bytes", "image/png", client=client)
-    assert len(result.weekly_patterns) == 1
-    assert result.weekly_patterns[0].title == "Class"
-
-
-def test_client_override_extracts_weekly_pattern():
-    client = make_client({
-        "weekly_patterns": [
             {"title": "Class", "day": "Mon", "start_time": "09:00", "end_time": "11:00"}
         ],
         "tasks": [],
