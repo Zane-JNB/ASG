@@ -9,7 +9,7 @@ import pytest
 from scheduler.models import ExtractionResult
 from scheduler.pdf_extraction import extract_schedule_from_pdf
 from scheduler.reflection import ReflectionResult
-from scheduler.reflection_cycle import get_proposals
+from scheduler.reflection import propose_preference_changes
 from scheduler.schedule_extraction import extract_schedule
 
 pytestmark = pytest.mark.live
@@ -29,7 +29,7 @@ TIMETABLE_LINES = ["Weekly Schedule", "Monday 09:00-11:00 Data Structures",
 
 
 def test_live_reflection_returns_a_reflection_result():
-    result = get_proposals("This week felt really rushed -- no breaks between class and studying.")
+    result = propose_preference_changes("This week felt really rushed -- no breaks between class and studying.")
     assert isinstance(result, ReflectionResult)
 
 

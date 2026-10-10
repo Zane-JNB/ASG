@@ -1,7 +1,6 @@
 import pytest
-from scheduler.db import connect, get_or_create_student, load_evidence, load_settings
+from scheduler.db import connect, get_or_create_student, load_evidence, load_settings, load_tiers
 from scheduler.preference_policy import POLICY, Tier
-from scheduler.preferences import get_ownership
 from scheduler.settings_menu import _UI, _user_facing, run_settings_menu
 
 @pytest.fixture
@@ -36,7 +35,7 @@ def test_claim_edit_and_return_keep_the_value(conn, sid):
     assert any("Saved: Break time is now 45 min." in s for s in shown)
     assert any("automatic again, starting from 45 min" in s for s in shown)
     assert load_settings(conn, sid).buffer_slots == 3
-    assert get_ownership(conn, sid)["buffer_slots"] == Tier.MODEL_LEARNED
+    assert load_tiers(conn, sid)["buffer_slots"] == Tier.MODEL_LEARNED
 
 def test_edit_of_model_owned_field_is_refused_before_asking_for_a_value(conn, sid):
     shown = run(conn, sid, ["e", n("buffer_slots"), "q"])
@@ -47,7 +46,7 @@ def test_edit_of_model_owned_field_is_refused_before_asking_for_a_value(conn, si
 def test_non_claimable_field_cannot_be_switched(conn, sid):
     shown = run(conn, sid, ["a", n("default_sleep_min_slots"), "q"])
     assert any("can't be switched" in s for s in shown)
-    assert get_ownership(conn, sid)["default_sleep_min_slots"] == Tier.USER
+    assert load_tiers(conn, sid)["default_sleep_min_slots"] == Tier.USER
 
 def test_invalid_input_reasks_and_enter_cancels(conn, sid):
     f = n("default_max_session_slots")

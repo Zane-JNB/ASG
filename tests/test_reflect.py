@@ -4,7 +4,7 @@ import reflect
 from scheduler.reflection_cycle import reflect_and_record
 from scheduler.db import connect, get_or_create_student, get_reflections
 from scheduler.db import load_evidence, load_settings
-from scheduler.preferences import Actor, change_tier, set_approval_mode, APPROVAL_ASK, Actor, OUTCOME_APPLIED, OUTCOME_AT_LIMIT, OUTCOME_EVIDENCE, OUTCOME_IGNORED, OUTCOME_NONE, OUTCOME_PENDING
+from scheduler.preferences import Actor, change_tier, set_approval_mode, APPROVAL_ASK, Actor, Outcome
 from scheduler.preference_policy import Tier
 
 @pytest.fixture
@@ -149,8 +149,8 @@ def test_a_real_bug_still_raises(monkeypatch, conn):
         reflect.main()
 
 def test_every_reflection_outcome_has_a_status_line():
-    assert {OUTCOME_APPLIED, OUTCOME_PENDING, OUTCOME_EVIDENCE,
-            OUTCOME_AT_LIMIT, OUTCOME_IGNORED, OUTCOME_NONE} <= set(reflect._STATUS)
+    assert {Outcome.APPLIED, Outcome.PENDING, Outcome.EVIDENCE,
+            Outcome.AT_LIMIT, Outcome.IGNORED, Outcome.NONE} <= set(reflect._STATUS)
 
 def test_model_answering_in_the_wrong_format_offers_a_retry_and_logs_nothing(monkeypatch, capsys, conn):
     from scheduler import llm_backends

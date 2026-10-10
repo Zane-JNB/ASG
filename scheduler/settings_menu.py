@@ -1,10 +1,10 @@
 from collections.abc import Callable
 from typing import Any, NamedTuple
 
+from scheduler.db import load_approval_mode, load_settings, load_tiers
 from scheduler.preference_policy import POLICY, Tier
-from scheduler.preferences import (APPROVAL_ASK, APPROVAL_AUTO, Actor, PreferenceError, _check_may_edit,
-                                   change_tier, get_approval_mode, get_effective, get_ownership,
-                                   set_approval_mode, user_edit)
+from scheduler.preferences import (APPROVAL_ASK, APPROVAL_AUTO, Actor, PreferenceError, change_tier, check_may_edit,
+                                   set_approval_mode, set_values)
 from scheduler.prompts import ask_until, parse_hours, parse_rating, parse_whole, pick
 from scheduler.units import MINUTES_PER_SLOT, SLOTS_PER_DAY, parse_time, slot_to_time, slots_to_hours, time_to_slot
 
@@ -77,7 +77,7 @@ def describe_pending(p) -> str:
 # ---------- the menu ----------
 
 def _approval(conn, student_id, ask, show) -> None:
-    show(f"Learned changes currently {_MODE_WORDS[get_approval_mode(conn, student_id)]}.")
+    show(f"Learned changes currently {_MODE_WORDS[load_approval_mode(conn, student_id)]}.")
     raw = ask("Switch to: ask (approve each change) / auto (apply after repeated evidence); Enter to keep: ").strip().lower()
     if not raw:
         return
@@ -93,14 +93,14 @@ def _user_facing():
 
 
 def show_settings(conn, student_id, show):
-    settings, tiers, fields = get_effective(conn, student_id), get_ownership(conn, student_id), _user_facing()
+    settings, tiers, fields = load_settings(conn, student_id), load_tiers(conn, student_id), _user_facing()
     for n, name in enumerate(fields, 1):
         show(f"{n}. {POLICY[name].label}: {_UI[name].fmt(getattr(settings, name))}  [{_TIER_WORDS[tiers[name]]}]")
     return fields
 
 
 def show_internal(conn, student_id, show):
-    tiers = get_ownership(conn, student_id)
+    tiers = load_tiers(conn, student_id)
     show("Managed by the app (you can't edit these):")
     for name, p in POLICY.items():
         if not p.user_editable:
@@ -109,7 +109,7 @@ def show_internal(conn, student_id, show):
 
 def _edit(conn, student_id, name, ask, show):
     try:  # same friendly messages as the API, and we don't ask for a value we'd then reject
-        _check_may_edit(name, get_ownership(conn, student_id), Actor.USER)
+        check_may_edit(name, load_tiers(conn, student_id), Actor.USER)
     except PreferenceError as e:
         show(str(e))
         return
@@ -118,9 +118,9 @@ def _edit(conn, student_id, name, ask, show):
                       default=_CANCEL)
     if value is _CANCEL:
         return
-    before = getattr(get_effective(conn, student_id), name)
+    before = getattr(load_settings(conn, student_id), name)
     try:
-        after = getattr(user_edit(conn, student_id, name, value), name)
+        after = getattr(set_values(conn, student_id, {name: value}, Actor.USER), name)
     except PreferenceError as e:
         show(str(e))
         return
@@ -134,7 +134,7 @@ def _switch(conn, student_id, name, new_tier, show):
     except PreferenceError as e:
         show(str(e))
         return
-    value = _UI[name].fmt(getattr(get_effective(conn, student_id), name))
+    value = _UI[name].fmt(getattr(load_settings(conn, student_id), name))
     if not changed:
         show(f"'{label}' is already {_TIER_WORDS[new_tier]}.")
     elif new_tier == Tier.USER:

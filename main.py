@@ -11,7 +11,8 @@ from scheduler.db import (
 from scheduler.llm_backends import is_backend_failure
 from scheduler.models import DatedBlock, DynamicTask, ExtractedTask, FixedBlock
 from scheduler.units import clock_range, time_to_slot
-from scheduler.reflection_cycle import apply_and_log, get_proposals, rerun_schedule
+from scheduler.reflection import propose_preference_changes
+from scheduler.reflection_cycle import apply_and_log
 from scheduler.solver import build_schedule, sleep_warnings, task_warnings
 from scheduler.planner import format_plan, plan_from_saved
 
@@ -72,7 +73,7 @@ def demo_reflection():
     )
     print(f"\n=== Reflection ===\n  \"{reflection_text}\"")
     try:
-        result = get_proposals(reflection_text)
+        result = propose_preference_changes(reflection_text)
     except Exception as e:
         if not is_backend_failure(e):
             raise  # a real bug: keep the traceback
@@ -87,14 +88,14 @@ def demo_reflection():
     print(f"\n=== Settings after ===\n  buffer_slots={new_settings.buffer_slots}")
 
     print("\n=== Re-solved schedule ===")
-    items2, unscheduled2 = rerun_schedule(
-        conn, student_id, fixed_blocks, tasks, sleep_rules=sleep_rules, num_days=NUM_DAYS,
+    items2, unscheduled2 = build_schedule(
+        fixed_blocks, tasks, num_days=NUM_DAYS, sleep_rules=sleep_rules, settings=new_settings,
     )
     print_schedule(items2)
     print("\n--- Warnings ---")
     print_warnings(sleep_warnings(sleep_rules, items2) + task_warnings(unscheduled2))
 
-def demo_make_room():  
+def demo_make_room():
     d, now = date(2026, 10, 5), datetime(2026, 10, 5, 9, 0)
     scripts = (("MANUAL", ["m", "1", "d", "s"]),
                ("SEMI-AUTOMATIC", ["s", "1"]),
@@ -119,7 +120,7 @@ def demo_make_room():
         print("\n".join(format_plan(anchor, fixed, items, warnings)))
 
 
-def main():  
+def main():
     demo_make_room()
     print("\n\n=============== REFLECTION (one Groq call) ===============")
     demo_reflection()

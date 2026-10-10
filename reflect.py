@@ -1,18 +1,17 @@
-from scheduler.preferences import pending_approvals, resolve_pending 
-from scheduler.settings_menu import describe_pending 
 from scheduler.db import connect, get_or_create_student
 from scheduler.llm_backends import is_backend_failure
-from scheduler.reflection_cycle import get_proposals, apply_and_log, reflect_and_record
-
 from scheduler.paths import DB_PATH  # repo root, whatever folder you run from
+from scheduler.preferences import Outcome, pending_approvals, resolve_pending
+from scheduler.reflection_cycle import reflect_and_record
+from scheduler.settings_menu import describe_pending
 
-_STATUS = {                                                    
-    "learned_update_applied": "Settings updated.",
-    "approval_needed": "Enough evidence -- this needs your approval.",
-    "evidence_recorded": "Evidence recorded -- no settings changed yet.",
-    "threshold_at_limit": "Enough evidence, but the setting is already at its limit -- no change.",
-    "proposal_ignored": "Nothing changed.",
-    "no_proposals": "No changes proposed.",
+_STATUS = {
+    Outcome.APPLIED: "Settings updated.",
+    Outcome.PENDING: "Enough evidence -- this needs your approval.",
+    Outcome.EVIDENCE: "Evidence recorded -- no settings changed yet.",
+    Outcome.AT_LIMIT: "Enough evidence, but the setting is already at its limit -- no change.",
+    Outcome.IGNORED: "Nothing changed.",
+    Outcome.NONE: "No changes proposed.",
 }
 
 def main():
@@ -40,11 +39,11 @@ def main():
 
     if summary:
         print(f"\n{summary}\n")
-    for r in outcome.results:                                                   
+    for r in outcome.results:
         print(f"- {r.message}")
-    print(_STATUS[outcome.outcome])                                             
+    print(_STATUS[outcome.outcome])
 
-    for p in pending_approvals(conn, student_id):                         
+    for p in pending_approvals(conn, student_id):
         answer = input(f"  Apply this change? {describe_pending(p)} [y/N] ").strip().lower()
         print(f"- {resolve_pending(conn, student_id, p.field, answer == 'y').message}")
 

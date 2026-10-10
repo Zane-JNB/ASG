@@ -8,7 +8,7 @@ from scheduler.db import (
 from scheduler.preference_policy import Tier
 from scheduler.preferences import (
     EVIDENCE_THRESHOLD, Actor, change_tier, collapse_proposals, learnable_fields, next_evidence,
-    process_reflection, set_values, user_edit,
+    process_reflection, set_values,
 )
 from scheduler.reflection import (
     PreferenceChangeProposal as P, ReflectionResult, build_system_prompt, propose_preference_changes,
@@ -143,7 +143,7 @@ def test_claiming_a_field_stops_accumulation_and_clears_evidence(conn, sid):
 
 
 def test_returning_a_field_to_the_model_starts_with_clean_evidence(conn, sid):
-    user_edit(conn, sid, "default_max_session_slots", 6)
+    set_values(conn, sid, {"default_max_session_slots": 6}, Actor.USER)
     change_tier(conn, sid, "default_max_session_slots", Tier.MODEL_LEARNED, Actor.USER)
     run(conn, sid, ("default_max_session_slots", "decrease", "small"))
     assert load_evidence(conn, sid) == {"default_max_session_slots": (-1, "small")}
@@ -191,7 +191,7 @@ def test_threshold_respects_upper_bound(conn, sid):
 
 
 def test_model_cannot_push_sleep_target_below_users_minimum_or_bed_past_window(conn, sid):
-    user_edit(conn, sid, "default_sleep_min_slots", 30)                           # target is 32
+    set_values(conn, sid, {"default_sleep_min_slots": 30}, Actor.USER)                           # target is 32
     for _ in range(3):
         o = run(conn, sid, ("default_sleep_length_slots", "decrease", "large"))   # 32-8 < min 30
     assert o.outcome == "threshold_at_limit" and load_settings(conn, sid).default_sleep_length_slots == 32

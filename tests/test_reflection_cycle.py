@@ -2,7 +2,8 @@ import pytest
 
 from scheduler.db import connect, get_or_create_student, load_settings, get_reflections, save_settings
 from scheduler.reflection import ReflectionResult, PreferenceChangeProposal
-from scheduler.reflection_cycle import get_proposals, apply_and_log, rerun_schedule
+from scheduler.reflection import propose_preference_changes
+from scheduler.reflection_cycle import apply_and_log
 from scheduler.models import DynamicTask, ProfileSettings
 from types import SimpleNamespace
 from scheduler.db import connect, get_or_create_student
@@ -25,8 +26,8 @@ def make_result(*proposals) -> ReflectionResult:
     return ReflectionResult(summary="test summary", proposals=list(proposals))
 
 
-def test_get_proposals_goes_through_the_provider_table():  # conftest's offline stub answers
-    result = get_proposals("it felt rushed, no breaks")
+def test_propose_preference_changes_goes_through_the_provider_table():  # conftest's offline stub answers
+    result = propose_preference_changes("it felt rushed, no breaks")
     assert isinstance(result, ReflectionResult)
     assert any(p.field == "buffer_slots" for p in result.proposals)
 
@@ -97,30 +98,6 @@ def test_apply_and_log_rejects_mismatched_accepted_length(conn, student_id):
     with pytest.raises(ValueError, match="accepted has"):
         apply_and_log(conn, student_id, "x", result, accepted=[True, True])
 
-def test_rerun_schedule_uses_this_students_current_settings(conn, student_id):
-    save_settings(conn, student_id, ProfileSettings(buffer_slots=5))
-    tasks = [
-        DynamicTask(title="A", duration_slots=4, priority=3, difficulty=2, splittable=False),
-        DynamicTask(title="B", duration_slots=4, priority=3, difficulty=2, splittable=False),
-    ]
-    items, unscheduled = rerun_schedule(conn, student_id, fixed_blocks=[], tasks=tasks, num_days=1)
-    assert unscheduled == []
-    task_items = sorted((i for i in items if i.kind == "task"), key=lambda i: i.start_slot)
-    gap = task_items[1].start_slot - task_items[0].end_slot
-    assert gap >= 5
-
-
-def test_rerun_schedule_picks_up_a_settings_change_made_between_calls(conn, student_id):
-    tasks = [
-        DynamicTask(title="A", duration_slots=4, priority=3, difficulty=2, splittable=False),
-        DynamicTask(title="B", duration_slots=4, priority=3, difficulty=2, splittable=False),
-    ]
-    items_before, _ = rerun_schedule(conn, student_id, fixed_blocks=[], tasks=tasks, num_days=1)
-    gap_before = _gap_between(items_before)
-    save_settings(conn, student_id, ProfileSettings(buffer_slots=6))
-    items_after, _ = rerun_schedule(conn, student_id, fixed_blocks=[], tasks=tasks, num_days=1)
-    gap_after = _gap_between(items_after)
-    assert gap_after > gap_before
 
 
 def _gap_between(items):
