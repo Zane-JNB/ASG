@@ -18,7 +18,7 @@ Auto Schedule Generator: students enter a fixed timetable, tasks (deadline, diff
 - Never commit `.env` files or API keys (the repo is public).
 - Keep deterministic logic (solver, fit check, drop ranking, evidence) out of the LLM's hands.
 - Keep answers short.
-- Always create excellent test cases for your mission or goal then create the functionality to solve those tests to prevent determinism
+- Always create excellent test cases for your mission or goal first, then create the functionality that passes them, so behaviour is pinned down (deterministic)
 - Update CLAUDE.md with progress after a section is complete and notify Zane before making the adjustments.
 - Use the "Explore -> Plan -> Code -> Commit" framework
 
@@ -66,7 +66,7 @@ Every backend uses forced tool-calling with a JSON schema that comes from the py
 **Time and data**
 - 15-minute slots, 96/day, one continuous multi-day axis (`day * 96 + slot`). Day 0 = `PlanAnchor.start_date`: rolling, rebuilt every run, never stored. Sleep/bedtime may run past 96 (`end_slot` exclusive, max 192) to cross midnight. Every slot/time/date/weekday/hours helper lives in `scheduler/units.py` (`time_to_slot`, `slot_to_time`, `parse_time`, `parse_date`, `format_hours`, `next_slot`, ...); don't re-parse HH:MM elsewhere.
 - Two layers: stored calendar-based (`WeeklyPattern`, `DatedBlock`, `ExtractedTask`, `Commute`) vs solver-facing day-indexed (`FixedBlock`, `DynamicTask`, `SleepRule`). Convert only via `calendar_utils.expand_fixed_blocks` / `calendar_utils.extracted_task_to_dynamic_task` / `commutes.expand_commutes`.
-- Every DB query is scoped by `student_id`. Schema changes are additive via `SCHEMA` + `_migrate`. Never drop or rewrite student data.
+- Every DB query is scoped by `student_id` (except looking a student up by name, and migrations). Schema changes are additive via `SCHEMA` + `_migrate`. Never drop or rewrite student data.
 - All SQL lives in `db.py`. One commit rule: every write runs inside `db.transaction(conn)` (nested blocks join the outer one; only the outermost commits, any error rolls the whole block back). Group related writes in one `with transaction(conn):`; never call `conn.commit()`.
 - Saved planner rows go through the `db.ItemTable` stores (`WEEKLY_PATTERNS`, `DATED_BLOCKS`, `EXTRACTED_TASKS`, `COMMUTES`; `PLANNER_TABLES` = all four): `add`/`read`/`get`/`find`/`update`/`delete`/`clear`.
 - `plan_from_saved` always plans from now, through `build_fit_inputs` (the fit check's window), and returns a `Plan`. There is no fixed start-date mode.
@@ -79,17 +79,17 @@ Every backend uses forced tool-calling with a JSON schema that comes from the py
 - Every night must end by `SleepRule.latest_wake`: the next day's first class/commute minus `wake_buffer_slots`, with `latest_wake_reason` naming it (`nights.with_wake_limit`). For the window's last night that is the morning after the window, which is only looked at, never planned, so the window doesn't grow. Drop proposals count only sleep below what each night allows (`solver.reachable_sleep`), and a short-sleep warning names the cap only when it was the limit.
 - Objective order (highest cost first): sleep minimum > sleep target > task fit/priority > same-day spread > bedtime drift. Target sleep goes only to a task with `may_cut_sleep` (the student's leave, saved on the task: chosen in the make-room menu or with `[s]` in `manage_tasks.py`), and only up to that task's own time plus breaks (`solver._guard_sleep_target`). Minimum sleep still outranks every task.
 - Commutes are fixed blocks with priority over tasks. If one overlaps another block, tell the student and ask; never silently drop it.
-- Splitting a task is the student's choice (per-task `splittable`), never automatic.
+- Splitting a task is the student's choice (per-task `splittable`), never the solver's: it is asked when adding a task longer than one session (default yes); an import defaults to yes and says so in the review, where it can be changed (or later with `[s]`).
 - Plan cuts apply only to the current plan and never shrink the saved task.
 - Imports overwrite only fixed blocks. Tasks are added individually, never replaced by an import.
 - Completed tasks are kept as history, not deleted. A task closed without being done is kept too, with `missed=True` (`[f]` in `manage_tasks.py` asks done or missed). Imported tasks already past due are asked done/missed and saved closed (`import_flow._close_past_tasks`).
 
 **Preferences and LLM**
-- No hardcoded algorithm tunables: all live in `ProfileSettings`, per student.
+- Scheduling preferences and cost weights live in `ProfileSettings`, per student; never hardcode them. Module constants by design: the evidence rule (`EVIDENCE_THRESHOLD`, `EVIDENCE_TTL_DAYS`), solver time limits (`SOLVE_SECONDS`, `FIT_CHECK_SECONDS`), PDF reading (`MIN_TEXT_CHARS`, `RENDER_SCALE`) and display caps (`MAX_OVERLAPS_SHOWN`). The drop-search and restore limits should move into `ProfileSettings` (KNOWN_ISSUES #11).
 - Every `ProfileSettings` field needs a `POLICY` entry (a test fails otherwise). Each entry's `Kind` (locked, user-only, internal, claimable) sets its default tier and who may edit or learn it. Tiers: `LOCKED` (nobody), `USER` (student only), `MODEL_LEARNED` (reflections); students can claim a claimable field.
 - The LLM never picks values or thresholds. Reflections return direction + magnitude only; `preferences.stepped_value` turns them into a bounded number. One reflection never changes a setting; it needs repeated evidence across separate reflections (`EVIDENCE_THRESHOLD`, `EVIDENCE_TTL_DAYS`).
 - Penalty fields and `drop_deadline_multiplier` are never user-editable.
-- Write settings via `preferences.set_values` (it enforces tiers). Legacy path that skips tier checks via `db.save_settings`: `reflection_cycle.apply_and_log` only (the demo's y/N is the student's consent).
+- Write settings via `preferences.set_values` (it enforces tiers); reflections change them only through `preferences.process_reflection` / `resolve_pending`. Legacy path that skips the evidence threshold (tiers and validity are still checked): `reflection_cycle.apply_and_log` only (the demo's y/N is the student's consent).
 
 ## Known issues (Zane will review and correct each)
 
