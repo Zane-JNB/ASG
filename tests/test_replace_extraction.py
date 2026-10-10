@@ -117,3 +117,10 @@ def test_summary_reports_replaced_counts():
     conn = connect(":memory:"); sid = get_or_create_student(conn, "Z")
     assert replace_extraction(conn, sid, _result()) == {
         "weekly": 1, "dated": 1, "tasks_added": 1, "tasks_skipped": 0}
+
+def test_a_saved_task_that_is_not_json_does_not_break_an_import():
+    conn = connect(":memory:"); sid = get_or_create_student(conn, "Z")
+    conn.execute("INSERT INTO extracted_tasks (student_id, data_json, created_at) VALUES (?, 'not json', '')", (sid,))
+    conn.commit()
+    summary = replace_extraction(conn, sid, ExtractionResult(tasks=[ExtractedTask(title="HW", date="2026-10-02")]))
+    assert summary["tasks_added"] == 1
