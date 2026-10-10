@@ -129,6 +129,15 @@ def try_cuts(frame: PlanFrame, tasks: list[DynamicTask], new_task: DynamicTask, 
     return None if solved is None else _proposal(frame, tasks, new_task, actions, new_cut, solved)
 
 
+def manual_actions(tasks: list[DynamicTask], lost: dict[int, int]) -> list[DropAction]:
+    """The student's own cuts ({task index: slots cut}) as actions; the new task's cut is not one."""
+    return [DropAction(task_index=i, title=tasks[i].title, chunks_cut=0, total_chunks=len(chunk_sizes(tasks[i])),
+                       slots_lost=n, slots_kept=tasks[i].duration_slots - n, priority=tasks[i].priority,
+                       difficulty=tasks[i].difficulty, has_deadline=tasks[i].deadline_day is not None,
+                       shrink=n < tasks[i].duration_slots)
+            for i, n in sorted(lost.items()) if i != NEW_TASK]
+
+
 def dont_add_unverified(new_task: DynamicTask, rank: int) -> DropProposal:
     """"Don't add the new task" when the search never checked that the others fit without it."""
     flags = ["Not verified: your existing tasks may still not all fit without it"]

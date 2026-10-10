@@ -2,13 +2,12 @@ from datetime import date, datetime
 
 import pytest
 
-from scheduler.add_with_fit import add_task_with_fit
+from scheduler.add_with_fit import add_task_with_fit, apply_drop_choice
 from scheduler.db import (
     DATED_BLOCKS, EXTRACTED_TASKS, connect, get_or_create_student, get_plan_cuts, load_settings,
     save_settings,
 )
-from scheduler.drop_apply import apply_drop_choice
-from scheduler.drop_review import describe_proposal
+from scheduler.make_room import describe_proposal
 from scheduler.dropping import _options, _shrink_amounts, propose_drops
 from scheduler.fit_check import build_fit_inputs, planned_tasks
 from scheduler.import_flow import run_import

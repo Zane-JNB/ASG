@@ -1,5 +1,5 @@
 import pytest
-from scheduler.drop_review import choose_drop_proposal, describe_proposal
+from scheduler.make_room import choose_drop_proposal, describe_proposal
 from scheduler.dropping import propose_drops
 from scheduler.models import DynamicTask, FixedBlock, SleepRule
 from scheduler.solver import PlanFrame

@@ -7,7 +7,7 @@ from scheduler.db import (
     DATED_BLOCKS, EXTRACTED_TASKS, add_plan_cut, apply_plan_changes, clear_plan_cut, connect,
     get_or_create_student, get_plan_cuts,
 )
-from scheduler.drop_apply import apply_drop_choice
+from scheduler.add_with_fit import apply_drop_choice
 from scheduler.dropping import dont_add_unverified, propose_drops
 from scheduler.models import DatedBlock, ExtractedTask, PlanAnchor
 from scheduler.fit_check import build_fit_inputs, planned_tasks

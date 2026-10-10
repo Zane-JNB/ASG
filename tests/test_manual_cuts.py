@@ -1,6 +1,6 @@
 import pytest
 from scheduler.dropping import NEW_TASK as NEW
-from scheduler.manual_cuts import CutState
+from scheduler.make_room import CutState
 
 
 def even_chunks(i, remaining, cap=8):  # stand-in for chunk_sizes()
