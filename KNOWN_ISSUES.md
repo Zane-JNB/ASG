@@ -19,7 +19,6 @@ Zane will review and correct each. Referenced from `CLAUDE.md`.
 16. Small CLI issues:
     - "inf" as hours crashes (`review.hours_to_slots` raises OverflowError).
     - `24:00` is rejected as an end time when editing an import (`review._time`).
-    - Manual cuts always read "still one block".
     - Old reminder sessions with reminders turned off are never marked as asked (`completion.py`), so they pile up.
 17. A due time inside the current 15-minute slot (e.g. due 10:15 at 10:05) passes `prompt_new_task`, but plans start at the next slot, so it can never be placed and the drop menu opens for nothing. Reject `due_slot <= next_slot(now)` on the same day.
 20. `reflect.py` treats every `ValueError` (including our own `PreferenceError`) as a backend failure and offers another Groq call. Narrow it to real backend errors.

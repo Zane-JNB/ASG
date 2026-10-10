@@ -21,8 +21,10 @@ def ask_mode(ask=input, show=print) -> str | None:
 
 def _action_line(a: DropAction) -> str:
     if a.shrink:
+        left = a.total_chunks - a.chunks_cut
+        sessions = "one block" if left == 1 else f"{left} sessions"
         what = (f"Shorten '{a.title}' by {format_hours(a.slots_lost)} ({format_hours(a.slots_kept + a.slots_lost)} -> "
-                f"{format_hours(a.slots_kept)}, still one block)")
+                f"{format_hours(a.slots_kept)}, {'still' if left == a.total_chunks else 'now'} {sessions})")
     elif a.is_full_drop:
         what = f"Drop '{a.title}' entirely (-{format_hours(a.slots_lost)})"
     else:
