@@ -285,3 +285,18 @@ def test_only_commutes_is_still_no_schedule(conn, sid):
     COMMUTES.add(conn, sid, Commute(start_time="08:00", length_minutes=30, date="2026-10-06"))
     with pytest.raises(ValueError, match="no saved schedule items"):
         plan_from_saved(conn, sid, now=EVENING)
+
+
+def test_building_a_plan_reads_each_saved_table_once(conn, sid, monkeypatch):
+    from collections import Counter
+    from scheduler.db import ItemTable
+    _raw_row(conn, sid, "extracted_tasks", '{"title": "Bad", "date": "2026-02-30"}')
+    EXTRACTED_TASKS.add(conn, sid, ExtractedTask(title="Good", date="2026-10-07"))
+    reads, real_read = Counter(), ItemTable.read
+    def counting_read(self, *args):
+        reads[self.name] += 1
+        return real_read(self, *args)
+    monkeypatch.setattr(ItemTable, "read", counting_read)
+    fit = build_fit_inputs(conn, sid, EVENING)
+    assert reads == Counter(weekly_patterns=1, dated_blocks=1, extracted_tasks=1, commutes=1)
+    assert [w.kind for w in fit.warnings] == ["saved_row_unreadable"]  # still warned from that one read

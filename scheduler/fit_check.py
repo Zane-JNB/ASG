@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 from scheduler.commutes import commute_overlaps, expand_commutes, overlap_warnings
 from scheduler.calendar_utils import expand_fixed_blocks, extracted_task_to_dynamic_task, find_overlaps
 from scheduler.db import (
-    COMMUTES, DATED_BLOCKS, EXTRACTED_TASKS, WEEKLY_PATTERNS, get_plan_cuts, get_unreadable_items,
+    COMMUTES, DATED_BLOCKS, EXTRACTED_TASKS, PLANNER_TABLES, WEEKLY_PATTERNS, Unreadable, get_plan_cuts,
     load_settings,
 )
 from scheduler.units import MINUTES_PER_SLOT, SLOTS_PER_DAY, clock_range, format_hours, slot_to_time
@@ -12,14 +12,14 @@ from scheduler.models import (
     DynamicTask, ExtractedTask, FixedBlock, PlanAnchor, ProfileSettings, ScheduleWarning, SleepRule,
 )
 
-def _planned_and_overdue(conn, student_id: int, anchor: PlanAnchor, now: datetime, session: int):
+def _planned_and_overdue(saved_tasks: list[tuple[int, ExtractedTask]], cuts: dict[int, int],
+                         anchor: PlanAnchor, now: datetime, session: int):
     """One pass over the saved open tasks: ([(saved task id, DynamicTask)] with plan cuts
     applied, warnings). A task whose due time is at or before `now` is left out of the plan with
     a hard task_overdue warning; a fully cut task gets a hard task_dropped warning, a partly cut
     one a soft task_cut note. Saved tasks are never changed."""
-    cuts = get_plan_cuts(conn, student_id)
     planned, warnings = [], []
-    for task_id, saved in EXTRACTED_TASKS.get(conn, student_id):
+    for task_id, saved in saved_tasks:
         if saved.completed_at:
             continue
         if saved.due_at() <= now:
@@ -48,15 +48,16 @@ def planned_tasks(conn, student_id: int, anchor: PlanAnchor):
     first day. Saved tasks are never changed."""
     start = datetime.combine(anchor.start_date, datetime.min.time())
     session = load_settings(conn, student_id).default_max_session_slots
-    return _planned_and_overdue(conn, student_id, anchor, start, session)[0]
+    return _planned_and_overdue(EXTRACTED_TASKS.get(conn, student_id), get_plan_cuts(conn, student_id),
+                                anchor, start, session)[0]
 
-def unreadable_warnings(conn, student_id: int) -> list[ScheduleWarning]:
+def unreadable_warnings(unreadable: list[Unreadable]) -> list[ScheduleWarning]:
     """Hard warnings for saved rows that no longer pass their checks; they are left out of the plan."""
     return [ScheduleWarning(
                 severity="hard", kind="saved_row_unreadable",
                 message=f"A saved {u.table.label} (id {u.row_id}) can't be read ({u.reason}) and is left out of the plan. "
                         "Delete it in manage_tasks.py ([u]) and add it again.")
-            for u in get_unreadable_items(conn, student_id) if not u.closed]  # a closed task is history
+            for u in unreadable if not u.closed]  # a closed task is history
 
 def wake_before(day_blocks: list[FixedBlock], settings: ProfileSettings) -> tuple[int, str] | None:
     """(latest wake-up within that day, why) from the day's first class or commute minus the
@@ -177,7 +178,13 @@ def build_fit_inputs(conn, student_id: int, now: datetime,
     def from_now(t: DynamicTask) -> DynamicTask:
         return starts_from(t, now)
 
-    open_tasks, overdue_warnings = _planned_and_overdue(conn, student_id, day0, now, settings.default_max_session_slots)
+    # each planner table is read once: its readable rows are planned, its unreadable ones warned about
+    reads = {table: table.read(conn, student_id) for table in PLANNER_TABLES}
+    saved = {table: [item for _, item in readable] for table, (readable, _) in reads.items()}
+    unreadable = [u for _, bad in reads.values() for u in bad]
+
+    open_tasks, overdue_warnings = _planned_and_overdue(reads[EXTRACTED_TASKS][0], get_plan_cuts(conn, student_id),
+                                                        day0, now, settings.default_max_session_slots)
     planned = [(i, from_now(t)) for i, t in open_tasks]
     new_dyn = from_now(extracted_task_to_dynamic_task(new_task, today, settings.default_max_session_slots)) if new_task else None
 
@@ -188,13 +195,10 @@ def build_fit_inputs(conn, student_id: int, now: datetime,
     num_days = max([num_days] + [math.ceil((next_slot(now) + t.duration_slots) / SLOTS_PER_DAY) for t in tasks])
     anchor = PlanAnchor(start_date=today, num_days=num_days)
 
-    # read and expand once, for the window plus the morning after (only looked at, for the wake-up)
-    patterns = [p for _, p in WEEKLY_PATTERNS.get(conn, student_id)]
-    dated = [b for _, b in DATED_BLOCKS.get(conn, student_id)]
-    commutes = [c for _, c in COMMUTES.get(conn, student_id)]
+    # expand once, for the window plus the morning after (only looked at, for the wake-up)
     look = PlanAnchor(start_date=today, num_days=num_days + 1)
-    classes = expand_fixed_blocks(patterns, dated, look)
-    commute_blocks = expand_commutes(commutes, look)
+    classes = expand_fixed_blocks(saved[WEEKLY_PATTERNS], saved[DATED_BLOCKS], look)
+    commute_blocks = expand_commutes(saved[COMMUTES], look)
     morning_after = [b for b in classes + commute_blocks if b.day == num_days]
     fixed = [b for b in classes if b.day < num_days]
     fixed = [b for b in fixed if not (b.day == 0 and b.end_slot <= next_slot(now))]
@@ -202,5 +206,5 @@ def build_fit_inputs(conn, student_id: int, now: datetime,
     fixed, commute_warnings = with_commutes(fixed, [b for b in commute_blocks if b.day < num_days],
                                             anchor, next_slot(now))
     fixed, sleep_rules = sleep_setup(fixed, morning_after, num_days, settings, now)
-    warnings = block_warnings + commute_warnings + overdue_warnings + unreadable_warnings(conn, student_id)
+    warnings = block_warnings + commute_warnings + overdue_warnings + unreadable_warnings(unreadable)
     return FitInputs(anchor, fixed, planned, new_dyn, sleep_rules, settings, warnings)  

@@ -26,6 +26,5 @@ Zane will review and correct each. Referenced from `CLAUDE.md`.
 18. `restore.plan_restores` only gives time back if every planned task fits (`_solve_all_fit`), so one task that can't fit anyway (due too soon) blocks all restores. Leave such tasks out with `already_unplaced`, like `add_task_with_fit`.
 20. `reflect.py` treats every `ValueError` (including our own `PreferenceError`) as a backend failure and offers another Groq call. Narrow it to real backend errors.
 21. Duplicate helpers: `task_manager._ask_field` ~ `menu_input.ask_until`; `task_manager._rating` ~ `settings_menu._rating`; `commute_menu._clock` and `settings_menu._clock` re-parse HH:MM instead of using `models._check_time` (see 15).
-22. `fit_check.unreadable_warnings` re-reads and re-parses all four planner tables on every `build_fit_inputs`, after `_get_items` already parsed them. Collect unreadable rows in the same pass.
 23. Dead or fragile code: `dropping.cut_task(t, 0)` returns a 0-slot task (`sizes[-0:]` is the whole list; only tests use it). `solver.generate_study_tasks` reassigns its own `max_session_slots` parameter in the loop. `fit_check.planned_tasks` is only used by tests.
 
