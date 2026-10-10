@@ -14,17 +14,10 @@ Zane will review and correct each. Referenced from `CLAUDE.md`.
 10. PDF text extraction often fails on `gpt-oss-120b` (`tool_use_failed`), so each page falls back to vision and costs two calls, which is the main cause of free-tier 429s. Address in model routing (4.0/4.1): retry once, trim the schema, or use another model; make the live PDF test catch the fallback.
 12. Hard-coded search tunables: `propose_drops` (`max_actions`, `max_proposals`, `max_checks`, `time_limit_seconds`) and the `restore.plan_restores` steps should be `ProfileSettings` fields with `POLICY` entries. Do this with the optimal-schedule work.
 14. Unused reminder fields on `ExtractedTask` (`reminders_enabled`, `reminder_min_*`) are sent in the Groq extraction schema. Remove them or mark them `SkipJsonSchema` (see 10).
-15. Commutes: adding one doesn't check for overlaps or ask the student (it breaks the commute invariant; planning only gives a soft warning).
-16. Small CLI issues:
-    - "inf" as hours crashes (`review.hours_to_slots` raises OverflowError).
-    - `24:00` is rejected as an end time when editing an import (`review._time`).
-    - Old reminder sessions with reminders turned off are never marked as asked (`completion.py`), so they pile up.
-17. A due time inside the current 15-minute slot (e.g. due 10:15 at 10:05) passes `prompt_new_task`, but plans start at the next slot, so it can never be placed and the drop menu opens for nothing. Reject `due_slot <= next_slot(now)` on the same day.
-20. `reflect.py` treats every `ValueError` (including our own `PreferenceError`) as a backend failure and offers another Groq call. Narrow it to real backend errors.
-21. Duplicate helpers: `task_manager._ask_field` ~ `menu_input.ask_until`; `task_manager._rating` ~ `settings_menu._rating`; `commute_menu._clock` and `settings_menu._clock` re-parse HH:MM instead of using `units.parse_time` (see 15).
 
-24. Preference storage in `db.py` (for G7): `load_tiers` writes (backfills default tiers) on every read; `load_evidence` and `load_evidence_times` read the same table in two queries; `get_reflections` returns loose dicts instead of a typed row (only tests read it).
 
-25. Found in the Branch 2 review (for G6/G7): pyflakes reports unused imports in `preferences.py`, `preference_policy.py`, `reflection.py`, `reflection_cycle.py`, `reflect.py` and several tests, and two shadowed duplicate tests (`test_evidence.py` line 85 and `test_preference_policy.py` line 42 redefine an earlier test of the same name, so the first copy never runs).
 26. `propose_drops` re-solves "as things stand" before searching, although `add_task_with_fit` has just done that check (one extra solve per search). Keep it while `propose_drops` is also called directly (tests); drop it if the base check moves out of the engine.
 27. Found in the G5 review (for G8): `DropProposal` describes the new task with three loose fields (`new_task_added`, `new_task_slots_cut`, `new_task_may_cut_sleep`). One field holding the new task as planned (`DynamicTask | None`) would replace all three.
+28. Commutes don't count in `db.has_saved_items`, so `plan_schedule.py` stops with an error when only commutes are saved. Found in G6.
+29. Deferred from the G6 review (for G8): `review._overlap_notes` re-derives overlaps from HH:MM per weekday/date instead of reusing `calendar_utils.find_overlaps`; `fit_check.overlap_lines` is used by `import_flow` and `commute_menu` (UI) and belongs next to `find_overlaps`; `review._edit_item` special-cases the one field (`parse_due`) that sets two model fields.
+30. Deferred from the G7 review (for G8, LLM modules): private names still cross modules there: `pdf_extraction` imports `schedule_extraction._sort_result`, and `reflection.propose_preference_changes` imports `llm_backends._groq_call` and `schedule_extraction._as_items` inside the function.

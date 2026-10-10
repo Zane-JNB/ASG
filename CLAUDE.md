@@ -86,7 +86,7 @@ Every backend uses forced tool-calling with a JSON schema that comes from the py
 - Every `ProfileSettings` field needs a `POLICY` entry (a test fails otherwise). Tiers: `LOCKED` (nobody), `USER` (student only), `MODEL_LEARNED` (reflections); students can claim a field.
 - The LLM never picks values or thresholds. Reflections return direction + magnitude only. One reflection never changes a setting; it needs repeated evidence across separate reflections (`EVIDENCE_THRESHOLD`, `EVIDENCE_TTL_DAYS`).
 - Penalty fields and `drop_deadline_multiplier` are never user-editable.
-- Write settings via `preferences.set_values` / `user_edit` (they enforce tiers). Legacy path that skips tier checks via `db.save_settings`: `reflection_cycle.apply_and_log` only (the demo's y/N is the student's consent).
+- Write settings via `preferences.set_values` (it enforces tiers). Legacy path that skips tier checks via `db.save_settings`: `reflection_cycle.apply_and_log` only (the demo's y/N is the student's consent).
 
 ## Known issues (Zane will review and correct each)
 

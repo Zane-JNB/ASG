@@ -1,7 +1,7 @@
 """The app's time axis: 15-minute slots, clock times, dates, weekdays, and how hours are shown.
 Every other module uses these instead of re-parsing 'HH:MM' or re-deriving hours from slots."""
 import math
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Literal, get_args
 
 MINUTES_PER_SLOT = 15
@@ -76,6 +76,12 @@ def next_slot(now: datetime) -> int:
     return math.ceil(seconds / (MINUTES_PER_SLOT * 60))
 
 
+def plan_start(now: datetime) -> datetime:
+    """When a plan made at now begins: the start of next_slot(now), possibly tomorrow 00:00."""
+    midnight = datetime.combine(now.date(), datetime.min.time())
+    return midnight + timedelta(minutes=next_slot(now) * MINUTES_PER_SLOT)
+
+
 def clock_range(start_slot: int, end_slot: int) -> str:
     """'09:00-10:30'. An end past midnight (sleep, late blocks) shows as the next day's clock time."""
     return f"{slot_to_time(start_slot)}-{slot_to_time(end_slot % SLOTS_PER_DAY)}"
@@ -84,6 +90,16 @@ def clock_range(start_slot: int, end_slot: int) -> str:
 def slots_to_hours(slots: int) -> float:
     """6 -> 1.5"""
     return slots * MINUTES_PER_SLOT / 60
+
+
+def hours_to_slots(hours: float) -> int:
+    """1.5 -> 6. Rounds to the nearest 15 minutes (halves round up); minimum one slot."""
+    if not math.isfinite(hours):
+        raise ValueError("hours must be a real number, like 1.5")
+    slots = math.floor(hours * 60 / MINUTES_PER_SLOT + 0.5)
+    if slots < 1:
+        raise ValueError("duration must be at least 15 minutes")
+    return slots
 
 
 def format_hours(slots: int) -> str:

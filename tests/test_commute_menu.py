@@ -2,8 +2,8 @@ from datetime import date
 
 from scheduler.commute_menu import run_commute_menu
 from scheduler.commutes import expand_commutes
-from scheduler.db import connect, COMMUTES, get_or_create_student
-from scheduler.models import PlanAnchor
+from scheduler.db import connect, COMMUTES, DATED_BLOCKS, WEEKLY_PATTERNS, get_or_create_student
+from scheduler.models import Commute, DatedBlock, PlanAnchor, WeeklyPattern
 
 TODAY = date(2026, 10, 5)  # a Monday
 
@@ -14,9 +14,12 @@ def scripted(answers):
     return (lambda _prompt: next(it)), shown
 
 
-def _run(answers):
+def _run(answers, weekly=(), dated=(), commutes=()):
     conn = connect(":memory:")
     sid = get_or_create_student(conn, "Z")
+    for store, items in ((WEEKLY_PATTERNS, weekly), (DATED_BLOCKS, dated), (COMMUTES, commutes)):
+        for item in items:
+            store.add(conn, sid, item)
     ask, shown = scripted(answers)
     run_commute_menu(conn, sid, ask, shown.append, today=TODAY)
     return conn, sid, shown
@@ -89,3 +92,32 @@ def test_delete_removes_the_chosen_commute_and_list_is_ordered():
                              "l", "d", "1", "l", "b"])
     assert [c.weekday for c in _saved(conn, sid)] == ["Wed"]
     assert shown.index("1. Commute: every Mon 08:00, 30 min") < shown.index("2. Commute: every Wed 09:00, 30 min")
+
+# ---------- #15: a new commute that overlaps something saved is shown and asked about ----------
+
+MON_CLASS = WeeklyPattern(title="Maths", day="Mon", start_time="08:00", end_time="10:00")
+
+
+def test_overlapping_commute_is_not_saved_unless_the_student_says_so():
+    conn, sid, shown = _run(["a", "", "09:00", "30", "y", "Mon", "", "b"], weekly=[MON_CLASS])
+    assert _saved(conn, sid) == []
+    assert any("overlap" in s for s in shown) and "Not saved." in shown
+    assert any("'Commute' 09:00-09:30 overlaps 'Maths' 08:00-10:00" in s for s in shown)
+    conn, sid, shown = _run(["a", "", "09:00", "30", "y", "Mon", "y", "b"], weekly=[MON_CLASS])
+    assert [c.weekday for c in _saved(conn, sid)] == ["Mon"]
+
+
+def test_a_one_time_commute_is_checked_against_a_session_weeks_ahead_and_other_commutes():
+    lab = DatedBlock(title="Lab", date="2026-11-02", start_time="14:00", end_time="16:00")
+    conn, sid, shown = _run(["a", "", "15:00", "20", "n", "2026-11-02", "n", "b"], dated=[lab])
+    assert _saved(conn, sid) == [] and any("'Lab'" in s for s in shown)
+    bus = Commute(title="Bus", start_time="07:00", length_minutes=60, recurring=True, weekday="Tue")
+    conn, sid, shown = _run(["a", "", "07:30", "20", "n", "2026-10-06", "n", "b"], commutes=[bus])
+    assert [c.title for c in _saved(conn, sid)] == ["Bus"] and any("'Bus'" in s for s in shown)
+
+
+def test_back_to_back_or_other_days_ask_nothing_extra():
+    # ends exactly when the class starts, and Tuesday has no class: saved without a question
+    conn, sid, shown = _run(["a", "", "07:30", "30", "y", "Mon Tue", "b"], weekly=[MON_CLASS])
+    assert [c.weekday for c in _saved(conn, sid)] == ["Mon", "Tue"]
+    assert not any("overlap" in s for s in shown)

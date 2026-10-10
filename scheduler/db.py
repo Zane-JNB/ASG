@@ -197,16 +197,11 @@ def save_settings(conn: sqlite3.Connection, student_id: int, settings: ProfileSe
         )
 
 def load_tiers(conn: sqlite3.Connection, student_id: int) -> dict[str, Tier]:
-    """{field: tier} for every POLICY field. Missing rows are filled from each field's default tier
-    first (INSERT OR IGNORE, so a student's own choice is never overwritten)."""
-    with transaction(conn):
-        conn.executemany(
-            "INSERT OR IGNORE INTO preference_tiers (student_id, field, tier) VALUES (?, ?, ?)",
-            [(student_id, name, p.default_tier.value) for name, p in POLICY.items()],
-        )
-    rows = conn.execute("SELECT field, tier FROM preference_tiers WHERE student_id = ?",
-                        (student_id,)).fetchall()
-    return {f: Tier(t) for f, t in rows if f in POLICY}
+    """{field: tier} for every POLICY field: the student's stored choice, else the field's
+    default tier. Reading never writes; only set_tier stores a row."""
+    rows = dict(conn.execute("SELECT field, tier FROM preference_tiers WHERE student_id = ?",
+                             (student_id,)).fetchall())
+    return {name: Tier(rows[name]) if name in rows else p.default_tier for name, p in POLICY.items()}
 
 def set_tier(conn: sqlite3.Connection, student_id: int, field: str, tier: Tier) -> None:
     """Insert or overwrite who owns one setting."""
@@ -215,11 +210,19 @@ def set_tier(conn: sqlite3.Connection, student_id: int, field: str, tier: Tier) 
                         ON CONFLICT(student_id, field) DO UPDATE SET tier = excluded.tier""",
                      (student_id, field, tier.value))
 
-def load_evidence(conn: sqlite3.Connection, student_id: int) -> dict[str, tuple[int, str]]:
-    """{field: (score, magnitude)}: the net vote of past reflections for each setting."""
-    rows = conn.execute("SELECT field, score, magnitude FROM preference_evidence "
+def _utc(dt: datetime) -> datetime:
+    """Naive datetimes are read as UTC, so naive and aware values can be compared."""
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+
+def load_evidence(conn: sqlite3.Connection, student_id: int,
+                  fresh_since: datetime | None = None) -> dict[str, tuple[int, str]]:
+    """{field: (score, magnitude)}: the net vote of past reflections for each setting. With
+    fresh_since, only evidence that changed after it (a row with no time counts as fresh)."""
+    rows = conn.execute("SELECT field, score, magnitude, updated_at FROM preference_evidence "
                         "WHERE student_id = ?", (student_id,)).fetchall()
-    return {f: (score, mag) for f, score, mag in rows}
+    return {f: (score, mag) for f, score, mag, at in rows
+            if fresh_since is None or not at or _utc(datetime.fromisoformat(at)) > _utc(fresh_since)}
 
 def save_evidence(conn: sqlite3.Connection, student_id: int, field: str, score: int, magnitude: str,
                   at: str | None = None) -> None:
@@ -230,12 +233,6 @@ def save_evidence(conn: sqlite3.Connection, student_id: int, field: str, score: 
                         score = excluded.score, magnitude = excluded.magnitude,
                         updated_at = excluded.updated_at""",
                      (student_id, field, score, magnitude, at or _now()))
-
-def load_evidence_times(conn: sqlite3.Connection, student_id: int) -> dict[str, str | None]:
-    """{field: when its evidence last changed}."""
-    rows = conn.execute("SELECT field, updated_at FROM preference_evidence WHERE student_id = ?",
-                        (student_id,)).fetchall()
-    return {f: t for f, t in rows}
 
 def load_approval_mode(conn: sqlite3.Connection, student_id: int) -> str:
     """How learned changes are approved: 'auto' (the default) or 'ask'."""
@@ -274,8 +271,20 @@ def log_reflection(conn: sqlite3.Connection, student_id: int, reflection_text: s
              before.model_dump_json(), after.model_dump_json(), int(applied), outcome)
         ).lastrowid
 
-def get_reflections(conn: sqlite3.Connection, student_id: int) -> list[dict]:
-    """Return this student's reflection history, oldest first."""
+@dataclass(frozen=True)
+class ReflectionRow:
+    """One logged reflection or settings change, as get_reflections reads it back."""
+    id: int
+    created_at: str
+    reflection_text: str
+    settings_before: ProfileSettings
+    settings_after: ProfileSettings
+    applied: bool
+    outcome: str | None  # an Outcome value; None on rows logged before outcomes existed
+
+
+def get_reflections(conn: sqlite3.Connection, student_id: int) -> list[ReflectionRow]:
+    """This student's reflection history, oldest first."""
     rows = conn.execute(
         """
         SELECT id, created_at, reflection_text, settings_before_json, settings_after_json, applied, outcome
@@ -283,18 +292,10 @@ def get_reflections(conn: sqlite3.Connection, student_id: int) -> list[dict]:
         """,
         (student_id,),
     ).fetchall()
-    return [
-        {
-            "id": r[0],
-            "created_at": r[1],
-            "reflection_text": r[2],
-            "settings_before": ProfileSettings.model_validate_json(r[3]),
-            "settings_after": ProfileSettings.model_validate_json(r[4]),
-            "applied": bool(r[5]),
-            "outcome": r[6]
-        }
-        for r in rows
-    ]
+    return [ReflectionRow(row_id, created_at, text, ProfileSettings.model_validate_json(before),
+                          ProfileSettings.model_validate_json(after), bool(applied), outcome)
+            for row_id, created_at, text, before, after, applied, outcome in rows]
+
 
 def _raw_dict(data: str) -> dict:
     """A saved row's JSON as a dict ({} if it isn't one), for rows that fail their model's checks."""

@@ -1,13 +1,10 @@
-from dataclasses import fields
 from typing import Literal
 
 import annotated_types
 from pydantic import BaseModel, Field, ValidationError, model_validator
 
 from scheduler.models import ProfileSettings
-from scheduler.preference_policy import MODEL_DELTAS  
-
-ADJUSTABLE_FIELDS: dict[str, dict[str, int]] = MODEL_DELTAS   
+from scheduler.preference_policy import MODEL_DELTAS
 
 
 class PreferenceChangeProposal(BaseModel):
@@ -18,47 +15,47 @@ class PreferenceChangeProposal(BaseModel):
 
     @model_validator(mode="after")
     def field_must_be_adjustable(self):
-        if self.field not in ADJUSTABLE_FIELDS:
+        if self.field not in MODEL_DELTAS:
             raise ValueError(
                 f"'{self.field}' is not an adjustable setting "
-                f"(allowed: {', '.join(ADJUSTABLE_FIELDS)})"
+                f"(allowed: {', '.join(MODEL_DELTAS)})"
             )
         return self
+
 
 class ReflectionResult(BaseModel):
     summary: str
     proposals: list[PreferenceChangeProposal] = Field(default_factory=list)
 
-def _lower_bound(field_name: str) -> int:
-    """The smallest value ProfileSettings' own Field(...) constraint allows for this field."""
-    for constraint in ProfileSettings.model_fields[field_name].metadata:
-        if isinstance(constraint, annotated_types.Gt):
-            return constraint.gt + 1
-        if isinstance(constraint, annotated_types.Ge):
-            return constraint.ge
-    return 0
+
+def _bounds(field_name: str) -> tuple[int, int | None]:
+    """(lowest, highest or None) that ProfileSettings' own Field(...) constraints allow."""
+    lo, hi = 0, None
+    for c in ProfileSettings.model_fields[field_name].metadata:
+        if isinstance(c, annotated_types.Gt):
+            lo = c.gt + 1
+        elif isinstance(c, annotated_types.Ge):
+            lo = c.ge
+        elif isinstance(c, annotated_types.Lt):
+            hi = c.lt - 1
+        elif isinstance(c, annotated_types.Le):
+            hi = c.le
+    return lo, hi
+
 
 def apply_proposal(settings: ProfileSettings, proposal: PreferenceChangeProposal) -> ProfileSettings:
     """Apply one proposal's bounded delta, clamped to this field's valid range."""
-    delta = ADJUSTABLE_FIELDS[proposal.field][proposal.magnitude]
+    delta = MODEL_DELTAS[proposal.field][proposal.magnitude]
     current = getattr(settings, proposal.field)
-    new_value = current + delta if proposal.direction == "increase" else current - delta
-    new_value = max(new_value, _lower_bound(proposal.field))
-    upper = _upper_bound(proposal.field)
-    if upper is not None:
-        new_value = min(new_value, upper)
+    lo, hi = _bounds(proposal.field)
+    new_value = max(current + delta if proposal.direction == "increase" else current - delta, lo)
+    if hi is not None:
+        new_value = min(new_value, hi)
+    return ProfileSettings(**{**settings.model_dump(), proposal.field: new_value})
 
-    data = settings.model_dump()
-    data[proposal.field] = new_value
-    return ProfileSettings(**data)
-
-def apply_all(settings: ProfileSettings, proposals: list[PreferenceChangeProposal]) -> ProfileSettings:
-    for proposal in proposals:
-        settings = apply_proposal(settings, proposal)
-    return settings
 
 def build_system_prompt(fields: list[str] | None = None) -> str:
-    shown = ADJUSTABLE_FIELDS if fields is None else {n: ADJUSTABLE_FIELDS[n] for n in fields}
+    shown = MODEL_DELTAS if fields is None else {n: MODEL_DELTAS[n] for n in fields}
     field_lines = "\n".join(
         f"- {name} (deltas: small={d['small']}, medium={d['medium']}, large={d['large']})"
         for name, d in shown.items()
@@ -84,11 +81,13 @@ def build_system_prompt(fields: list[str] | None = None) -> str:
         'Never use "change", "size", "amount", or any other alternate name for these keys.'
     )
 
-def _tool_schema(fields):  
+
+def _tool_schema(fields):
     schema = ReflectionResult.model_json_schema()
     if fields is not None:
         schema["$defs"]["PreferenceChangeProposal"]["properties"]["field"]["enum"] = list(fields)
     return schema
+
 
 def propose_preference_changes(reflection_text: str, client=None, allowed_fields = None) -> ReflectionResult:
     """Ask the LLM to propose bounded preference changes from a reflection.
@@ -99,7 +98,7 @@ def propose_preference_changes(reflection_text: str, client=None, allowed_fields
     """
     if allowed_fields is not None and not allowed_fields:  # nothing learnable -> skip the API call
         return ReflectionResult(summary="", proposals=[])
-    
+
     from scheduler.llm_backends import _groq_call, call_llm
     args = dict(system_prompt=build_system_prompt(allowed_fields), user_message=reflection_text,
                 tool_name="propose_preference_changes", tool_schema=_tool_schema(allowed_fields))
@@ -118,12 +117,3 @@ def propose_preference_changes(reflection_text: str, client=None, allowed_fields
 
     summary = raw.get("summary")
     return ReflectionResult(summary=summary if isinstance(summary, str) else "", proposals=proposals)
-    
-def _upper_bound(field_name: str) -> int | None:  
-    for constraint in ProfileSettings.model_fields[field_name].metadata:
-        if isinstance(constraint, annotated_types.Lt):
-            return constraint.lt - 1
-        if isinstance(constraint, annotated_types.Le):
-            return constraint.le
-    return None
-    

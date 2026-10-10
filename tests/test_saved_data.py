@@ -1,6 +1,6 @@
 """Branch fix/saved-data: unreadable saved rows are skipped (never dropped) with a hard warning,
 and tasks can have an optional due time that the plan and the overdue check respect."""
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 
 import pytest
 
@@ -128,6 +128,18 @@ def test_add_task_rejects_a_time_that_already_passed():
     ask, shown = _scripted(["Quiz prep", "2026-10-05 19:00", "2026-10-05 21:00", "", "", ""])
     t = prompt_new_task(ask, shown.append, session_cap=8, now=EVENING)
     assert t.due_time == "21:00"
+    assert any("already passed" in line for line in shown)
+
+
+@pytest.mark.parametrize("now, too_soon, fine", [
+    (datetime(2026, 10, 5, 10, 5), "2026-10-05 10:15", "2026-10-05 10:30"),   # 10:15 is the slot plans start in
+    (datetime(2026, 10, 5, 10, 0), "2026-10-05 10:00", "2026-10-05 10:15"),
+    (datetime(2026, 10, 5, 23, 55), "2026-10-06 00:00", "2026-10-06 00:15"),  # plans start tomorrow 00:00
+])
+def test_add_task_rejects_a_due_time_before_the_plan_can_start(now, too_soon, fine):  # #17
+    ask, shown = _scripted(["Quiz prep", too_soon, fine, "0.25", "", ""])
+    t = prompt_new_task(ask, shown.append, session_cap=8, now=now)
+    assert (t.date + " " + t.due_time) == fine
     assert any("already passed" in line for line in shown)
 
 

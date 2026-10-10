@@ -1,10 +1,10 @@
+"""The reflection flow: the LLM proposes, preferences decide. apply_and_log is the demo's
+legacy path (the student's y/N is the consent, so no evidence threshold)."""
 import sqlite3
 
-from scheduler.db import load_settings, save_settings, log_reflection, transaction
+from scheduler.db import load_settings, log_reflection, save_settings, transaction
+from scheduler.preferences import PreferenceError, learnable_fields, process_reflection, validated_settings
 from scheduler.reflection import ReflectionResult, apply_proposal, propose_preference_changes
-from scheduler.solver import build_schedule
-from scheduler.models import DynamicTask, FixedBlock, SleepRule
-from scheduler.preferences import PreferenceError, ReflectionOutcome, _validated, learnable_fields, process_reflection
 
 
 def apply_and_log(conn: sqlite3.Connection, student_id: int, reflection_text: str,
@@ -29,14 +29,11 @@ def apply_and_log(conn: sqlite3.Connection, student_id: int, reflection_text: st
     before = load_settings(conn, student_id)
     allowed = learnable_fields(conn, student_id)
     after = before
-    for proposal, ok in zip(result.proposals, accepted):
-        if not ok or proposal.field not in allowed:
-            continue
-        value = getattr(apply_proposal(after, proposal), proposal.field)
+    for proposal in (p for p, ok in zip(result.proposals, accepted) if ok and p.field in allowed):
         try:
-            after = _validated(after, {proposal.field: value})
+            after = validated_settings(after, {proposal.field: getattr(apply_proposal(after, proposal), proposal.field)})
         except PreferenceError:
-            continue
+            continue  # this one would make the settings invalid: skip it, keep the rest
 
     applied = after != before
     with transaction(conn):  # settings + audit row, one transaction
@@ -46,25 +43,9 @@ def apply_and_log(conn: sqlite3.Connection, student_id: int, reflection_text: st
 
     return after
 
-def rerun_schedule(conn, student_id, fixed_blocks, tasks, sleep_rules=None, num_days=1,
-                   time_limit_seconds=30.0):
-    """Re-solve a plan against this student's CURRENT settings -- e.g. right after a
-    reflection changed them. Thin wrapper over build_schedule: the only thing it adds is
-    loading settings from the db instead of trusting the caller to pass the right ones.
-
-    This does NOT persist fixed_blocks/tasks/sleep_rules anywhere -- the db has no table
-    for a student's schedule inputs yet, so the caller still supplies the plan each time.
-    """
-    settings = load_settings(conn, student_id)
-    return build_schedule(
-        fixed_blocks, tasks, num_days=num_days, sleep_rules=sleep_rules,
-        time_limit_seconds=time_limit_seconds, settings=settings,
-    )
-
-def get_proposals(reflection_text, client=None, allowed_fields=None) -> ReflectionResult:   
-    return propose_preference_changes(reflection_text, client=client, allowed_fields=allowed_fields)  
-
-def reflect_and_record(conn, student_id, reflection_text, client=None):  
-    allowed = learnable_fields(conn, student_id)       # prompt filter only; process_reflection re-checks
-    result = get_proposals(reflection_text, client=client, allowed_fields=allowed)
+def reflect_and_record(conn, student_id, reflection_text, client=None):
+    """One reflection end to end: ask the LLM for proposals about the fields it may move, then
+    count them as evidence. Returns (ReflectionOutcome, the LLM's summary)."""
+    allowed = learnable_fields(conn, student_id)  # prompt filter only; process_reflection re-checks
+    result = propose_preference_changes(reflection_text, client=client, allowed_fields=allowed)
     return process_reflection(conn, student_id, reflection_text, result), result.summary

@@ -2,7 +2,7 @@
 (semi-automatic and automatic), and the manual editor with its undo-able cuts. Nothing is saved here."""
 from scheduler.dropping import NEW_TASK, dont_add_unverified
 from scheduler.models import DropAction, DropProposal, DropReport, DynamicTask
-from scheduler.review import _hours
+from scheduler.prompts import parse_hours, parse_whole
 from scheduler.units import format_hours, slots_to_hours
 
 
@@ -177,13 +177,6 @@ def _show_list(state: CutState, titles: dict, order: list, show) -> None:
         show(f"  {n}. {titles[i]}{' (new)' if i == NEW_TASK else ''} -- {what}{was}")
 
 
-def _hours_or_error(text: str) -> int:
-    try:
-        return _hours(text)
-    except ValueError:
-        raise ValueError("enter hours as a number, like 1.5 (at least 0.25)") from None
-
-
 def _edit_task(state: CutState, i: int, ask, show) -> bool:
     left = state.remaining(i)
     if left == 0:
@@ -199,11 +192,9 @@ def _edit_task(state: CutState, i: int, ask, show) -> bool:
             state.drop(i)
         elif raw == "s" and sessions > 1:
             text = ask(f"  Cut how many of its {sessions} sessions (1-{sessions - 1})? ").strip()
-            if not text.isdigit() or not 1 <= int(text) <= sessions - 1:
-                raise ValueError(f"enter a whole number from 1 to {sessions - 1}")
-            state.cut_chunks(i, int(text))
+            state.cut_chunks(i, parse_whole(text, 1, sessions - 1))
         elif raw == "t":
-            state.reduce(i, _hours_or_error(ask(f"  Reduce by how many hours (up to {slots_to_hours(left - 1):g}, e.g. 1.5)? ").strip()))
+            state.reduce(i, parse_hours(ask(f"  Reduce by how many hours (up to {slots_to_hours(left - 1):g}, e.g. 1.5)? ").strip()))
         else:
             show("  Choose one of the options shown.")
             return False

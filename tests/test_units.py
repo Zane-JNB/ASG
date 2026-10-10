@@ -3,7 +3,7 @@ from datetime import date, datetime
 import pytest
 
 from scheduler.units import (
-    WEEKDAYS, clock_range, format_hours, next_slot, parse_date, parse_due_time, parse_time, parse_weekday,
+    WEEKDAYS, clock_range, format_hours, hours_to_slots, next_slot, plan_start, parse_date, parse_due_time, parse_time, parse_weekday,
     slot_to_time, slots_to_hours, time_to_minutes, time_to_slot, weekday_name,
 )
 
@@ -69,3 +69,30 @@ def test_next_slot_is_the_first_slot_not_yet_started():
     assert next_slot(datetime(2026, 10, 5, 9, 0)) == 36
     assert next_slot(datetime(2026, 10, 5, 9, 1)) == 37
     assert next_slot(datetime(2026, 10, 5, 23, 50)) == 96  # rolls into tomorrow
+
+
+@pytest.mark.parametrize("hours, slots", [(1, 4), (1.5, 6), (0.25, 1), (0.375, 2), (2.1, 8)])
+def test_hours_to_slots(hours, slots):
+    assert hours_to_slots(hours) == slots
+
+
+@pytest.mark.parametrize("hours", [0, 0.1, -1])
+def test_hours_to_slots_rejects_under_one_slot(hours):
+    with pytest.raises(ValueError):
+        hours_to_slots(hours)
+
+
+@pytest.mark.parametrize("hours", [float("inf"), float("-inf"), float("nan")])
+def test_hours_to_slots_rejects_non_finite_hours(hours):  # #16: inf used to raise OverflowError
+    with pytest.raises(ValueError, match="number"):
+        hours_to_slots(hours)
+
+
+@pytest.mark.parametrize("now, start", [
+    (datetime(2026, 10, 5, 10, 0), datetime(2026, 10, 5, 10, 0)),
+    (datetime(2026, 10, 5, 10, 5), datetime(2026, 10, 5, 10, 15)),
+    (datetime(2026, 10, 5, 10, 0, 1), datetime(2026, 10, 5, 10, 15)),
+    (datetime(2026, 10, 5, 23, 55), datetime(2026, 10, 6, 0, 0)),
+])
+def test_plan_start_is_the_first_slot_not_yet_begun(now, start):
+    assert plan_start(now) == start

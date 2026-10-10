@@ -1,7 +1,6 @@
 import pytest
 from scheduler.models import ProfileSettings
 from scheduler.preference_policy import MODEL_DELTAS, POLICY, FieldPolicy, Tier
-from scheduler.reflection import ADJUSTABLE_FIELDS
 
 PENALTIES = [n for n in ProfileSettings.model_fields if n.endswith("_penalty")]
 
@@ -30,17 +29,12 @@ def test_invalid_policy_combinations_are_rejected(kwargs):
     with pytest.raises(ValueError):
         FieldPolicy(label="x", description="y", **kwargs)
 
-def test_adjustable_fields_unchanged_by_the_refactor():  # compare to your old dict's 7 entries
-    assert ADJUSTABLE_FIELDS == MODEL_DELTAS
-    assert set(ADJUSTABLE_FIELDS) == {"buffer_slots", "bedtime_penalty", "same_day_penalty",
-        "default_max_session_slots", "sleep_target_penalty", "default_sleep_length_slots", "default_preferred_bed"}
-
 def test_tier_serialized_values_are_exact():
     assert [t.value for t in Tier] == ["locked", "user", "model_learned"]
 
 
 def test_adjustable_fields_unchanged_by_the_refactor():   # replace the short version
-    assert ADJUSTABLE_FIELDS == MODEL_DELTAS == {
+    assert MODEL_DELTAS == {
         "buffer_slots": {"small": 1, "medium": 2, "large": 4},
         "bedtime_penalty": {"small": 10, "medium": 25, "large": 50},
         "same_day_penalty": {"small": 500, "medium": 1000, "large": 2000},

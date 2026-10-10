@@ -1,13 +1,12 @@
 from dataclasses import dataclass
 from enum import Enum
-from scheduler.models import ProfileSettings
 
-class Tier(str, Enum):  
+class Tier(str, Enum):
     LOCKED = "locked"
     USER = "user"
     MODEL_LEARNED = "model_learned"
 
-@dataclass(frozen=True)  
+@dataclass(frozen=True)
 class FieldPolicy:
     default_tier: Tier
     label: str
@@ -30,21 +29,21 @@ class FieldPolicy:
         if self.default_tier == Tier.MODEL_LEARNED and not self.model_learnable:
             raise ValueError("a model_learned-tier field must be model_learnable")
 
-def _locked(label, description):  
+def _locked(label, description):
     return FieldPolicy(Tier.LOCKED, label, description)
 
-def _user_only(label, description):  
+def _user_only(label, description):
     return FieldPolicy(Tier.USER, label, description, user_editable=True)
 
-def _internal(label, description, deltas):  
+def _internal(label, description, deltas):
     return FieldPolicy(Tier.MODEL_LEARNED, label, description, model_learnable=True, deltas=deltas)
 
-def _claimable(label, description, deltas, default_tier=Tier.MODEL_LEARNED):  
+def _claimable(label, description, deltas, default_tier=Tier.MODEL_LEARNED):
     return FieldPolicy(default_tier, label, description, model_learnable=True,
                        user_editable=True, user_claimable=True, deltas=deltas)
 
-S, M, L = "small", "medium", "large"  
-POLICY: dict[str, FieldPolicy] = {  
+S, M, L = "small", "medium", "large"
+POLICY: dict[str, FieldPolicy] = {
     "buffer_slots": _claimable("Break time", "Gap after tasks/classes (15-min slots).", {S: 1, M: 2, L: 4}),
     "default_max_session_slots": _claimable("Longest study session", "Session cap (15-min slots).", {S: 2, M: 4, L: 8}, Tier.USER),
     "default_sleep_length_slots": _claimable("Sleep target", "Sleep you aim for (15-min slots).", {S: 2, M: 4, L: 8}),
@@ -70,4 +69,4 @@ POLICY: dict[str, FieldPolicy] = {
     "shrink_steps": _locked("Shrink steps", "Fractions tried when fitting a task."),
 }
 
-MODEL_DELTAS = {n: dict(p.deltas) for n, p in POLICY.items() if p.model_learnable}  
+MODEL_DELTAS = {n: dict(p.deltas) for n, p in POLICY.items() if p.model_learnable}

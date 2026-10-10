@@ -1,6 +1,6 @@
 from datetime import date, datetime
 
-from scheduler.db import connect, get_or_create_student, EXTRACTED_TASKS, replace_extraction
+from scheduler.db import connect, get_or_create_student, EXTRACTED_TASKS, load_settings, replace_extraction
 from scheduler.models import ExtractedTask, ExtractionResult, WeeklyPattern
 from scheduler.planner import plan_from_saved
 from scheduler.task_manager import prompt_new_task, run_menu
@@ -125,12 +125,10 @@ def test_session_time_goes_through_the_tier_check_and_audit_log():
     assert conn.execute("SELECT COUNT(*) FROM reflections WHERE student_id = ?", (sid,)).fetchone()[0] == 1
 
 def test_session_time_is_refused_when_the_model_owns_the_field():
-    from scheduler.db import load_settings, load_tiers
+    from scheduler.db import set_tier
+    from scheduler.preference_policy import Tier
     conn, sid = _conn()
-    load_tiers(conn, sid)  # backfill the tier rows
-    conn.execute("UPDATE preference_tiers SET tier = 'model_learned' WHERE student_id = ? AND field = ?",
-                 (sid, "default_max_session_slots"))
-    conn.commit()
+    set_tier(conn, sid, "default_max_session_slots", Tier.MODEL_LEARNED)
     ask, shown = scripted(["t", "1", "q"])
     run_menu(conn, sid, ask, shown.append, today=TODAY)
     assert load_settings(conn, sid).default_max_session_slots == 8
@@ -154,3 +152,10 @@ def test_menu_m_opens_the_commute_menu():
     ask, shown = scripted(["m", "l", "b", "q"])
     run_menu(conn, sid, ask, shown.append, today=TODAY)
     assert "No commutes saved." in shown
+
+def test_session_time_inf_is_rejected_not_a_crash():  # #16
+    conn, sid = _conn()
+    ask, shown = scripted(["t", "inf", "q"])
+    run_menu(conn, sid, ask, shown.append, today=TODAY)
+    assert any(l.startswith("Invalid:") for l in shown)
+    assert load_settings(conn, sid).default_max_session_slots == 8

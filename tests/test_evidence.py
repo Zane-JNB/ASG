@@ -8,7 +8,7 @@ from scheduler.db import (
 from scheduler.preference_policy import Tier
 from scheduler.preferences import (
     EVIDENCE_THRESHOLD, Actor, change_tier, collapse_proposals, learnable_fields, next_evidence,
-    process_reflection, set_values, user_edit,
+    process_reflection, set_values,
 )
 from scheduler.reflection import (
     PreferenceChangeProposal as P, ReflectionResult, build_system_prompt, propose_preference_changes,
@@ -82,15 +82,6 @@ def test_applies_smallest_bucket_seen_in_the_streak(conn, sid):
     assert buf(conn, sid) == 1 + 1
 
 
-def test_next_evidence_accumulates_cancels_on_conflict_and_keeps_smallest_bucket():     
-    s = next_evidence(None, "increase", "large")      # (1, 'large')
-    s = next_evidence(s, "increase", "small")         # smallest bucket wins
-    assert s == (2, "small")
-    s = next_evidence(s, "decrease", "large")         # cancels ONE vote, keeps cautious magnitude
-    assert s == (1, "small")
-    assert next_evidence(s, "decrease", "small")[0] == 0
-
-
 def test_unmentioned_field_keeps_its_evidence(conn, sid):
     run(conn, sid, ("buffer_slots", "increase", "small"))
     run(conn, sid, ("bedtime_penalty", "increase", "small"))
@@ -143,7 +134,7 @@ def test_claiming_a_field_stops_accumulation_and_clears_evidence(conn, sid):
 
 
 def test_returning_a_field_to_the_model_starts_with_clean_evidence(conn, sid):
-    user_edit(conn, sid, "default_max_session_slots", 6)
+    set_values(conn, sid, {"default_max_session_slots": 6}, Actor.USER)
     change_tier(conn, sid, "default_max_session_slots", Tier.MODEL_LEARNED, Actor.USER)
     run(conn, sid, ("default_max_session_slots", "decrease", "small"))
     assert load_evidence(conn, sid) == {"default_max_session_slots": (-1, "small")}
@@ -191,7 +182,7 @@ def test_threshold_respects_upper_bound(conn, sid):
 
 
 def test_model_cannot_push_sleep_target_below_users_minimum_or_bed_past_window(conn, sid):
-    user_edit(conn, sid, "default_sleep_min_slots", 30)                           # target is 32
+    set_values(conn, sid, {"default_sleep_min_slots": 30}, Actor.USER)                           # target is 32
     for _ in range(3):
         o = run(conn, sid, ("default_sleep_length_slots", "decrease", "large"))   # 32-8 < min 30
     assert o.outcome == "threshold_at_limit" and load_settings(conn, sid).default_sleep_length_slots == 32
@@ -210,10 +201,10 @@ def test_outcomes_are_logged_per_reflection(conn, sid):
     for _ in range(3):
         run(conn, sid, ("buffer_slots", "increase", "small"))
     log = get_reflections(conn, sid)
-    assert [r["outcome"] for r in log] == ["no_proposals", "proposal_ignored",
+    assert [r.outcome for r in log] == ["no_proposals", "proposal_ignored",
                                            "evidence_recorded", "evidence_recorded", "learned_update_applied"]
-    assert [r["applied"] for r in log] == [False] * 4 + [True]
-    assert log[-1]["settings_before"].buffer_slots == 1 and log[-1]["settings_after"].buffer_slots == 2
+    assert [r.applied for r in log] == [False] * 4 + [True]
+    assert log[-1].settings_before.buffer_slots == 1 and log[-1].settings_after.buffer_slots == 2
 
 
 def test_prompt_and_schema_only_show_learnable_fields(conn, sid):

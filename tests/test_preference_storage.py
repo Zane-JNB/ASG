@@ -92,7 +92,7 @@ def test_legacy_database_opens_and_keeps_its_data(tmp_path):
     assert load_settings(conn, 1).buffer_slots == 3                # old value kept
     assert load_settings(conn, 1).bedtime_penalty == ProfileSettings().bedtime_penalty  # missing -> default
     hist = get_reflections(conn, 1)
-    assert len(hist) == 1 and hist[0]["applied"] is True and hist[0]["outcome"] is None
+    assert len(hist) == 1 and hist[0].applied is True and hist[0].outcome is None
     tiers = load_tiers(conn, 1)
     assert all(tiers[n] == p.default_tier for n, p in POLICY.items())
 
@@ -102,7 +102,7 @@ def test_log_reflection_stores_outcome_and_defaults_to_none(conn):
     st = load_settings(conn, sid)
     log_reflection(conn, sid, "a", before=st, after=st, applied=False)
     log_reflection(conn, sid, "b", before=st, after=st, applied=False, outcome="evidence_recorded")
-    assert [r["outcome"] for r in get_reflections(conn, sid)] == [None, "evidence_recorded"]
+    assert [r.outcome for r in get_reflections(conn, sid)] == [None, "evidence_recorded"]
 
 
 def test_a_failed_transaction_rolls_back_everything_together(conn):
@@ -116,3 +116,49 @@ def test_a_failed_transaction_rolls_back_everything_together(conn):
             raise RuntimeError("boom")
     assert load_settings(conn, sid).buffer_slots == st.buffer_slots
     assert load_evidence(conn, sid) == {} and get_reflections(conn, sid) == []
+
+
+# ---------- #24: reads don't write, evidence is one read, reflection rows are typed ----------
+
+def test_reading_tiers_writes_nothing(conn):
+    sid = get_or_create_student(conn, "Zane")
+    tiers = load_tiers(conn, sid)
+    assert tiers == {name: p.default_tier for name, p in POLICY.items()}
+    assert conn.execute("SELECT COUNT(*) FROM preference_tiers").fetchone() == (0,)
+    set_tier(conn, sid, "buffer_slots", Tier.USER)  # only a real choice is stored
+    assert load_tiers(conn, sid)["buffer_slots"] == Tier.USER
+    assert conn.execute("SELECT COUNT(*) FROM preference_tiers").fetchone() == (1,)
+
+
+def test_evidence_fresh_since_filters_by_when_it_last_changed(conn):
+    from datetime import datetime, timezone
+    sid = get_or_create_student(conn, "Zane")
+    save_evidence(conn, sid, "buffer_slots", 2, "small", at="2026-10-01T09:00:00+00:00")
+    save_evidence(conn, sid, "bedtime_penalty", -1, "large", at="2026-10-10T09:00:00")  # naive = UTC
+    assert load_evidence(conn, sid) == {"buffer_slots": (2, "small"), "bedtime_penalty": (-1, "large")}
+    since = datetime(2026, 10, 5, tzinfo=timezone.utc)
+    assert load_evidence(conn, sid, fresh_since=since) == {"bedtime_penalty": (-1, "large")}
+    assert load_evidence(conn, sid, fresh_since=since.replace(tzinfo=None)) == {"bedtime_penalty": (-1, "large")}
+
+
+def test_live_evidence_reads_the_table_once(conn):
+    from datetime import datetime, timezone
+    from scheduler.preferences import live_evidence
+    sid = get_or_create_student(conn, "Zane")
+    save_evidence(conn, sid, "buffer_slots", 2, "small")
+    reads = []
+    conn.set_trace_callback(lambda sql: reads.append(sql) if "preference_evidence" in sql else None)
+    assert live_evidence(conn, sid, datetime.now(timezone.utc)) == {"buffer_slots": (2, "small")}
+    conn.set_trace_callback(None)
+    assert len(reads) == 1
+
+
+def test_reflection_rows_are_typed(conn):
+    from scheduler.db import ReflectionRow
+    sid = get_or_create_student(conn, "Zane")
+    s = ProfileSettings()
+    log_reflection(conn, sid, "felt rushed", before=s, after=s, applied=False, outcome="evidence_recorded")
+    [row] = get_reflections(conn, sid)
+    assert isinstance(row, ReflectionRow)
+    assert (row.reflection_text, row.applied, row.outcome, row.settings_after) == ("felt rushed", False,
+                                                                                    "evidence_recorded", s)
