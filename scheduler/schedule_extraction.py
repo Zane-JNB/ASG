@@ -2,13 +2,11 @@
 the model's answer (one bad entry is dropped, never the whole answer)."""
 import base64
 import json
-from datetime import datetime
-
 from pydantic import ValidationError
 
 from scheduler.llm_backends import NONE_WORDS, BadModelOutput, as_items, call_vision_llm
 from scheduler.models import DatedBlock, ExtractedTask, ExtractionResult, WeeklyPattern
-from scheduler.units import WEEKDAYS
+from scheduler.units import WEEKDAYS, parse_loose_time
 
 TOOL_NAME = "extract_schedule"
 
@@ -49,7 +47,6 @@ def combine(results: list[ExtractionResult]) -> ExtractionResult:
     )
 
 
-_LOOSE_TIME_FORMATS = ("%H:%M", "%H:%M:%S", "%H", "%I%p", "%I %p", "%I:%M%p", "%I:%M %p")
 _NO_TIME = NONE_WORDS | {"0", "tbd", "tba"}  # what models write for "no time stated"
 
 
@@ -59,12 +56,10 @@ def _task_with_loose_time(item: dict) -> list[ExtractedTask]:
     raw_time = str(item["due_time"]).strip()
     if not (isinstance(item.get("title"), str) and item["title"].strip()):
         return []
-    for fmt in _LOOSE_TIME_FORMATS:
-        try:
-            clock = datetime.strptime(raw_time.upper(), fmt).strftime("%H:%M")
-            return [ExtractedTask(**{**item, "due_time": clock})]
-        except (ValueError, TypeError):
-            continue
+    try:
+        return [ExtractedTask(**{**item, "due_time": parse_loose_time(raw_time)})]
+    except (ValueError, TypeError):  # unreadable time, or the task is bad for another reason too
+        pass
     try:
         title = f"{item.get('title', '')} (CHECK due time: '{raw_time}')"
         return [ExtractedTask(**{**item, "title": title, "due_time": None})]

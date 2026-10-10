@@ -26,6 +26,19 @@ def parse_time(value: str, end: bool = False) -> str:
     return normalized
 
 
+_LOOSE_TIME_FORMATS = ("%H:%M", "%H:%M:%S", "%H", "%I%p", "%I %p", "%I:%M%p", "%I:%M %p")
+
+
+def parse_loose_time(value: str) -> str:
+    """A time as a model may write it ('17:00:00', '5pm', '9:30 am', '17') -> 'HH:MM'."""
+    for fmt in _LOOSE_TIME_FORMATS:
+        try:
+            return datetime.strptime(value.strip().upper(), fmt).strftime("%H:%M")
+        except ValueError:
+            continue
+    raise ValueError(f"'{value}' is not a time")
+
+
 def parse_due_time(value: str) -> str:
     """A task's due time ('24:00' allowed), rounded down to its 15-minute slot so the shown
     deadline, the solver deadline and the overdue check all agree ('09:10' -> '09:00')."""

@@ -96,3 +96,19 @@ def test_hours_to_slots_rejects_non_finite_hours(hours):  # inf used to raise Ov
 ])
 def test_plan_start_is_the_first_slot_not_yet_begun(now, start):
     assert plan_start(now) == start
+
+
+@pytest.mark.parametrize("text,expected", [
+    ("17:00", "17:00"), ("17:00:00", "17:00"), ("5pm", "17:00"), ("5 PM", "17:00"),
+    ("9:30am", "09:30"), ("9:30 am", "09:30"), ("17", "17:00"),
+])
+def test_parse_loose_time_reads_what_models_write(text, expected):
+    from scheduler.units import parse_loose_time
+    assert parse_loose_time(text) == expected
+
+
+@pytest.mark.parametrize("text", ["noon-ish", "25:00", "", "13pm"])
+def test_parse_loose_time_refuses_what_it_cannot_read(text):
+    from scheduler.units import parse_loose_time
+    with pytest.raises(ValueError):
+        parse_loose_time(text)
