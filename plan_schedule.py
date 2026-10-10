@@ -18,7 +18,7 @@ def main():
         print(e)
         return
     print("\n".join(format_plan(anchor, fixed, items, warnings)))
-    #  check-ins know which sessions have passed
+    # so check-ins know which sessions have passed
     record_plan(conn, student_id, anchor, items, now)
 
 

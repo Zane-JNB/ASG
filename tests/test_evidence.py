@@ -45,7 +45,7 @@ def buf(conn, sid):
 
 
 # --- pure scoring ---
-def test_next_evidence_accumulates_cancels_on_conflict_and_keeps_smallest_bucket():      
+def test_next_evidence_accumulates_cancels_on_conflict_and_keeps_smallest_bucket():
     assert next_evidence(None, "increase", "large") == (1, "large")
     assert next_evidence((1, "large"), "increase", "small") == (2, "small")
     assert next_evidence((2, "small"), "increase", "large") == (3, "small")
@@ -226,7 +226,7 @@ def test_no_llm_call_when_nothing_is_learnable():
     r = propose_preference_changes("felt rushed", client=Boom(), allowed_fields=[])
     assert r.proposals == []
 
-def test_next_evidence_is_a_dial():                                              
+def test_next_evidence_is_a_dial():
     assert next_evidence(None, "increase", "small") == (1, "small")
     assert next_evidence((2, "small"), "decrease", "large") == (1, "small")   # cancels one vote, keeps cautious magnitude
     assert next_evidence((1, "small"), "decrease", "small")[0] == 0
@@ -239,7 +239,7 @@ def test_conflicting_evidence_cancels_one_vote_at_a_time(conn, sid):            
     run(conn, sid, ("buffer_slots", "decrease", "small"))
     assert load_evidence(conn, sid) == {} and buf(conn, sid) == 1                # fully cancelled, nothing applied
 
-def test_cancel_delays_but_does_not_block_a_real_streak(conn, sid):              
+def test_cancel_delays_but_does_not_block_a_real_streak(conn, sid):
     for d in ("increase", "increase", "decrease", "increase", "increase"):
         run(conn, sid, ("buffer_slots", d, "small"))
     assert buf(conn, sid) == 2                                                   # fired on the 5th reflection

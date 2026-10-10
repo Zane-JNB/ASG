@@ -40,7 +40,7 @@ MEDIA_TYPES = {
 }
 
 
-def _load_result(source_path, ask, show, extractor, cache_path):   
+def _load_result(source_path, ask, show, extractor, cache_path):
     """Get an ExtractionResult from a saved .json (free) or a real image/PDF (LLM call).
     Returns (result, failed PDF page numbers, replay file holding it or None); result is None if
     the student declines the cost prompt or the call fails."""
@@ -50,7 +50,7 @@ def _load_result(source_path, ask, show, extractor, cache_path):
         return None, [], None
 
     try:
-        with open(source_path, "rb") as f:  #   -- read once, reused below for the page count too
+        with open(source_path, "rb") as f:  # read once, reused below for the page count too
             file_bytes = f.read()
     except OSError as e:  # missing file, no permission, a folder...
         show(f"Could not read '{source_path}': {e.strerror or e}")
@@ -67,11 +67,11 @@ def _load_result(source_path, ask, show, extractor, cache_path):
         return result, saved.failed_pages, source_path  # the replayed file still holds it
 
     page_note = ""
-    if ext == ".pdf":  #   -- each page can be its own call (text or rendered-image)
+    if ext == ".pdf":  # each page can be its own call (text or rendered-image)
         import io
         import pdfplumber
         try:
-            with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:  #   -- from bytes, matches
+            with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:  # from bytes, matches
                 num_pages = len(pdf.pages)                        # extract_schedule_from_pdf exactly
         except Exception:  # pdfplumber/pdfminer raise their own types for a broken or invalid PDF
             show(f"'{source_path}' could not be opened as a PDF.")
@@ -82,7 +82,7 @@ def _load_result(source_path, ask, show, extractor, cache_path):
         return None, [], None
     failed = []
     try:
-        if ext == ".pdf" and extractor is extract_schedule:  #   -- default PDF path avoids
+        if ext == ".pdf" and extractor is extract_schedule:  # default PDF path avoids
             result = extract_schedule_from_pdf(file_bytes)   # Groq's vision model rejecting PDFs
         else:
             result = extractor(file_bytes, MEDIA_TYPES[ext])
@@ -96,7 +96,7 @@ def _load_result(source_path, ask, show, extractor, cache_path):
         return None, [], None
 
     tmp_path = os.fspath(cache_path) + ".tmp"
-    try:  #   -- saved before review; written aside first so a failed write keeps the old copy
+    try:  # saved before review; written aside first so a failed write keeps the old copy
         with open(tmp_path, "w", encoding="utf-8") as f:
             # failed_pages (read back by _SavedExtraction): replaying still warns it is incomplete
             f.write(json.dumps(result.model_dump(mode="json") | {"failed_pages": failed}, indent=2))
@@ -145,7 +145,7 @@ def _clashes_with_saved(conn, student_id, reviewed: ExtractionResult, today: dat
 
 
 def run_import(conn, student_id, source_path, ask=input, show=print,
-               extractor=extract_schedule, cache_path=CACHE_PATH, now: datetime | None = None) -> bool:   
+               extractor=extract_schedule, cache_path=CACHE_PATH, now: datetime | None = None) -> bool:
     """Extract -> review -> replace the student's saved schedule items. True only if saved."""
     now = now or datetime.now()
     result, failed, kept_in = _load_result(source_path, ask, show, extractor, cache_path)
@@ -159,8 +159,8 @@ def run_import(conn, student_id, source_path, ask=input, show=print,
             show("Nothing was extracted. Your saved schedule is untouched.")
         return False
 
-    cap = load_settings(conn, student_id).default_max_session_slots  
-    reviewed = review_extraction(result, ask=ask, show=show, session_cap=cap)  
+    cap = load_settings(conn, student_id).default_max_session_slots
+    reviewed = review_extraction(result, ask=ask, show=show, session_cap=cap)
     if not (reviewed.weekly_patterns or reviewed.dated_blocks or reviewed.tasks):
         show("Nothing kept. Your saved schedule is untouched.")
         return False
@@ -181,8 +181,8 @@ def run_import(conn, student_id, source_path, ask=input, show=print,
             show("Not saved. Your saved schedule is untouched.")
             return False
 
-    summary = replace_extraction(conn, student_id, reviewed)  #     returns a dict, not None
-    parts = []  #   -- say what was replaced and what was left alone
+    summary = replace_extraction(conn, student_id, reviewed)
+    parts = []  # say what was replaced and what was left alone
     if summary["weekly"]:
         parts.append(f"{summary['weekly']} weekly (replaced old)")
     if summary["dated"]:

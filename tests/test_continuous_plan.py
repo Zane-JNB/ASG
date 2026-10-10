@@ -98,20 +98,20 @@ def test_many_overlaps_are_summarised(conn, sid):
     assert len(overlaps) == 6 and overlaps[-1].startswith("...and 2 more")
 
 
-def _commute_vs_class(conn, sid, class_start="17:00", class_end="19:00", commute_start="16:30"):   
+def _commute_vs_class(conn, sid, class_start="17:00", class_end="19:00", commute_start="16:30"):
     WEEKLY_PATTERNS.add(conn, sid, WeeklyPattern(title="Class", day="Mon",
                                                  start_time=class_start, end_time=class_end))
     COMMUTES.add(conn, sid, Commute(start_time=commute_start, length_minutes=60,
                                     recurring=True, weekday="Mon"))
     EXTRACTED_TASKS.add(conn, sid, _task("Report", 2, 3, D + timedelta(days=1)))
 
-def test_commute_overlap_warns_instead_of_raising(conn, sid):   
+def test_commute_overlap_warns_instead_of_raising(conn, sid):
     _commute_vs_class(conn, sid)  # commute 16:30-17:30 vs class 17:00-19:00, after NOW
     _, fixed, _, warnings = plan_from_saved(conn, sid, now=NOW, time_limit_seconds=10)
     assert any(w.kind == "commute_overlap" and w.severity == "soft" for w in warnings)
     assert any(b.title == "Commute" for b in fixed)
 
-def test_commute_already_over_gives_no_warning(conn, sid):   
+def test_commute_already_over_gives_no_warning(conn, sid):
     _commute_vs_class(conn, sid, "07:30", "09:00", "07:00")  # both before NOW (15:00)
     _, _, _, warnings = plan_from_saved(conn, sid, now=NOW, time_limit_seconds=10)
     assert not any(w.kind == "commute_overlap" for w in warnings)

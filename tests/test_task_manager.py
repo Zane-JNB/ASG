@@ -38,7 +38,7 @@ def test_bad_input_reasks_only_that_field():
     task = prompt_new_task(ask, shown.append, today=TODAY)
     assert (task.title, task.date, task.duration_slots, task.priority, task.difficulty) == \
            ("Essay", "2026-10-05", 8, 5, 3)
-    text = " ".join(" ".join(shown).split()) 
+    text = " ".join(" ".join(shown).split())
     assert "required" in text and "today or later" in text and "1 to 5" in text
 
 def test_menu_add_list_and_quit():
@@ -142,12 +142,12 @@ def test_added_task_reaches_the_plan():
     essay = [i for i in items if i.title.startswith("Essay")]
     assert essay and all(i.day <= 3 for i in essay)  # due Fri 2 Oct = day 3 from Tue 29 Sep
 
-def test_due_today_is_accepted():   
+def test_due_today_is_accepted():
     ask, shown = scripted(["Quiz", "2026-09-28", "", "", ""])
     task = prompt_new_task(ask, shown.append, today=TODAY)
     assert task.date == "2026-09-28"
 
-def test_menu_m_opens_the_commute_menu():   
+def test_menu_m_opens_the_commute_menu():
     conn, sid = _conn()
     ask, shown = scripted(["m", "l", "b", "q"])
     run_menu(conn, sid, ask, shown.append, today=TODAY)

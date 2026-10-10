@@ -35,7 +35,7 @@ def feed_inputs(monkeypatch, answers: list[str]):
     monkeypatch.setattr(builtins, "input", fake_input)
 
 
-def test_first_reflection_records_evidence_only(monkeypatch, capsys, conn): 
+def test_first_reflection_records_evidence_only(monkeypatch, capsys, conn):
     feed_inputs(monkeypatch, ["y", "Zane", "felt rushed today, no breaks"])
     reflect.main()
     out = capsys.readouterr().out
@@ -44,7 +44,7 @@ def test_first_reflection_records_evidence_only(monkeypatch, capsys, conn):
     assert load_settings(conn, sid).buffer_slots == 1
 
 
-def test_third_reflection_applies_one_learned_update(monkeypatch, capsys, conn):  
+def test_third_reflection_applies_one_learned_update(monkeypatch, capsys, conn):
     for _ in range(3):
         feed_inputs(monkeypatch, ["y", "Zane", "felt rushed today, no breaks"])
         reflect.main()
@@ -52,7 +52,7 @@ def test_third_reflection_applies_one_learned_update(monkeypatch, capsys, conn):
     sid = get_or_create_student(conn, "Zane")
     assert load_settings(conn, sid).buffer_slots == 3 and load_evidence(conn, sid) == {}
 
-def test_user_owned_field_is_reported_and_untouched(monkeypatch, capsys, conn):   
+def test_user_owned_field_is_reported_and_untouched(monkeypatch, capsys, conn):
     sid = get_or_create_student(conn, "Zane")
     change_tier(conn, sid, "buffer_slots", Tier.USER, Actor.USER)
     feed_inputs(monkeypatch, ["y", "Zane", "felt rushed today, no breaks"])
@@ -88,7 +88,7 @@ def test_declining_the_cost_warning_makes_no_db_changes(monkeypatch, capsys, con
     assert conn.execute("SELECT COUNT(*) FROM students").fetchone()[0] == 0
 
 
-def test_reflection_is_logged_with_outcome(monkeypatch, conn):   
+def test_reflection_is_logged_with_outcome(monkeypatch, conn):
     feed_inputs(monkeypatch, ["y", "Zane", "felt rushed today, no breaks"])
     reflect.main()
     h = get_reflections(conn, get_or_create_student(conn, "Zane"))

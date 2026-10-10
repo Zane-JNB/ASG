@@ -11,19 +11,19 @@ def test_fixed_block_end_must_be_after_start():
     with pytest.raises(ValidationError):
         FixedBlock(title="x", start_slot=20, end_slot=10)
 
-def test_sleep_rule_defaults_are_valid():  
-    rule = SleepRule()   
-    assert rule.min_slots <= rule.length_slots   
- 
-def test_sleep_rule_min_cannot_exceed_length():  
-    with pytest.raises(ValidationError):  
-        SleepRule(length_slots=20, min_slots=30) 
- 
-def test_sleep_rule_preferred_bed_must_be_in_window(): 
-    with pytest.raises(ValidationError): 
-        SleepRule(earliest_bed=88, preferred_bed=80, latest_bed=100)  
+def test_sleep_rule_defaults_are_valid():
+    rule = SleepRule()
+    assert rule.min_slots <= rule.length_slots
 
-def test_earliest_start_defaults_to_none():  
+def test_sleep_rule_min_cannot_exceed_length():
+    with pytest.raises(ValidationError):
+        SleepRule(length_slots=20, min_slots=30)
+
+def test_sleep_rule_preferred_bed_must_be_in_window():
+    with pytest.raises(ValidationError):
+        SleepRule(earliest_bed=88, preferred_bed=80, latest_bed=100)
+
+def test_earliest_start_defaults_to_none():
     task = DynamicTask(title="x", duration_slots=4, priority=1, difficulty=1)
     assert task.earliest_start_day is None
 

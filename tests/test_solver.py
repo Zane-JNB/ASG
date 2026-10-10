@@ -109,16 +109,16 @@ def test_fixed_block_can_cross_midnight():
     end = part.day * SLOTS_PER_DAY + part.end_slot
     assert end <= 92 or start >= SLOTS_PER_DAY + 28  # fully before or after the sleep
 
-def sleep_items(items): 
-    return [i for i in items if i.kind == "sleep"] 
+def sleep_items(items):
+    return [i for i in items if i.kind == "sleep"]
 
-def test_sleep_is_placed_at_preferred_bedtime_with_full_length(): 
-    rule = SleepRule()  
-    items, _ = build_schedule([], [], sleep_rules=[rule])  
-    (sleep,) = sleep_items(items)  
-    assert sleep.start_slot == rule.preferred_bed 
-    assert sleep.end_slot - sleep.start_slot == rule.length_slots 
-    assert sleep_warnings([rule], items) == []  
+def test_sleep_is_placed_at_preferred_bedtime_with_full_length():
+    rule = SleepRule()
+    items, _ = build_schedule([], [], sleep_rules=[rule])
+    (sleep,) = sleep_items(items)
+    assert sleep.start_slot == rule.preferred_bed
+    assert sleep.end_slot - sleep.start_slot == rule.length_slots
+    assert sleep_warnings([rule], items) == []
 
 def test_latest_wake_ends_sleep_in_time_by_going_to_bed_earlier():
     rule = SleepRule(latest_wake=SLOTS_PER_DAY + 24)  # up by 06:00
@@ -131,77 +131,77 @@ def test_latest_wake_before_earliest_bed_is_rejected():
     with pytest.raises(ValueError):
         SleepRule(latest_wake=80)
 
-def test_tasks_do_not_overlap_sleep(): 
+def test_tasks_do_not_overlap_sleep():
     tasks = [DynamicTask(title=f"T{i}", duration_slots=20, priority=3, difficulty=2,
-                         splittable=False) for i in range(3)] 
-    rule = SleepRule() 
-    items, _ = build_schedule([], tasks, num_days=2, sleep_rules=[rule])  
-    used = []  
-    for item in items: 
+                         splittable=False) for i in range(3)]
+    rule = SleepRule()
+    items, _ = build_schedule([], tasks, num_days=2, sleep_rules=[rule])
+    used = []
+    for item in items:
         used.extend(range(item.day * SLOTS_PER_DAY + item.start_slot,
-                          item.day * SLOTS_PER_DAY + item.end_slot)) 
-    assert len(used) == len(set(used)) 
+                          item.day * SLOTS_PER_DAY + item.end_slot))
+    assert len(used) == len(set(used))
 
-def test_sleep_shortened_between_min_and_target_gives_soft_warning(): 
+def test_sleep_shortened_between_min_and_target_gives_soft_warning():
     rule = SleepRule(earliest_bed=88, preferred_bed=88, latest_bed=88,
-                     length_slots=32, min_slots=24) 
-    block = FixedBlock(title="Early flight", start_slot=18, end_slot=24, day=1) 
+                     length_slots=32, min_slots=24)
+    block = FixedBlock(title="Early flight", start_slot=18, end_slot=24, day=1)
     items, _ = build_schedule([block], [], num_days=2, sleep_rules=[rule],
                               settings=ProfileSettings(wake_buffer_slots=0))  # no get-ready time here
     (sleep,) = sleep_items(items)
     assert sleep.end_slot - sleep.start_slot == 26
-    warnings = sleep_warnings([rule], items)  
-    assert [(w.severity, w.kind) for w in warnings] == [("soft", "sleep_short")]  
+    warnings = sleep_warnings([rule], items)
+    assert [(w.severity, w.kind) for w in warnings] == [("soft", "sleep_short")]
 
-def test_sleep_below_minimum_gives_hard_warning_not_a_crash(): 
+def test_sleep_below_minimum_gives_hard_warning_not_a_crash():
     rule = SleepRule(earliest_bed=88, preferred_bed=88, latest_bed=88,
-                     length_slots=32, min_slots=24) 
-    block = FixedBlock(title="Night shift", start_slot=4, end_slot=14, day=1)     
-    items, _ = build_schedule([block], [], num_days=2, sleep_rules=[rule]) 
-    warnings = sleep_warnings([rule], items) 
+                     length_slots=32, min_slots=24)
+    block = FixedBlock(title="Night shift", start_slot=4, end_slot=14, day=1)
+    items, _ = build_schedule([block], [], num_days=2, sleep_rules=[rule])
+    warnings = sleep_warnings([rule], items)
     assert any(w.severity == "hard" and w.kind == "sleep_short" for w in warnings)
 
-def test_no_room_for_any_sleep_still_gives_hard_warning(): 
-    rule = SleepRule(earliest_bed=88, preferred_bed=88, latest_bed=88) 
-    block = FixedBlock(title="Exam", start_slot=88, end_slot=96)  
-    items, _ = build_schedule([block], [], sleep_rules=[rule])  
-    assert sleep_items(items) == []   
-    warnings = sleep_warnings([rule], items)  
-    assert [(w.severity, w.kind) for w in warnings] == [("hard", "sleep_short")]  
+def test_no_room_for_any_sleep_still_gives_hard_warning():
+    rule = SleepRule(earliest_bed=88, preferred_bed=88, latest_bed=88)
+    block = FixedBlock(title="Exam", start_slot=88, end_slot=96)
+    items, _ = build_schedule([block], [], sleep_rules=[rule])
+    assert sleep_items(items) == []
+    warnings = sleep_warnings([rule], items)
+    assert [(w.severity, w.kind) for w in warnings] == [("hard", "sleep_short")]
 
-def test_skipped_sleep_frees_the_night_and_gives_hard_warning(): 
+def test_skipped_sleep_frees_the_night_and_gives_hard_warning():
     tasks = [DynamicTask(title=f"T{i}", duration_slots=40, priority=3, difficulty=2,
-                         splittable=False) for i in range(3)]  
-    rule = SleepRule(skip=True)  
-    items, unscheduled = build_schedule([], tasks, num_days=2, sleep_rules=[rule]) 
-    assert sleep_items(items) == [] 
-    assert unscheduled == []   
-    assert any(i.end_slot > SLOTS_PER_DAY for i in items)   
-    warnings = sleep_warnings([rule], items)   
-    assert [(w.severity, w.kind) for w in warnings] == [("hard", "sleep_skipped")]  
- 
-def test_two_nights_each_get_their_own_sleep():   
-    rules = [SleepRule(night=0), SleepRule(night=1)]  
-    items, _ = build_schedule([], [], num_days=2, sleep_rules=rules)  
-    assert len(sleep_items(items)) == 2   
-    assert sleep_warnings(rules, items) == []   
- 
-def test_sleep_rule_for_a_night_outside_the_plan_is_rejected(): 
-    with pytest.raises(ValueError):  
-        build_schedule([], [], num_days=1, sleep_rules=[SleepRule(night=1)]) 
- 
-def test_two_rules_for_the_same_night_are_rejected():   
-    with pytest.raises(ValueError):  
-        build_schedule([], [], sleep_rules=[SleepRule(), SleepRule()])  
- 
-def test_missed_deadline_gives_hard_warning():  
-    block = FixedBlock(title="Busy", start_slot=0, end_slot=20, day=0) 
-    task = DynamicTask(title="A", duration_slots=4, priority=3, difficulty=2,
-                       deadline_day=0, deadline_slot=20)  
-    _, unscheduled = build_schedule([block], [task], num_days=2)  
-    assert [(w.severity, w.kind) for w in task_warnings(unscheduled)] == [("hard", "task_unscheduled")]  
+                         splittable=False) for i in range(3)]
+    rule = SleepRule(skip=True)
+    items, unscheduled = build_schedule([], tasks, num_days=2, sleep_rules=[rule])
+    assert sleep_items(items) == []
+    assert unscheduled == []
+    assert any(i.end_slot > SLOTS_PER_DAY for i in items)
+    warnings = sleep_warnings([rule], items)
+    assert [(w.severity, w.kind) for w in warnings] == [("hard", "sleep_skipped")]
 
-def test_consecutive_study_sessions_prefer_different_days():  
+def test_two_nights_each_get_their_own_sleep():
+    rules = [SleepRule(night=0), SleepRule(night=1)]
+    items, _ = build_schedule([], [], num_days=2, sleep_rules=rules)
+    assert len(sleep_items(items)) == 2
+    assert sleep_warnings(rules, items) == []
+
+def test_sleep_rule_for_a_night_outside_the_plan_is_rejected():
+    with pytest.raises(ValueError):
+        build_schedule([], [], num_days=1, sleep_rules=[SleepRule(night=1)])
+
+def test_two_rules_for_the_same_night_are_rejected():
+    with pytest.raises(ValueError):
+        build_schedule([], [], sleep_rules=[SleepRule(), SleepRule()])
+
+def test_missed_deadline_gives_hard_warning():
+    block = FixedBlock(title="Busy", start_slot=0, end_slot=20, day=0)
+    task = DynamicTask(title="A", duration_slots=4, priority=3, difficulty=2,
+                       deadline_day=0, deadline_slot=20)
+    _, unscheduled = build_schedule([block], [task], num_days=2)
+    assert [(w.severity, w.kind) for w in task_warnings(unscheduled)] == [("hard", "task_unscheduled")]
+
+def test_consecutive_study_sessions_prefer_different_days():
     tasks = [_study("Hard test", 56, 5, earliest=1, deadline=8)]  # 7-day window, plenty of room to spread
     items, unscheduled = build_schedule([], tasks, num_days=9)
     assert unscheduled == []
@@ -231,21 +231,21 @@ def test_daily_cap_ignored_when_not_set():
     items, unscheduled = build_schedule([], [task], num_days=1)
     assert unscheduled == []
 
-def test_study_task_does_not_start_before_its_window():  
+def test_study_task_does_not_start_before_its_window():
     tasks = [_study("Test", 40, 3, earliest=1, deadline=6)]
     items, unscheduled = build_schedule([], tasks, num_days=7)
     assert unscheduled == []
     for item in items:
         assert item.day >= 1
 
-def test_study_task_finishes_before_the_exam():  
+def test_study_task_finishes_before_the_exam():
     tasks = [_study("Test", 16, 1, earliest=1, deadline=3, deadline_slot=32)]
     items, unscheduled = build_schedule([], tasks, num_days=4)
     assert unscheduled == []
     for item in items:
         assert item.day * SLOTS_PER_DAY + item.end_slot <= 3 * SLOTS_PER_DAY + 32
 
-def test_two_exams_generate_two_independent_study_tasks():  
+def test_two_exams_generate_two_independent_study_tasks():
     tasks = [_study("A", 16, 1, earliest=3, deadline=5), _study("B", 56, 5, earliest=3, deadline=10)]
     items, unscheduled = build_schedule([], tasks, num_days=11)
     assert unscheduled == []
@@ -342,13 +342,13 @@ def test_buffer_slots_falls_back_to_settings_when_not_given():
     homework = [i for i in items if i.kind == "task"][0]
     assert homework.start_slot >= block.end_slot + 4
 
-def test_merge_fixed_spans_unions_overlaps_and_keeps_touching():   
+def test_merge_fixed_spans_unions_overlaps_and_keeps_touching():
     a = FixedBlock(title="Commute", start_slot=28, end_slot=32, buffer_before=False)
     b = FixedBlock(title="Class", start_slot=30, end_slot=40)
     c = FixedBlock(title="Lab", start_slot=40, end_slot=48)  # touches, not merged
     assert merge_fixed_spans([b, a, c]) == [(28, 40, False), (40, 48, True)]
 
-def test_task_can_end_flush_against_commute():   
+def test_task_can_end_flush_against_commute():
     commute = FixedBlock(title="Commute", start_slot=40, end_slot=44, buffer_before=False)
     task = DynamicTask(title="Read", duration_slots=4, priority=3,
                        earliest_start_day=0, earliest_start_slot=36, deadline_day=0, deadline_slot=40)
@@ -356,14 +356,14 @@ def test_task_can_end_flush_against_commute():
     read = [i for i in items if i.kind == "task"][0]
     assert unscheduled == [] and read.end_slot == 40
 
-def test_normal_block_still_needs_buffer_before():   
+def test_normal_block_still_needs_buffer_before():
     cls = FixedBlock(title="Class", start_slot=40, end_slot=44)  # buffer_before=True
     task = DynamicTask(title="Read", duration_slots=4, priority=3,
                        earliest_start_day=0, earliest_start_slot=36, deadline_day=0, deadline_slot=40)
     _, unscheduled = build_schedule([cls], [task], settings=ProfileSettings(buffer_slots=2))
     assert [t.title for t in unscheduled] == ["Read"]
 
-def test_overlapping_commute_and_class_solve_without_error():   
+def test_overlapping_commute_and_class_solve_without_error():
     cls = FixedBlock(title="Class", start_slot=30, end_slot=40)
     commute = FixedBlock(title="Commute", start_slot=28, end_slot=32, buffer_before=False)
     task = DynamicTask(title="Read", duration_slots=4, priority=3)

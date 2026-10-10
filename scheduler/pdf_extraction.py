@@ -14,6 +14,9 @@ Nothing here calls a specific provider directly: everything goes through llm_bac
 so adding another provider later (model routing, 4.0) needs no change here.
 """
 
+import base64
+import io
+
 import pdfplumber
 import pypdfium2 as pdfium
 
@@ -71,7 +74,7 @@ def extract_image_page(image_bytes: bytes, call_vision) -> ExtractionResult:
         system_prompt=build_extraction_system_prompt(),
         user_text="Extract the recurring weekly class schedule, any one-off dated sessions, "
                  "and any dated tasks/deadlines from this document page.",
-        image_base64=__import__("base64").standard_b64encode(image_bytes).decode("utf-8"),
+        image_base64=base64.standard_b64encode(image_bytes).decode("utf-8"),
         media_type="image/png",
         tool_name="extract_schedule",
         tool_schema=schema,
@@ -99,7 +102,7 @@ def extract_schedule_from_pdf(file_bytes: bytes, call_text_llm=None, call_vision
     model_cause = render_cause = None  # a model error says more than a renderer error; name both
     renderer = _LazyRenderer(file_bytes)
     try:
-        with pdfplumber.open(__import__("io").BytesIO(file_bytes)) as pdf:
+        with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
             num_pages = len(pdf.pages)
             for i, page in enumerate(pdf.pages):
                 text_error = None
@@ -172,6 +175,6 @@ def _render_page(doc, page_index: int) -> bytes:
     licensed, unlike PyMuPDF)."""
     page = doc.get_page(page_index)
     bitmap = page.render(scale=RENDER_SCALE)
-    buf = __import__("io").BytesIO()
+    buf = io.BytesIO()
     bitmap.to_pil().save(buf, format="PNG")
     return buf.getvalue()

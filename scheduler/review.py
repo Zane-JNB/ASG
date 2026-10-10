@@ -10,7 +10,7 @@ def _end_time(s: str) -> str:
     return parse_time(s, end=True)  # an end may be 24:00 (midnight at the end of the day)
 
 
-#   -- what can be edited per item type: (prompt label, model field, parser)
+# what can be edited per item type: (prompt label, model field, parser)
 _EDIT_FIELDS = {
     WeeklyPattern: [("title", "title", str), ("day", "day", parse_weekday),
                     ("start HH:MM", "start_time", parse_time), ("end HH:MM", "end_time", _end_time)],
@@ -43,13 +43,13 @@ def _edit_item(item, ask, show, session_cap: int | None):
             changes = {}
             for label, key, parse in _EDIT_FIELDS[type(item)]:
                 raw = ask(f"  {label} [{_current(item, key)}]: ").strip()
-                if raw and parse is parse_due:  #   -- one answer sets the date and the (optional) time
+                if raw and parse is parse_due:  # one answer sets the date and the (optional) time
                     changes["date"], changes["due_time"] = parse(raw)
                     if item.due_time and changes["due_time"] is None:
                         show(f"  Due time {item.due_time} removed: now due at the end of that day.")
                 elif raw:
                     changes[key] = parse(raw)
-            if isinstance(item, ExtractedTask) and session_cap:  #   -- only long tasks can be split
+            if isinstance(item, ExtractedTask) and session_cap:  # only long tasks can be split
                 if changes.get("duration_slots", item.duration_slots) > session_cap:
                     cap_h = slots_to_hours(session_cap)
                     changes["splittable"] = confirm(

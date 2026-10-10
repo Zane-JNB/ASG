@@ -102,11 +102,11 @@ def _gap_between(items):
     task_items = sorted((i for i in items if i.kind == "task"), key=lambda i: i.start_slot)
     return task_items[1].start_slot - task_items[0].end_slot
 
-def test_prompt_lists_only_allowed_fields():  
+def test_prompt_lists_only_allowed_fields():
     p = build_system_prompt(["buffer_slots"])
     assert "buffer_slots (deltas" in p and "bedtime_penalty (deltas" not in p
 
-def test_user_owned_field_is_not_shown_to_the_model():  
+def test_user_owned_field_is_not_shown_to_the_model():
     conn = connect(":memory:"); sid = get_or_create_student(conn, "Zane")
     change_tier(conn, sid, "buffer_slots", Tier.USER, Actor.USER)
     seen = {}

@@ -1,6 +1,7 @@
 """Offline tests: synthetic PDFs built in-process with reportlab, fake text/vision callbacks.
 No API calls, no external files."""
 import io
+import json
 import pytest
 
 from reportlab.lib.pagesizes import letter
@@ -259,7 +260,7 @@ def test_a_wrongly_shaped_answer_is_bad_model_output_not_a_crash(answer):
     with pytest.raises(BadModelOutput):
         extraction_from_dict(answer)
 
-@pytest.mark.parametrize("shape", [[_DS], _DS, __import__("json").dumps([_DS])])
+@pytest.mark.parametrize("shape", [[_DS], _DS, json.dumps([_DS])])
 def test_a_list_one_item_or_a_json_string_is_read(shape):
     from scheduler.schedule_extraction import extraction_from_dict
     assert [p.title for p in extraction_from_dict({"weekly_patterns": shape}).weekly_patterns] == ["DS"]
@@ -350,7 +351,7 @@ def test_a_page_whose_text_layer_is_broken_is_read_as_an_image(monkeypatch, erro
 def test_an_object_sent_as_text_inside_a_list_is_read():
     from scheduler.schedule_extraction import extraction_from_dict
     wed = {**_DS, "title": "B", "day": "Wed"}
-    raw = {"weekly_patterns": [_DS, __import__("json").dumps(wed)]}
+    raw = {"weekly_patterns": [_DS, json.dumps(wed)]}
     assert sorted(p.title for p in extraction_from_dict(raw).weekly_patterns) == ["B", "DS"]
 
 def test_an_empty_answer_is_still_just_empty():
