@@ -115,6 +115,15 @@ def _show_tasks(tasks, show, session_cap: int | None = None):
     for n, (_, t) in enumerate(tasks, 1):
         show(f"{n}. {_describe('Task', t, session_cap)}")
 
+def _task_settings(conn, student_id: int, task_id: int, task: ExtractedTask, ask, show) -> None:
+    """The student's per-task choices: split into sessions, and leave to use sleep below target."""
+    can = _confirm(ask, f"  Can '{task.title}' be split across several sessions?", task.splittable)
+    sleep = _confirm(ask, f"  May '{task.title}' use sleep below your target (never below your minimum)?",
+                     task.may_cut_sleep)
+    EXTRACTED_TASKS.update(conn, student_id, task_id, task.model_copy(update={"splittable": can, "may_cut_sleep": sleep}))
+    show("Saved." if can else "Saved -- it will be planned as one block.")
+
+
 def _unreadable_menu(conn, student_id, ask, show) -> None:
     """Saved rows that no longer pass their checks are skipped by the planner; list them and
     let the student delete one (nothing is deleted without asking)."""
@@ -143,7 +152,7 @@ def run_menu(conn, student_id, ask=input, show=print, today: date | None = None,
     today = fixed_today or now.date()
     run_checkin(conn, student_id, now, ask, show)
     while True:
-        choice = ask("Tasks: [a]dd  [l]ist  [d]elete one  [f]inished/missed  [c]heck-in  [s]plit setting  session [t]ime  [r]eminders  [m] commutes  [p] settings  [u]nreadable  [x] delete ALL open  [q]uit: ").strip().lower()
+        choice = ask("Tasks: [a]dd  [l]ist  [d]elete one  [f]inished/missed  [c]heck-in  [s] task split/sleep  session [t]ime  [r]eminders  [m] commutes  [p] settings  [u]nreadable  [x] delete ALL open  [q]uit: ").strip().lower()
         now = clock()
         today = fixed_today or now.date()
         if choice == "q":
@@ -188,10 +197,7 @@ def run_menu(conn, student_id, ask=input, show=print, today: date | None = None,
                 continue
             raw = ask("Number to change (Enter to cancel): ").strip()
             if raw.isdigit() and 1 <= int(raw) <= len(tasks):
-                task_id, task = tasks[int(raw) - 1]
-                can = _confirm(ask, f"  Can '{task.title}' be split across several sessions?", task.splittable)
-                EXTRACTED_TASKS.update(conn, student_id, task_id, task.model_copy(update={"splittable": can}))
-                show("Saved." if can else "Saved -- it will be planned as one block.")
+                _task_settings(conn, student_id, *tasks[int(raw) - 1], ask, show)
             elif raw:
                 show(f"Enter a number between 1 and {len(tasks)}.")
         elif choice == "t":  #   -- how long each session of a task lasts by default
