@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 from scheduler.commutes import commute_overlaps, expand_commutes, overlap_warnings
 from scheduler.calendar_utils import expand_fixed_blocks, extracted_task_to_dynamic_task, find_overlaps
 from scheduler.db import (
-    get_commutes, get_dated_blocks, get_extracted_tasks, get_plan_cuts, get_unreadable_items, get_weekly_patterns,
+    COMMUTES, DATED_BLOCKS, EXTRACTED_TASKS, WEEKLY_PATTERNS, get_plan_cuts, get_unreadable_items,
     load_settings,
 )
 from scheduler.units import MINUTES_PER_SLOT, SLOTS_PER_DAY, clock_range, format_hours, slot_to_time
@@ -19,7 +19,7 @@ def _planned_and_overdue(conn, student_id: int, anchor: PlanAnchor, now: datetim
     one a soft task_cut note. Saved tasks are never changed."""
     cuts = get_plan_cuts(conn, student_id)
     planned, warnings = [], []
-    for task_id, saved in get_extracted_tasks(conn, student_id):
+    for task_id, saved in EXTRACTED_TASKS.get(conn, student_id):
         if saved.completed_at:
             continue
         if saved.due_at() <= now:
@@ -54,9 +54,9 @@ def unreadable_warnings(conn, student_id: int) -> list[ScheduleWarning]:
     """Hard warnings for saved rows that no longer pass their checks; they are left out of the plan."""
     return [ScheduleWarning(
                 severity="hard", kind="saved_row_unreadable",
-                message=f"A saved {label} (id {row_id}) can't be read ({reason}) and is left out of the plan. "
+                message=f"A saved {u.table.label} (id {u.row_id}) can't be read ({u.reason}) and is left out of the plan. "
                         "Delete it in manage_tasks.py ([u]) and add it again.")
-            for label, row_id, reason in get_unreadable_items(conn, student_id, include_completed=False)]
+            for u in get_unreadable_items(conn, student_id) if not u.closed]  # a closed task is history
 
 def wake_before(day_blocks: list[FixedBlock], settings: ProfileSettings) -> tuple[int, str] | None:
     """(latest wake-up within that day, why) from the day's first class or commute minus the
@@ -189,9 +189,9 @@ def build_fit_inputs(conn, student_id: int, now: datetime,
     anchor = PlanAnchor(start_date=today, num_days=num_days)
 
     # read and expand once, for the window plus the morning after (only looked at, for the wake-up)
-    patterns = [p for _, p in get_weekly_patterns(conn, student_id)]
-    dated = [b for _, b in get_dated_blocks(conn, student_id)]
-    commutes = [c for _, c in get_commutes(conn, student_id)]
+    patterns = [p for _, p in WEEKLY_PATTERNS.get(conn, student_id)]
+    dated = [b for _, b in DATED_BLOCKS.get(conn, student_id)]
+    commutes = [c for _, c in COMMUTES.get(conn, student_id)]
     look = PlanAnchor(start_date=today, num_days=num_days + 1)
     classes = expand_fixed_blocks(patterns, dated, look)
     commute_blocks = expand_commutes(commutes, look)

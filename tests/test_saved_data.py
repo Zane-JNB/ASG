@@ -5,8 +5,7 @@ from datetime import date, datetime, timedelta
 import pytest
 
 from scheduler.db import (
-    add_extracted_task, connect, get_extracted_tasks, get_or_create_student, get_unreadable_items,
-    get_weekly_patterns,
+    EXTRACTED_TASKS, connect, get_or_create_student, get_unreadable_items, WEEKLY_PATTERNS,
 )
 from scheduler.fit_check import build_fit_inputs
 from scheduler.models import ExtractedTask
@@ -43,21 +42,21 @@ def _scripted(answers):
 # ---- unreadable saved rows ----
 
 def test_unreadable_rows_are_skipped_but_kept(conn, sid):
-    add_extracted_task(conn, sid, ExtractedTask(title="Good", date="2026-10-07"))
+    EXTRACTED_TASKS.add(conn, sid, ExtractedTask(title="Good", date="2026-10-07"))
     bad_task = _raw_row(conn, sid, "extracted_tasks", '{"title": "Bad", "date": "2026-02-30"}')
     _raw_row(conn, sid, "weekly_patterns",
              '{"title": "Lab", "day": "Mon", "start_time": "25:00", "end_time": "26:00"}')
 
-    assert [t.title for _, t in get_extracted_tasks(conn, sid)] == ["Good"]
-    assert get_weekly_patterns(conn, sid) == []
+    assert [t.title for _, t in EXTRACTED_TASKS.get(conn, sid)] == ["Good"]
+    assert WEEKLY_PATTERNS.get(conn, sid) == []
     bad = get_unreadable_items(conn, sid)
-    assert [(label, row_id) for label, row_id, _ in bad][1] == ("task", bad_task)
-    assert {label for label, _, _ in bad} == {"class", "task"}
+    assert [(u.table.label, u.row_id) for u in bad][1] == ("task", bad_task)
+    assert {u.table.label for u in bad} == {"class", "task"}
     rows = conn.execute("SELECT COUNT(*) FROM extracted_tasks WHERE student_id = ?", (sid,)).fetchone()[0]
     assert rows == 2  # never dropped or rewritten
 
 def test_plan_still_works_and_warns_hard_about_unreadable_rows(conn, sid):
-    add_extracted_task(conn, sid, ExtractedTask(title="Good", date="2026-10-07"))
+    EXTRACTED_TASKS.add(conn, sid, ExtractedTask(title="Good", date="2026-10-07"))
     _raw_row(conn, sid, "extracted_tasks", '{"title": "Bad", "date": "2026-02-30"}')
     _, _, items, warnings = plan_from_saved(conn, sid, now=EVENING, time_limit_seconds=10)
     assert any(i.title.startswith("Good") for i in items)
@@ -86,8 +85,8 @@ def test_task_manager_lists_and_deletes_an_unreadable_row(conn, sid):
 # ---- optional due time ----
 
 def test_due_time_becomes_the_solver_deadline_and_is_planned_before_it(conn, sid):
-    add_extracted_task(conn, sid, ExtractedTask(title="Quiz prep", date="2026-10-06", due_time="10:00",
-                                                duration_slots=4))
+    EXTRACTED_TASKS.add(conn, sid, ExtractedTask(title="Quiz prep", date="2026-10-06", due_time="10:00",
+                                                 duration_slots=4))
     fit = build_fit_inputs(conn, sid, EVENING)
     (_, task), = fit.planned
     assert (task.deadline_day, task.deadline_slot) == (1, 40)
@@ -97,7 +96,7 @@ def test_due_time_becomes_the_solver_deadline_and_is_planned_before_it(conn, sid
     assert not [w for w in warnings if w.kind in ("task_unscheduled", "task_overdue")]
 
 def test_task_is_overdue_once_its_due_time_passes(conn, sid):
-    add_extracted_task(conn, sid, ExtractedTask(title="Quiz prep", date="2026-10-05", due_time="10:00"))
+    EXTRACTED_TASKS.add(conn, sid, ExtractedTask(title="Quiz prep", date="2026-10-05", due_time="10:00"))
     before = build_fit_inputs(conn, sid, datetime(2026, 10, 5, 9, 0))
     assert before.planned and not before.warnings
     after = build_fit_inputs(conn, sid, datetime(2026, 10, 5, 10, 0))
@@ -108,7 +107,7 @@ def test_task_is_overdue_once_its_due_time_passes(conn, sid):
 def test_no_due_time_still_means_end_of_day(conn, sid):
     t = ExtractedTask(title="Essay", date="2026-10-05")
     assert t.due_at() == datetime(2026, 10, 6, 0, 0) and t.due_slot() == SLOTS_PER_DAY
-    add_extracted_task(conn, sid, t)
+    EXTRACTED_TASKS.add(conn, sid, t)
     assert build_fit_inputs(conn, sid, datetime(2026, 10, 5, 23, 0)).warnings == []
 
 @pytest.mark.parametrize("bad", ["25:00", "9.30", "24:15"])
@@ -167,14 +166,14 @@ def test_add_task_says_when_the_due_time_was_rounded():
     assert t.due_time == "09:00" and any("Saved as due 2026-10-06 09:00" in m for m in shown)
 
 def test_overdue_check_uses_the_same_slot_as_the_solver(conn, sid):
-    add_extracted_task(conn, sid, ExtractedTask(title="Quiz prep", date="2026-10-05", due_time="09:10"))
+    EXTRACTED_TASKS.add(conn, sid, ExtractedTask(title="Quiz prep", date="2026-10-05", due_time="09:10"))
     fit = build_fit_inputs(conn, sid, datetime(2026, 10, 5, 9, 5))  # past 09:00, the slot deadline
     assert fit.planned == [] and [w.kind for w in fit.warnings] == ["task_overdue"]
 
 def test_unreadable_commute_is_reported_not_silently_dropped(conn, sid):
     _raw_row(conn, sid, "commutes", '{"start_time": "08:00", "length_minutes": 30, "date": "2026-02-30"}')
-    assert [label for label, _, _ in get_unreadable_items(conn, sid)] == ["commute"]
-    add_extracted_task(conn, sid, ExtractedTask(title="Good", date="2026-10-07"))
+    assert [u.table.label for u in get_unreadable_items(conn, sid)] == ["commute"]
+    EXTRACTED_TASKS.add(conn, sid, ExtractedTask(title="Good", date="2026-10-07"))
     _, _, _, warnings = plan_from_saved(conn, sid, now=EVENING, time_limit_seconds=5)
     assert any(w.kind == "saved_row_unreadable" and "commute" in w.message for w in warnings)
 
@@ -197,9 +196,9 @@ def test_extraction_reads_a_midnight_deadline_as_the_day_before():
 
 def test_reimport_with_a_different_due_time_is_still_a_repeat(conn, sid):
     from scheduler.db import replace_extraction
-    add_extracted_task(conn, sid, ExtractedTask(title="Quiz", date="2026-10-06"))
+    EXTRACTED_TASKS.add(conn, sid, ExtractedTask(title="Quiz", date="2026-10-06"))
     replace_extraction(conn, sid, ExtractionResult(tasks=[ExtractedTask(title="Quiz", date="2026-10-06", due_time="10:00")]))
-    assert len(get_extracted_tasks(conn, sid)) == 1  # never duplicated
+    assert len(EXTRACTED_TASKS.get(conn, sid)) == 1  # never duplicated
 
 @pytest.mark.parametrize("raw", ["17", 17])
 def test_extraction_reads_a_bare_hour(raw):
@@ -229,8 +228,8 @@ def test_add_task_midnight_today_is_already_past():
     assert any("has already passed" in m for m in shown)
 
 def test_tasks_due_the_same_day_are_listed_by_due_time(conn, sid):
-    add_extracted_task(conn, sid, ExtractedTask(title="Art essay", date="2026-10-06", due_time="17:00"))
-    add_extracted_task(conn, sid, ExtractedTask(title="Zoology quiz", date="2026-10-06", due_time="09:00"))
+    EXTRACTED_TASKS.add(conn, sid, ExtractedTask(title="Art essay", date="2026-10-06", due_time="17:00"))
+    EXTRACTED_TASKS.add(conn, sid, ExtractedTask(title="Zoology quiz", date="2026-10-06", due_time="09:00"))
     shown = []
     answers = iter(["l", "q"])
     run_menu(conn, sid, lambda _p: next(answers), shown.append, now=EVENING)
@@ -256,7 +255,7 @@ def test_adding_a_task_warns_when_saved_rows_were_left_out(conn, sid):
     assert any("saved class" in m for m in shown) and "Added." in shown
 
 def test_unreadable_completed_task_is_listed_but_not_warned_about(conn, sid):
-    add_extracted_task(conn, sid, ExtractedTask(title="Good", date="2026-10-07"))
+    EXTRACTED_TASKS.add(conn, sid, ExtractedTask(title="Good", date="2026-10-07"))
     _raw_row(conn, sid, "extracted_tasks",
              '{"title": "Old", "date": "2026-02-30", "completed_at": "2026-03-01T10:00:00"}')
     assert len(get_unreadable_items(conn, sid)) == 1  # still deletable from [u]
@@ -281,8 +280,8 @@ def test_extraction_leaves_classes_without_a_due_time_key():
     assert len(extraction_from_dict(raw).weekly_patterns) == 1
 
 def test_only_commutes_is_still_no_schedule(conn, sid):
-    from scheduler.db import add_commute
+    from scheduler.db import COMMUTES
     from scheduler.models import Commute
-    add_commute(conn, sid, Commute(start_time="08:00", length_minutes=30, date="2026-10-06"))
+    COMMUTES.add(conn, sid, Commute(start_time="08:00", length_minutes=30, date="2026-10-06"))
     with pytest.raises(ValueError, match="no saved schedule items"):
         plan_from_saved(conn, sid, now=EVENING)

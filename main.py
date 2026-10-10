@@ -5,7 +5,9 @@ re-solve to see what actually changed. Run with: python3 main.py
 
 from datetime import date, datetime
 from scheduler.add_with_fit import add_task_with_fit
-from scheduler.db import add_dated_block, add_extracted_task, connect, get_or_create_student, get_plan_cuts, load_settings
+from scheduler.db import (
+    DATED_BLOCKS, EXTRACTED_TASKS, connect, get_or_create_student, get_plan_cuts, load_settings,
+)
 from scheduler.llm_backends import is_backend_failure
 from scheduler.models import DatedBlock, DynamicTask, ExtractedTask, FixedBlock
 from scheduler.units import clock_range, time_to_slot
@@ -100,8 +102,8 @@ def demo_make_room():
     for label, answers in scripts:
         conn = connect(":memory:")
         sid = get_or_create_student(conn, "Demo")
-        add_dated_block(conn, sid, DatedBlock(title="Class", date=d.isoformat(), start_time="09:00", end_time="17:00"))
-        add_extracted_task(conn, sid, ExtractedTask(title="Lab", date=d.isoformat(), duration_slots=20, priority=4, difficulty=3))
+        DATED_BLOCKS.add(conn, sid, DatedBlock(title="Class", date=d.isoformat(), start_time="09:00", end_time="17:00"))
+        EXTRACTED_TASKS.add(conn, sid, ExtractedTask(title="Lab", date=d.isoformat(), duration_slots=20, priority=4, difficulty=3))
         essay = ExtractedTask(title="Essay", date=d.isoformat(), duration_slots=16, priority=5, difficulty=3)
         it = iter(answers)
 

@@ -1,7 +1,7 @@
 from datetime import date, datetime
 
 from scheduler.calendar_utils import extracted_task_to_dynamic_task
-from scheduler.db import get_extracted_tasks, get_plan_cuts, load_settings
+from scheduler.db import EXTRACTED_TASKS, get_plan_cuts, load_settings
 from scheduler.dropping import _solve_all_fit
 from scheduler.fit_check import build_fit_inputs, starts_from
 
@@ -14,7 +14,7 @@ def plan_restores(conn, student_id: int, now: datetime, time_limit_seconds: floa
     cuts = get_plan_cuts(conn, student_id)
     if not cuts:
         return {}
-    saved = dict(get_extracted_tasks(conn, student_id))
+    saved = dict(EXTRACTED_TASKS.get(conn, student_id))
     active = {i: c for i, c in cuts.items()
               if i in saved and not saved[i].completed_at and saved[i].due_at() > now}  # overdue: nothing to give back
     if not active:

@@ -91,10 +91,10 @@ def test_commute_dates_and_times_use_the_shared_checks():
 
 
 def test_skipping_a_commute_date_stores_the_normalised_date():
-    from scheduler.db import add_commute, connect, get_commutes, get_or_create_student, skip_commute_date
+    from scheduler.db import COMMUTES, connect, get_or_create_student, skip_commute_date
     conn = connect(":memory:")
     sid = get_or_create_student(conn, "Z")
-    cid = add_commute(conn, sid, recurring())
+    cid = COMMUTES.add(conn, sid, recurring())
     assert skip_commute_date(conn, sid, cid, "2026-10-12") is True
     assert skip_commute_date(conn, sid, cid, "20261012") is True  # the same day: no duplicate
-    assert get_commutes(conn, sid)[0][1].skip_dates == ["2026-10-12"]
+    assert COMMUTES.get(conn, sid)[0][1].skip_dates == ["2026-10-12"]

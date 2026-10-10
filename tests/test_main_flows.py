@@ -7,9 +7,7 @@ from datetime import date, datetime
 import pytest   
 
 from scheduler.add_with_fit import add_task_with_fit   
-from scheduler.db import (   
-    add_dated_block, add_extracted_task, connect, get_extracted_tasks, get_or_create_student, get_plan_cuts,
-)
+from scheduler.db import DATED_BLOCKS, EXTRACTED_TASKS, connect, get_or_create_student, get_plan_cuts
 from scheduler.models import DatedBlock, ExtractedTask   
 from scheduler.planner import plan_from_saved   
 from scheduler.restore import plan_restores   
@@ -29,8 +27,8 @@ def db(tmp_path):
 def conn(db):
     c = connect(db)
     sid = get_or_create_student(c, "Zane")
-    add_dated_block(c, sid, DatedBlock(title="Class", date=D.isoformat(), start_time="09:00", end_time="17:00"))
-    add_extracted_task(c, sid, ExtractedTask(title="Lab", date=D.isoformat(), duration_slots=20, priority=4, difficulty=3))
+    DATED_BLOCKS.add(c, sid, DatedBlock(title="Class", date=D.isoformat(), start_time="09:00", end_time="17:00"))
+    EXTRACTED_TASKS.add(c, sid, ExtractedTask(title="Lab", date=D.isoformat(), duration_slots=20, priority=4, difficulty=3))
     return c
 
 
@@ -56,7 +54,7 @@ def test_1_manual_drop_then_save_end_to_end(conn):
     menu(conn, NEW_ESSAY + ["m", "1", "d", "s"])
     slots, warns = planned(conn)
     assert slots["Essay"] == 16 and "Lab" not in slots
-    assert {t.title: t.duration_slots for _, t in get_extracted_tasks(conn, 1)}["Lab"] == 20
+    assert {t.title: t.duration_slots for _, t in EXTRACTED_TASKS.get(conn, 1)}["Lab"] == 20
     assert not [w for w in warns if w.kind == "task_unscheduled"]
 
 def test_2_manual_cuts_survive_a_restart(conn, db):   
@@ -74,7 +72,7 @@ def test_3_manual_dont_add_leaves_the_timetable_exactly_as_before(conn):
 def test_4_manual_cancel_after_cutting_restores_the_timetable(conn):   
     before, _ = planned(conn)
     menu(conn, NEW_ESSAY + ["m", "1", "d", "", "y", ""])
-    assert planned(conn)[0] == before and len(get_extracted_tasks(conn, 1)) == 1
+    assert planned(conn)[0] == before and len(EXTRACTED_TASKS.get(conn, 1)) == 1
 
 def test_5_manual_time_reduction_keeps_the_task_but_shorter(conn):   
     menu(conn, NEW_ESSAY + ["m", "1", "t", "4", "s"])
@@ -89,24 +87,24 @@ def test_6_semi_pick_one_makes_everything_fit(conn):
 
 def test_7_automatic_y_applies_best_plan_and_n_applies_nothing(conn):   
     menu(conn, NEW_ESSAY + ["a", "n", ""])
-    assert get_plan_cuts(conn, 1) == {} and len(get_extracted_tasks(conn, 1)) == 1
+    assert get_plan_cuts(conn, 1) == {} and len(EXTRACTED_TASKS.get(conn, 1)) == 1
     menu(conn, NEW_ESSAY + ["a", "y"])
-    assert sum(get_plan_cuts(conn, 1).values()) > 0 and len(get_extracted_tasks(conn, 1)) == 2
+    assert sum(get_plan_cuts(conn, 1).values()) > 0 and len(EXTRACTED_TASKS.get(conn, 1)) == 2
 
 def test_8_a_bad_mode_letter_is_rejected_and_nothing_is_saved(conn):   
     shown = menu(conn, NEW_ESSAY + ["x", ""])
-    assert "Choose m, s or a." in shown and len(get_extracted_tasks(conn, 1)) == 1
+    assert "Choose m, s or a." in shown and len(EXTRACTED_TASKS.get(conn, 1)) == 1
 
 def test_9_no_mode_prompt_when_the_task_already_fits(conn):   
     menu(conn, ["a", "Quiz", "2026-10-09", "1", "3", "3"])
-    assert len(get_extracted_tasks(conn, 1)) == 2 and get_plan_cuts(conn, 1) == {}
+    assert len(EXTRACTED_TASKS.get(conn, 1)) == 2 and get_plan_cuts(conn, 1) == {}
 
 def test_10_cut_time_is_offered_back_once_room_appears(conn):   
     from scheduler.task_manager import _sorted_tasks
     menu(conn, NEW_ESSAY + ["m", "1", "d", "s"])
     n = 1 + [t.title for _, t in _sorted_tasks(conn, 1)].index("Essay")
     menu(conn, ["d", str(n)])
-    lab_id = next(i for i, t in get_extracted_tasks(conn, 1) if t.title == "Lab")
+    lab_id = next(i for i, t in EXTRACTED_TASKS.get(conn, 1) if t.title == "Lab")
     assert plan_restores(conn, 1, NOW) == {lab_id: 20}
 
 def test_11_must_add_hides_dont_add_in_manual(conn):   

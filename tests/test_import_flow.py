@@ -2,8 +2,9 @@ from datetime import datetime
 
 import pytest
 
-from scheduler.db import (connect, get_or_create_student, replace_extraction,
-                          get_weekly_patterns, get_dated_blocks, get_extracted_tasks)
+from scheduler.db import (
+    connect, get_or_create_student, replace_extraction, WEEKLY_PATTERNS, DATED_BLOCKS, EXTRACTED_TASKS,
+)
 from scheduler.import_flow import run_import
 from scheduler.models import WeeklyPattern, DatedBlock, ExtractedTask, ExtractionResult
 
@@ -49,9 +50,9 @@ def env(tmp_path, monkeypatch):
 
 
 def _titles(conn, sid):
-    return ([p.title for _, p in get_weekly_patterns(conn, sid)],
-            [b.title for _, b in get_dated_blocks(conn, sid)],
-            [t.title for _, t in get_extracted_tasks(conn, sid)])
+    return ([p.title for _, p in WEEKLY_PATTERNS.get(conn, sid)],
+            [b.title for _, b in DATED_BLOCKS.get(conn, sid)],
+            [t.title for _, t in EXTRACTED_TASKS.get(conn, sid)])
 
 
 def test_image_flow_extracts_reviews_saves_and_caches(env):
@@ -472,7 +473,7 @@ def test_past_due_imported_tasks_are_saved_as_history_done_or_missed(env, tmp_pa
     ask = Recorder(KEEP_ALL + ["x", "", "m"])  # bad answer re-asked, Quiz 1 done, Quiz 2 missed
     now = datetime(2026, 10, 1, 9, 0)
     assert run_import(conn, sid, str(saved), ask=ask, show=shown.append, cache_path=cache, now=now)
-    tasks = {t.title: t for _, t in get_extracted_tasks(conn, sid)}
+    tasks = {t.title: t for _, t in EXTRACTED_TASKS.get(conn, sid)}
     assert (tasks["Quiz 1"].completed_at, tasks["Quiz 1"].missed) == ("2026-10-01T09:00", False)
     assert tasks["Quiz 2"].completed_at and tasks["Quiz 2"].missed
     assert tasks["Final"].completed_at is None  # future tasks aren't asked about
@@ -486,7 +487,7 @@ def test_a_saved_task_from_before_missed_existed_still_loads(env):
     conn, sid, _, _ = env
     conn.execute("INSERT INTO extracted_tasks (student_id, data_json, created_at) VALUES (?, ?, ?)",
                  (sid, '{"title": "Old", "date": "2026-10-02"}', "2026-09-01T00:00"))
-    [(_, t)] = get_extracted_tasks(conn, sid)
+    [(_, t)] = EXTRACTED_TASKS.get(conn, sid)
     assert t.title == "Old" and t.missed is False
 
 

@@ -4,9 +4,8 @@ import pytest
 
 from scheduler.calendar_utils import extracted_task_to_dynamic_task
 from scheduler.db import (
-    add_dated_block, add_extracted_task, add_plan_cut, apply_plan_changes, clear_plan_cut,
-    connect, delete_extracted_task, get_extracted_tasks, get_or_create_student,
-    get_plan_cuts,
+    DATED_BLOCKS, EXTRACTED_TASKS, add_plan_cut, apply_plan_changes, clear_plan_cut, connect,
+    get_or_create_student, get_plan_cuts,
 )
 from scheduler.drop_apply import apply_drop_choice
 from scheduler.drop_review import _dont_add_fallback
@@ -34,7 +33,7 @@ def _task(title, hours, priority, difficulty=3, due=START):
 
 
 def test_cuts_add_up_and_can_be_cleared(conn, sid):
-    tid = add_extracted_task(conn, sid, _task("Big", 10, 2))
+    tid = EXTRACTED_TASKS.add(conn, sid, _task("Big", 10, 2))
     add_plan_cut(conn, sid, tid, 8)
     add_plan_cut(conn, sid, tid, 4)
     assert get_plan_cuts(conn, sid) == {tid: 12}
@@ -43,7 +42,7 @@ def test_cuts_add_up_and_can_be_cleared(conn, sid):
 
 
 def test_cut_must_be_positive_and_on_own_task(conn, sid):
-    tid = add_extracted_task(conn, sid, _task("Big", 10, 2))
+    tid = EXTRACTED_TASKS.add(conn, sid, _task("Big", 10, 2))
     other = get_or_create_student(conn, "Other")
     with pytest.raises(ValueError):
         add_plan_cut(conn, sid, tid, 0)
@@ -53,39 +52,39 @@ def test_cut_must_be_positive_and_on_own_task(conn, sid):
 
 
 def test_deleting_a_task_removes_its_cut(conn, sid):
-    tid = add_extracted_task(conn, sid, _task("Big", 10, 2))
+    tid = EXTRACTED_TASKS.add(conn, sid, _task("Big", 10, 2))
     add_plan_cut(conn, sid, tid, 8)
-    delete_extracted_task(conn, sid, tid)
+    EXTRACTED_TASKS.delete(conn, sid, tid)
     assert get_plan_cuts(conn, sid) == {}
 
 
 def test_apply_plan_changes_is_all_or_nothing(conn, sid):
-    tid = add_extracted_task(conn, sid, _task("Big", 10, 2))
+    tid = EXTRACTED_TASKS.add(conn, sid, _task("Big", 10, 2))
     with pytest.raises(ValueError):
         apply_plan_changes(conn, sid, {tid: 4, 9999: 4}, _task("New", 2, 3))
     assert get_plan_cuts(conn, sid) == {}
-    assert len(get_extracted_tasks(conn, sid)) == 1  # the new task was not saved either
+    assert len(EXTRACTED_TASKS.get(conn, sid)) == 1  # the new task was not saved either
 
 
 def test_planned_tasks_apply_cuts_but_saved_task_is_untouched(conn, sid):
-    tid = add_extracted_task(conn, sid, _task("Big", 10, 2))
+    tid = EXTRACTED_TASKS.add(conn, sid, _task("Big", 10, 2))
     add_plan_cut(conn, sid, tid, 12)
     anchor = PlanAnchor(start_date=START, num_days=1)
     [(pid, t)] = planned_tasks(conn, sid, anchor)
     assert pid == tid and t.duration_slots == 40 - 12
-    assert get_extracted_tasks(conn, sid)[0][1].duration_slots == 40  # full hours still saved
+    assert EXTRACTED_TASKS.get(conn, sid)[0][1].duration_slots == 40  # full hours still saved
 
 
 def test_fully_cut_task_is_left_out_of_the_plan(conn, sid):
-    tid = add_extracted_task(conn, sid, _task("Big", 10, 2))
+    tid = EXTRACTED_TASKS.add(conn, sid, _task("Big", 10, 2))
     add_plan_cut(conn, sid, tid, 40)
     assert planned_tasks(conn, sid, PlanAnchor(start_date=START, num_days=1)) == []
 
 
 def test_fully_cut_task_gets_a_hard_warning_in_the_plan(conn, sid):
     # a full drop misses the due date, so the plan must say so on every run, not only when chosen
-    tid = add_extracted_task(conn, sid, _task("Essay", 2, 5, due=START + timedelta(days=2)))
-    add_extracted_task(conn, sid, _task("Other", 1, 3, due=START + timedelta(days=1)))
+    tid = EXTRACTED_TASKS.add(conn, sid, _task("Essay", 2, 5, due=START + timedelta(days=2)))
+    EXTRACTED_TASKS.add(conn, sid, _task("Other", 1, 3, due=START + timedelta(days=1)))
     add_plan_cut(conn, sid, tid, 8)
     _, _, items, warnings = plan_from_saved(conn, sid, now=datetime.combine(START, time(9, 0)),
                                             time_limit_seconds=5)
@@ -96,7 +95,7 @@ def test_fully_cut_task_gets_a_hard_warning_in_the_plan(conn, sid):
 
 
 def test_partly_cut_task_gets_a_soft_note(conn, sid):
-    tid = add_extracted_task(conn, sid, _task("Essay", 3, 5, due=START + timedelta(days=2)))
+    tid = EXTRACTED_TASKS.add(conn, sid, _task("Essay", 3, 5, due=START + timedelta(days=2)))
     add_plan_cut(conn, sid, tid, 4)
     *_, warnings = plan_from_saved(conn, sid, now=datetime.combine(START, time(9, 0)), time_limit_seconds=5)
     [w] = [w for w in warnings if w.kind == "task_cut"]
@@ -105,13 +104,13 @@ def test_partly_cut_task_gets_a_soft_note(conn, sid):
 
 
 def test_uncut_task_gets_no_cut_warning(conn, sid):
-    add_extracted_task(conn, sid, _task("Essay", 3, 5, due=START + timedelta(days=2)))
+    EXTRACTED_TASKS.add(conn, sid, _task("Essay", 3, 5, due=START + timedelta(days=2)))
     *_, warnings = plan_from_saved(conn, sid, now=datetime.combine(START, time(9, 0)), time_limit_seconds=5)
     assert not any(w.kind in ("task_cut", "task_dropped") for w in warnings)
 
 
 def test_clearing_a_cut_gives_the_time_back(conn, sid):
-    tid = add_extracted_task(conn, sid, _task("Big", 10, 2))
+    tid = EXTRACTED_TASKS.add(conn, sid, _task("Big", 10, 2))
     add_plan_cut(conn, sid, tid, 16)
     clear_plan_cut(conn, sid, tid)
     [(_, t)] = planned_tasks(conn, sid, PlanAnchor(start_date=START, num_days=1))
@@ -119,9 +118,9 @@ def test_clearing_a_cut_gives_the_time_back(conn, sid):
 
 def _busy_student(conn, sid):
     """One day, one class, three saved tasks due that day -- an Essay won't fit without a cut."""
-    add_dated_block(conn, sid, DatedBlock(title="Class", date=START.isoformat(),
-                                          start_time="08:00", end_time="12:00"))
-    ids = {n: add_extracted_task(conn, sid, t) for n, t in {
+    DATED_BLOCKS.add(conn, sid, DatedBlock(title="Class", date=START.isoformat(),
+                                           start_time="08:00", end_time="12:00"))
+    ids = {n: EXTRACTED_TASKS.add(conn, sid, t) for n, t in {
         "Big": _task("Big project", 10, 2), "Reading": _task("Reading", 2, 3), "Lab": _task("Lab", 2, 4),
     }.items()}
     return ids
@@ -144,7 +143,7 @@ def test_applying_a_cut_saves_it_for_the_plan_only(conn, sid):
     summary = apply_drop_choice(conn, sid, best, planned, essay)
     assert summary["new_task_id"] is not None
     assert sum(get_plan_cuts(conn, sid).values()) == sum(a.slots_lost for a in best.actions) > 0
-    saved = {t.title: t.duration_slots for _, t in get_extracted_tasks(conn, sid)}
+    saved = {t.title: t.duration_slots for _, t in EXTRACTED_TASKS.get(conn, sid)}
     assert saved["Big project"] == 40 and saved["Essay"] == 16  # saved hours untouched, essay saved
 
 
@@ -167,7 +166,7 @@ def test_not_adding_saves_nothing(conn, sid):
     summary = apply_drop_choice(conn, sid, choice, planned, essay)
     assert summary == {"cuts": {}, "new_task_id": None}
     assert get_plan_cuts(conn, sid) == {}
-    assert all(t.title != "Essay" for _, t in get_extracted_tasks(conn, sid))
+    assert all(t.title != "Essay" for _, t in EXTRACTED_TASKS.get(conn, sid))
 
 
 def test_adding_proposal_without_the_new_task_is_rejected(conn, sid):

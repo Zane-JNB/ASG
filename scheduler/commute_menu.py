@@ -1,7 +1,7 @@
 import re
 from datetime import date
 
-from scheduler.db import add_commute, delete_commute, get_commutes, skip_commute_date, update_commute
+from scheduler.db import COMMUTES, skip_commute_date
 from scheduler.menu_input import ask_until, pick
 from scheduler.models import Commute
 from scheduler.review import _confirm, _date
@@ -46,7 +46,7 @@ def _sorted(conn, student_id: int):
     def key(item):
         c = item[1]
         return (not c.recurring, WEEKDAYS.index(c.weekday) if c.recurring else 0, c.date or "", c.start_time)
-    return sorted(get_commutes(conn, student_id), key=key)
+    return sorted(COMMUTES.get(conn, student_id), key=key)
 
 def _show_list(items, show) -> None:
     if not items:
@@ -77,7 +77,7 @@ def _add(conn, student_id: int, ask, show, today: date) -> None:
         when = ask_until(ask, show, f"Date [{today.isoformat()}]", not_past, default=today.isoformat())
         made = [Commute(**base, date=when)]
     for c in made:
-        add_commute(conn, student_id, c)
+        COMMUTES.add(conn, student_id, c)
     show(f"Added {len(made)} commute(s):")
     for c in made:
         show(f"  {_describe(c)}")
@@ -93,7 +93,7 @@ def _skip(conn, student_id: int, ask, show) -> None:
     cid, c = picked
     if not c.recurring:  # a one-time commute has nothing to come back to, so skipping = deleting
         if _confirm(ask, f"  '{c.title}' is one-time, so skipping it deletes it. Delete?", False):
-            delete_commute(conn, student_id, cid)
+            COMMUTES.delete(conn, student_id, cid)
             show("Deleted.")
         else:
             show("Cancelled -- nothing changed.")
@@ -111,7 +111,7 @@ def _skip(conn, student_id: int, ask, show) -> None:
         last = ask_until(ask, show, "Last day it should still happen (YYYY-MM-DD)", _date)
         if last is None:
             return show("Cancelled -- nothing changed.")
-        update_commute(conn, student_id, cid, c.model_copy(update={"end_date": last}))
+        COMMUTES.update(conn, student_id, cid, c.model_copy(update={"end_date": last}))
         show(f"'{c.title}' will stop after {last}.")
     elif mode:
         show("Choose o or e.")
@@ -135,7 +135,7 @@ def run_commute_menu(conn, student_id, ask=input, show=print, today: date | None
                 continue
             picked = pick(ask, show, items, "Number to delete (Enter to cancel): ")
             if picked:
-                delete_commute(conn, student_id, picked[0])
+                COMMUTES.delete(conn, student_id, picked[0])
                 show("Deleted.")
         else:
             show("Choose a, l, s, d or b.")

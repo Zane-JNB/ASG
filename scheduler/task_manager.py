@@ -1,9 +1,6 @@
 from datetime import date, datetime, time
 from scheduler.add_with_fit import add_task_with_fit
-from scheduler.db import (
-    delete_extracted_task, delete_unreadable_item, get_extracted_tasks, get_unreadable_items,
-    update_extracted_task, load_settings
-)
+from scheduler.db import EXTRACTED_TASKS, get_unreadable_items, load_settings
 from scheduler.models import DynamicTask, ExtractedTask
 from scheduler.units import parse_time, slots_to_hours
 from scheduler.review import _confirm, _describe, _due, _hours, _missed
@@ -76,7 +73,7 @@ def prompt_new_task(ask=input, show=print, today: date | None = None, session_ca
 
 
 def _sorted_tasks(conn, student_id):
-    open_tasks = [(i, t) for i, t in get_extracted_tasks(conn, student_id) if not t.completed_at]  #   -- done = history
+    open_tasks = [(i, t) for i, t in EXTRACTED_TASKS.get(conn, student_id) if not t.completed_at]  #   -- done = history
     return sorted(open_tasks, key=lambda x: (x[1].date, x[1].due_slot(), x[1].title.lower()))
 
 def _ask_level(ask, show, prompt: str) -> int | None:   
@@ -125,12 +122,12 @@ def _unreadable_menu(conn, student_id, ask, show) -> None:
     if not bad:
         show("Every saved item can be read.")
         return
-    for n, (label, row_id, reason) in enumerate(bad, 1):
-        show(f"{n}. Saved {label} (id {row_id}): {reason}")
+    for n, u in enumerate(bad, 1):
+        show(f"{n}. Saved {u.table.label} (id {u.row_id}): {u.reason}")
     raw = ask("Number to delete (Enter to keep them all): ").strip()
     if raw.isdigit() and 1 <= int(raw) <= len(bad):
-        label, row_id, _ = bad[int(raw) - 1]
-        delete_unreadable_item(conn, student_id, label, row_id)
+        u = bad[int(raw) - 1]
+        u.table.delete(conn, student_id, u.row_id)
         show("Deleted.")
     elif raw:
         show(f"Enter a number between 1 and {len(bad)}.")
@@ -163,7 +160,7 @@ def run_menu(conn, student_id, ask=input, show=print, today: date | None = None,
                 continue    
             raw = ask("Number to delete (Enter to cancel): ").strip()
             if raw.isdigit() and 1 <= int(raw) <= len(tasks):
-                delete_extracted_task(conn, student_id, tasks[int(raw) - 1][0])
+                EXTRACTED_TASKS.delete(conn, student_id, tasks[int(raw) - 1][0])
                 show("Deleted.")
             elif raw:
                 show(f"Enter a number between 1 and {len(tasks)}.")
@@ -193,7 +190,7 @@ def run_menu(conn, student_id, ask=input, show=print, today: date | None = None,
             if raw.isdigit() and 1 <= int(raw) <= len(tasks):
                 task_id, task = tasks[int(raw) - 1]
                 can = _confirm(ask, f"  Can '{task.title}' be split across several sessions?", task.splittable)
-                update_extracted_task(conn, student_id, task_id, task.model_copy(update={"splittable": can}))
+                EXTRACTED_TASKS.update(conn, student_id, task_id, task.model_copy(update={"splittable": can}))
                 show("Saved." if can else "Saved -- it will be planned as one block.")
             elif raw:
                 show(f"Enter a number between 1 and {len(tasks)}.")
@@ -226,7 +223,7 @@ def run_menu(conn, student_id, ask=input, show=print, today: date | None = None,
                 show("No open tasks saved.")
             elif ask(f"Delete ALL {count} open task(s)? Completed ones are kept. Type yes to confirm: ").strip().lower() == "yes":
                 for task_id, _ in open_tasks:
-                    delete_extracted_task(conn, student_id, task_id)
+                    EXTRACTED_TASKS.delete(conn, student_id, task_id)
                 show(f"Deleted {count} open task(s).")
             else:
                 show("Cancelled -- nothing deleted.")

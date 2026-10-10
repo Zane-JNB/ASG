@@ -1,6 +1,6 @@
 from datetime import date, datetime
 
-from scheduler.db import connect, get_or_create_student, get_extracted_tasks, replace_extraction
+from scheduler.db import connect, get_or_create_student, EXTRACTED_TASKS, replace_extraction
 from scheduler.models import ExtractedTask, ExtractionResult, WeeklyPattern
 from scheduler.planner import plan_from_saved
 from scheduler.task_manager import prompt_new_task, run_menu
@@ -17,7 +17,7 @@ def _conn():
     return conn, get_or_create_student(conn, "Z")
 
 def _saved(conn, sid):
-    return [t for _, t in get_extracted_tasks(conn, sid)]
+    return [t for _, t in EXTRACTED_TASKS.get(conn, sid)]
 
 def test_add_with_all_defaults_takes_title_and_date_only():
     ask, shown = scripted(["Essay", "2026-10-05", "", "", ""])
