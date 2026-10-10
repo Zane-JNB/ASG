@@ -308,3 +308,40 @@ def task_warnings(unscheduled: list[DynamicTask]) -> list[ScheduleWarning]:
             if t.deadline_day is not None
             else ScheduleWarning.soft("task_unscheduled", f"'{t.title}' did not fit in this plan.")
             for t in unscheduled]
+
+
+FIT_CHECK_SECONDS = 5.0  # time limit for one fit check among many (a search, a restore)
+
+
+@dataclass(frozen=True)
+class PlanFrame:
+    """Everything a fit check holds fixed while the tasks change: blocks, window, sleep and settings."""
+    fixed: list[FixedBlock]
+    num_days: int = 1
+    sleep_rules: list[SleepRule] = field(default_factory=list)
+    settings: ProfileSettings = field(default_factory=ProfileSettings)
+
+    def solve(self, tasks: list[DynamicTask], time_limit_seconds: float | None = 30.0):
+        return build_schedule(self.fixed, tasks, num_days=self.num_days, sleep_rules=self.sleep_rules,
+                              time_limit_seconds=time_limit_seconds, settings=self.settings)
+
+    def solve_all_fit(self, tasks: list[DynamicTask], time_limit_seconds: float = FIT_CHECK_SECONDS
+                      ) -> tuple[list[ScheduledItem], list[ScheduleWarning]] | None:
+        """(items, sleep warnings) if every task fits, else None. RuntimeError if no plan is found in time."""
+        items, unscheduled = self.solve(tasks, time_limit_seconds)
+        return None if unscheduled else (items, sleep_warnings(self.sleep_rules, items))
+
+    def trial(self, tasks: list[DynamicTask], time_limit_seconds: float = FIT_CHECK_SECONDS
+              ) -> tuple[list[ScheduledItem], list[ScheduleWarning]] | None:
+        """solve_all_fit for one trial among many (a search or restore step): running out of time
+        counts as not fitting."""
+        try:
+            return self.solve_all_fit(tasks, time_limit_seconds)
+        except RuntimeError:
+            return None
+
+    def unplaced(self, tasks: list[DynamicTask], time_limit_seconds: float = FIT_CHECK_SECONDS) -> list[int]:
+        """Indices of the tasks that don't fit (e.g. due too soon)."""
+        _, unscheduled = self.solve(tasks, time_limit_seconds)
+        out = {id(t) for t in unscheduled}
+        return [i for i, t in enumerate(tasks) if id(t) in out]

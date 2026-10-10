@@ -1,3 +1,4 @@
+from scheduler.dropping import dont_add_unverified
 from scheduler.models import DropAction, DropProposal, DropReport, DynamicTask
 from scheduler.units import format_hours
 
@@ -37,18 +38,11 @@ def describe_proposal(n: int, p: DropProposal, new_task: DynamicTask) -> list[st
     return lines
 
 
-def _dont_add_fallback(new_task: DynamicTask, rank: int) -> DropProposal:   
-    flags = ["Not verified: your existing tasks may still not all fit without it"]
-    if new_task.deadline_day is not None:
-        flags.append(f"'{new_task.title}' would not be done by its deadline")
-    return DropProposal(rank=rank, actions=[], new_task_added=False, score=float("inf"),
-                        slots_freed=0, sleep_sacrificed_slots=0, flags=flags, schedule=[])
-
 def _ranked_options(report: DropReport, new_task: DynamicTask, must_add: bool) -> list[DropProposal]:   
     """Best first. Shared by semi-automatic and automatic mode so both offer the same options."""
     options = [p for p in report.proposals if p.new_task_added or not must_add]
     if not must_add and not any(not p.new_task_added for p in options):
-        options.append(_dont_add_fallback(new_task, len(options) + 1))
+        options.append(dont_add_unverified(new_task, len(options) + 1))
     return options
 
 def choose_drop_proposal(report: DropReport, new_task: DynamicTask, must_add: bool = False,

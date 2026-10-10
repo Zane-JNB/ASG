@@ -1,7 +1,7 @@
 """Everything one plan needs, read from the student's saved rows: the window from now to the
 last deadline in play, fixed blocks, open tasks with their plan cuts, sleep, and warnings."""
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta
 from scheduler.commutes import commute_overlaps, expand_commutes, overlap_warnings
 from scheduler.calendar_utils import expand_fixed_blocks, extracted_task_to_dynamic_task, find_overlaps
@@ -13,6 +13,7 @@ from scheduler.models import (
     DynamicTask, ExtractedTask, FixedBlock, PlanAnchor, ProfileSettings, ScheduleWarning, SleepRule,
 )
 from scheduler.nights import sleep_setup
+from scheduler.solver import PlanFrame
 from scheduler.units import SLOTS_PER_DAY, clock_range, format_hours, next_slot
 
 MAX_OVERLAPS_SHOWN = 5
@@ -27,6 +28,18 @@ class FitInputs:
     sleep_rules: list[SleepRule]
     settings: ProfileSettings
     warnings: list[ScheduleWarning] = field(default_factory=list)
+
+    @property
+    def frame(self) -> PlanFrame:
+        return PlanFrame(self.fixed, self.anchor.num_days, self.sleep_rules, self.settings)
+
+    @property
+    def tasks(self) -> list[DynamicTask]:
+        """The planned tasks; index i is a proposal's task_index."""
+        return [t for _, t in self.planned]
+
+    def without(self, indices: list[int]) -> "FitInputs":
+        return replace(self, planned=[p for i, p in enumerate(self.planned) if i not in indices])
 
 
 def _planned_and_overdue(saved_tasks: list[tuple[int, ExtractedTask]], cuts: dict[int, int],

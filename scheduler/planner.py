@@ -3,7 +3,7 @@ from scheduler.fit_check import build_fit_inputs
 from scheduler.db import has_saved_items
 from scheduler.models import PlanAnchor
 from scheduler.units import clock_range
-from scheduler.solver import build_schedule, sleep_warnings, task_warnings
+from scheduler.solver import sleep_warnings, task_warnings
 
 
 def plan_from_saved(conn, student_id: int, num_days: int | None = None,
@@ -14,10 +14,7 @@ def plan_from_saved(conn, student_id: int, num_days: int | None = None,
         raise ValueError("no saved schedule items -- run import_schedule.py first")
 
     fit = build_fit_inputs(conn, student_id, now or datetime.now(), min_days=num_days or 1)
-    items, unscheduled = build_schedule(
-        fit.fixed, [t for _, t in fit.planned], num_days=fit.anchor.num_days,
-        sleep_rules=fit.sleep_rules, time_limit_seconds=time_limit_seconds, settings=fit.settings,
-    )
+    items, unscheduled = fit.frame.solve(fit.tasks, time_limit_seconds)
     warnings = sleep_warnings(fit.sleep_rules, items) + task_warnings(unscheduled) + fit.warnings
     return fit.anchor, fit.fixed, items, warnings
 

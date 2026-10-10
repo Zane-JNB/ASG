@@ -8,8 +8,7 @@ from scheduler.db import (
     get_or_create_student, get_plan_cuts,
 )
 from scheduler.drop_apply import apply_drop_choice
-from scheduler.drop_review import _dont_add_fallback
-from scheduler.dropping import propose_drops
+from scheduler.dropping import dont_add_unverified, propose_drops
 from scheduler.models import DatedBlock, ExtractedTask, PlanAnchor
 from scheduler.fit_check import build_fit_inputs, planned_tasks
 from scheduler.planner import plan_from_saved
@@ -129,8 +128,7 @@ def _busy_student(conn, sid):
 def _propose(conn, sid, essay, must_add=True):
     """The same inputs the add flow and plan_from_saved use (incl. the night-before sleep)."""
     fit = build_fit_inputs(conn, sid, datetime.combine(START, time(0, 0)), essay)
-    report = propose_drops(fit.fixed, [t for _, t in fit.planned], fit.new_task, fit.anchor.num_days,
-                           fit.sleep_rules, settings=fit.settings, must_add=must_add)
+    report = propose_drops(fit.frame, fit.tasks, fit.new_task, must_add=must_add)
     return fit.planned, report
 
 
@@ -162,7 +160,7 @@ def test_not_adding_saves_nothing(conn, sid):
     essay = _task("Essay", 4, 4)
     planned, report = _propose(conn, sid, essay, must_add=False)
     choice = next((p for p in report.proposals if not p.new_task_added),
-                  _dont_add_fallback(extracted_task_to_dynamic_task(essay, START, 8), 9))
+                  dont_add_unverified(extracted_task_to_dynamic_task(essay, START, 8), 9))
     summary = apply_drop_choice(conn, sid, choice, planned, essay)
     assert summary == {"cuts": {}, "new_task_id": None}
     assert get_plan_cuts(conn, sid) == {}

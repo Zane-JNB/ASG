@@ -1,6 +1,3 @@
-NEW = -1  #    index that stands for the new task (same convention as propose_drops)
-
-
 class CutState:   
     """durations: {task index: planned slots}. sizes_fn(index, remaining_slots) -> chunk sizes."""
 

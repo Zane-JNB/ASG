@@ -1,7 +1,7 @@
 import pytest
-from scheduler.dropping import _cheapest_first, chunk_sizes, cut_task, loss_cost, propose_drops
+from scheduler.dropping import NEW_TASK, _cheapest_first, cut_task, loss_cost, propose_drops, try_cuts
 from scheduler.models import DynamicTask, FixedBlock, ProfileSettings, SleepRule
-from scheduler.solver import build_schedule
+from scheduler.solver import PlanFrame, build_schedule, chunk_sizes
 
 
 def busy_day():
@@ -64,13 +64,13 @@ def test_deadline_and_priority_raise_the_cost_of_losing_time():
 
 def test_reports_when_everything_already_fits():
     new = DynamicTask(title="Tiny", duration_slots=2, priority=3, difficulty=1)
-    report = propose_drops([], [], new, num_days=1)
+    report = propose_drops(PlanFrame([]), [], new)
     assert report.fits_already and report.proposals == []
 
 
 def test_every_proposal_really_fits():
     fixed, tasks, new, rules = busy_day()
-    report = propose_drops(fixed, tasks, new, 1, rules)
+    report = propose_drops(PlanFrame(fixed, 1, rules), tasks, new)
     assert report.proposals
     for p in report.proposals:
         titles = {i.title.split(" (")[0] for i in p.schedule if i.kind == "task"}
@@ -82,7 +82,7 @@ def test_every_proposal_really_fits():
 
 def test_proposals_are_ranked_best_first_and_numbered():
     fixed, tasks, new, rules = busy_day()
-    report = propose_drops(fixed, tasks, new, 1, rules)
+    report = propose_drops(PlanFrame(fixed, 1, rules), tasks, new)
     scores = [p.score for p in report.proposals]
     assert scores == sorted(scores)
     assert [p.rank for p in report.proposals] == list(range(1, len(scores) + 1))
@@ -91,15 +91,15 @@ def test_proposals_are_ranked_best_first_and_numbered():
 
 def test_partial_cut_of_a_split_task_is_offered():
     fixed, tasks, new, rules = busy_day()
-    report = propose_drops(fixed, tasks, new, 1, rules)
+    report = propose_drops(PlanFrame(fixed, 1, rules), tasks, new)
     partial = [a for p in report.proposals for a in p.actions if not a.is_full_drop]
     assert partial and partial[0].title == "Big project"
 
 
 def test_no_proposal_is_a_wasteful_superset_of_another():
     fixed, tasks, new, rules = busy_day()
-    report = propose_drops(fixed, tasks, new, 1, rules)
-    cuts = [{**{a.task_index: a.slots_lost for a in p.actions}, **({-1: p.new_task_slots_cut} if p.new_task_slots_cut else {})}
+    report = propose_drops(PlanFrame(fixed, 1, rules), tasks, new)
+    cuts = [{**{a.task_index: a.slots_lost for a in p.actions}, **({NEW_TASK: p.new_task_slots_cut} if p.new_task_slots_cut else {})}
             for p in report.proposals if p.new_task_added]
     for a in cuts:
         for b in cuts:
@@ -118,7 +118,7 @@ def overloaded_by_a_cheap_new_task():
 def test_not_adding_can_be_the_best_option():
     fixed, tasks, rules = overloaded_by_a_cheap_new_task()
     new = DynamicTask(title="Optional reading", duration_slots=20, priority=1, difficulty=1)
-    report = propose_drops(fixed, tasks, new, 1, rules)
+    report = propose_drops(PlanFrame(fixed, 1, rules), tasks, new)
     assert not report.fits_already
     assert report.proposals[0].new_task_added is False
     assert report.proposals[0].actions == []
@@ -127,14 +127,14 @@ def test_not_adding_can_be_the_best_option():
 def test_must_add_removes_the_not_adding_option():
     fixed, tasks, rules = overloaded_by_a_cheap_new_task()
     new = DynamicTask(title="Optional reading", duration_slots=20, priority=1, difficulty=1)
-    report = propose_drops(fixed, tasks, new, 1, rules, must_add=True)
+    report = propose_drops(PlanFrame(fixed, 1, rules), tasks, new, must_add=True)
     assert all(p.new_task_added for p in report.proposals)
 
 
 def test_urgent_new_task_beats_not_adding():
     fixed, tasks, rules = overloaded_by_a_cheap_new_task()
     new = DynamicTask(title="Exam prep", duration_slots=20, priority=5, difficulty=4, deadline_day=0)
-    report = propose_drops(fixed, tasks, new, 1, rules)
+    report = propose_drops(PlanFrame(fixed, 1, rules), tasks, new)
     not_adding = [p for p in report.proposals if not p.new_task_added]
     assert report.proposals[0].new_task_added
     assert all(p.flags for p in not_adding)
@@ -144,14 +144,14 @@ def test_dropping_a_deadline_task_is_flagged_hard():
     fixed = [FixedBlock(title="Class", start_slot=32, end_slot=48)]
     tasks = [DynamicTask(title="Quiz", duration_slots=48, priority=2, difficulty=2, deadline_day=0, splittable=False)]
     new = DynamicTask(title="Essay", duration_slots=24, priority=5, difficulty=3, splittable=False)
-    report = propose_drops(fixed, tasks, new, 1, [SleepRule(night=0)], must_add=True)
+    report = propose_drops(PlanFrame(fixed, 1, [SleepRule(night=0)]), tasks, new, must_add=True)
     for p in report.proposals:
         assert any("Quiz" in f for f in p.flags)
 
 
 def test_search_stops_at_the_check_limit():
     fixed, tasks, new, rules = busy_day()
-    report = propose_drops(fixed, tasks, new, 1, rules, max_checks=2)
+    report = propose_drops(PlanFrame(fixed, 1, rules), tasks, new, max_checks=2)
     assert report.checks_used <= 2
     assert report.search_exhausted is False
 
@@ -161,6 +161,15 @@ def test_shortening_the_new_task_is_found_when_it_fits():
     fixed = [FixedBlock(title="Busy", start_slot=0, end_slot=85)]
     b = DynamicTask(title="B", duration_slots=2, priority=5, difficulty=2, splittable=False)
     n = DynamicTask(title="N", duration_slots=10, priority=3, difficulty=2, splittable=False)
-    report = propose_drops(fixed, [b], n, settings=ProfileSettings(buffer_slots=0), must_add=True)
+    report = propose_drops(PlanFrame(fixed, settings=ProfileSettings(buffer_slots=0)), [b], n, must_add=True)
     best = report.proposals[0]
     assert best.actions == [] and best.new_task_slots_cut == 2
+
+
+def test_try_cuts_scores_a_verified_plan_or_returns_none():
+    fixed, tasks, new, rules = busy_day()
+    frame = PlanFrame(fixed, 1, rules)
+    best = next(p for p in propose_drops(frame, tasks, new).proposals if p.new_task_added)
+    again = try_cuts(frame, tasks, new, best.actions, best.new_task_slots_cut)
+    assert (again.score, again.flags, again.slots_freed) == (best.score, best.flags, best.slots_freed)
+    assert try_cuts(frame, tasks, new, [], 0) is None  # the plan that already failed

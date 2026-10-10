@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 
-from scheduler.manual_cuts import NEW, CutState
+from scheduler.dropping import NEW_TASK as NEW
+from scheduler.manual_cuts import CutState
 from scheduler.manual_review import ask_mode, run_manual_edit
 
 

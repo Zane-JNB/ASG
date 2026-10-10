@@ -1,5 +1,6 @@
 from scheduler.units import format_hours, slots_to_hours
-from scheduler.manual_cuts import NEW, CutState   
+from scheduler.dropping import NEW_TASK as NEW
+from scheduler.manual_cuts import CutState
 from scheduler.review import _hours   
 
 

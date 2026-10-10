@@ -4,7 +4,7 @@ from ortools.sat.python import cp_model
 from scheduler.models import DynamicTask, FixedBlock, ProfileSettings, ScheduledItem, SleepRule
 from scheduler.units import SLOTS_PER_DAY
 from scheduler.solver import (
-    build_schedule, chunk_sizes, merge_fixed_spans, sleep_warnings, split_sizes, task_warnings,
+    PlanFrame, build_schedule, chunk_sizes, merge_fixed_spans, sleep_warnings, split_sizes, task_warnings,
 )
 
 def _study(title, duration, difficulty, earliest, deadline, deadline_slot=SLOTS_PER_DAY):
@@ -269,8 +269,8 @@ def test_time_limit_none_means_unlimited():
     items, unscheduled = build_schedule([], tasks, time_limit_seconds=None)
     assert unscheduled == []
 
-def test_time_limit_too_short_raises_clear_error():
-    # large realistic scenario, near-zero time budget -- can't find any feasible plan in time
+def _too_big_for_a_short_limit():
+    """A large realistic scenario: no feasible plan is found in a near-zero time budget."""
     fixed_blocks = []
     for day in range(14):
         fixed_blocks.append(FixedBlock(title="Course A", start_slot=32, end_slot=44, day=day))
@@ -284,6 +284,11 @@ def test_time_limit_too_short_raises_clear_error():
         for n in range(10)
     ]
     sleep_rules = [SleepRule(night=n) for n in range(14)]
+    return fixed_blocks, tasks, sleep_rules
+
+
+def test_time_limit_too_short_raises_clear_error():
+    fixed_blocks, tasks, sleep_rules = _too_big_for_a_short_limit()
     with pytest.raises(RuntimeError, match="No schedule found within"):
         build_schedule(fixed_blocks, tasks, num_days=14, sleep_rules=sleep_rules,
                    time_limit_seconds=0.001)
@@ -449,3 +454,21 @@ def test_buffer_after_blocks_adds_no_variable_per_block_and_chunk():
             for d in range(4) for s in (20, 40, 60, 80)]
     pairs = (len(many) - len(few)) * 4 * len(tasks)  # 4 chunks per task
     assert _model_size(many, tasks, 4) - _model_size(few, tasks, 4) < pairs // 4
+
+
+def test_plan_frame_solve_all_fit_and_unplaced():
+    frame = PlanFrame([FixedBlock(title="Everything", start_slot=0, end_slot=90)])
+    fits = DynamicTask(title="A", duration_slots=2, priority=3)
+    too_big = DynamicTask(title="B", duration_slots=8, priority=3)
+    items, warnings = frame.solve_all_fit([fits])
+    assert [i.title for i in items if i.kind == "task"] == ["A"] and warnings == []
+    assert frame.solve_all_fit([fits, too_big]) is None
+    assert frame.unplaced([fits, too_big]) == [1]
+
+
+def test_plan_frame_trial_counts_running_out_of_time_as_not_fitting():
+    fixed_blocks, tasks, sleep_rules = _too_big_for_a_short_limit()
+    frame = PlanFrame(fixed_blocks, 14, sleep_rules)
+    with pytest.raises(RuntimeError, match="No schedule found within"):
+        frame.solve_all_fit(tasks, time_limit_seconds=0.001)  # a fit that can't be checked is an error
+    assert frame.trial(tasks, time_limit_seconds=0.001) is None  # one trial of many: just "no"

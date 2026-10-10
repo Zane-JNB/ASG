@@ -1,10 +1,9 @@
-from dataclasses import replace
 from datetime import datetime
 from scheduler.db import EXTRACTED_TASKS
 from scheduler.drop_apply import apply_drop_choice
 from scheduler.drop_review import choose_drop_proposal, choose_automatic
 from scheduler.units import format_hours
-from scheduler.dropping import already_unplaced, propose_drops
+from scheduler.dropping import propose_drops
 from scheduler.fit_check import build_fit_inputs
 from scheduler.models import ExtractedTask
 from scheduler.manual_apply import choose_manual 
@@ -17,20 +16,16 @@ def add_task_with_fit(conn, student_id: int, new_task: ExtractedTask, now: datet
     Returns {"cuts": {...}, "new_task_id": id or None}, or None if nothing was saved."""
     try:
         fit = build_fit_inputs(conn, student_id, now, new_task)
-        # is the verdict itself, not just constraints
-        report = propose_drops(fit.fixed, [t for _, t in fit.planned], fit.new_task, fit.anchor.num_days,
-                               fit.sleep_rules, settings=fit.settings, must_add=must_add, search = False)
-        if not report.fits_already:  # only the new task may decide: leave out tasks that don't fit anyway
-            stuck = already_unplaced(fit.fixed, [t for _, t in fit.planned], fit.anchor.num_days,
-                                     fit.sleep_rules, settings=fit.settings)
+        fits = fit.frame.solve_all_fit(fit.tasks + [fit.new_task])
+        if fits is None:  # only the new task may decide: leave out tasks that don't fit anyway
+            stuck = fit.frame.unplaced(fit.tasks)
             if stuck:
                 for i in stuck:
-                    show(f"Warning: '{fit.planned[i][1].title}' can't fit in the plan even without "
+                    show(f"Warning: '{fit.tasks[i].title}' can't fit in the plan even without "
                          f"'{new_task.title}'; it's left out of this check.")
-                fit = replace(fit, planned=[p for i, p in enumerate(fit.planned) if i not in stuck])
-                report = propose_drops(fit.fixed, [t for _, t in fit.planned], fit.new_task, fit.anchor.num_days,
-                                       fit.sleep_rules, settings=fit.settings, must_add=must_add, search=False)
-    except (ValueError, RuntimeError) as e: #shows the specific error value for a fit that could not be checked
+                fit = fit.without(stuck)
+                fits = fit.frame.solve_all_fit(fit.tasks + [fit.new_task])
+    except (ValueError, RuntimeError) as e:  # the fit could not be checked
         show(f"Could not check the fit: {e}")
         show("Nothing saved.")
         return None
@@ -38,10 +33,10 @@ def add_task_with_fit(conn, student_id: int, new_task: ExtractedTask, now: datet
         if w.kind == "saved_row_unreadable":
             show(f"Warning: {w.message}")
 
-    if report.fits_already:  # later-deadline tasks were shuffled by the solver if needed
+    if fits is not None:  # later-deadline tasks were shuffled by the solver if needed
         new_id = EXTRACTED_TASKS.add(conn, student_id, new_task)
         show("Added.")
-        for w in report.fit_warnings:  # it fits, but sleep was given up for it
+        for w in fits[1]:  # it fits, but sleep was given up for it
             if w.kind == "sleep_short" or w.severity == "hard":
                 show(f"Warning: {w.message}")
         return {"cuts": {}, "new_task_id": new_id}
@@ -57,8 +52,7 @@ def add_task_with_fit(conn, student_id: int, new_task: ExtractedTask, now: datet
         else:  # semi and automatic share one search; they differ in who picks
             if full is None:   
                 try:
-                    full = propose_drops(fit.fixed, [t for _, t in fit.planned], fit.new_task, fit.anchor.num_days,
-                                         fit.sleep_rules, settings=fit.settings, must_add=must_add)
+                    full = propose_drops(fit.frame, fit.tasks, fit.new_task, must_add=must_add)
                 except (ValueError, RuntimeError) as e:  # e.g. the solver ran out of time
                     show(f"Could not search for ways to make room: {e}")
             if full is None:

@@ -1,13 +1,13 @@
-from scheduler.drop_review import _dont_add_fallback   
-from scheduler.dropping import _apply, _solve_all_fit, chunk_sizes, make_proposal   
-from scheduler.manual_cuts import NEW, CutState   
-from scheduler.manual_review import run_manual_edit   
-from scheduler.models import DropAction, DropProposal   
+from scheduler.dropping import NEW_TASK as NEW, dont_add_unverified, try_cuts
+from scheduler.manual_cuts import CutState
+from scheduler.manual_review import run_manual_edit
+from scheduler.models import DropAction, DropProposal
+from scheduler.solver import chunk_sizes
 
 
 def choose_manual(fit, must_add: bool = False, ask=input, show=print,
                   time_limit_seconds: float = 5.0) -> DropProposal | None:   
-    tasks = [t for _, t in fit.planned]  # index i == task_index in apply_drop_choice
+    tasks = fit.tasks  # index i == task_index in apply_drop_choice
     everyone = dict(enumerate(tasks)) | {NEW: fit.new_task}
 
     def sizes_fn(i, remaining):
@@ -23,15 +23,9 @@ def choose_manual(fit, must_add: bool = False, ask=input, show=print,
                               difficulty=tasks[i].difficulty, has_deadline=tasks[i].deadline_day is not None,
                               shrink=n < tasks[i].duration_slots)
                    for i, n in sorted(lost.items()) if i != NEW]
-        new_cut = lost.get(NEW, 0)
-        shorter_new = fit.new_task.model_copy(update={"duration_slots": fit.new_task.duration_slots - new_cut})
-        r = _solve_all_fit(fit.fixed, _apply(tasks, tuple(actions)) + [shorter_new], fit.anchor.num_days,
-                           fit.sleep_rules, fit.settings, time_limit_seconds)
-        if not r:
-            return None
-        return make_proposal(tasks, fit.new_task, fit.settings, fit.sleep_rules, tuple(actions), True, new_cut, *r)
+        return try_cuts(fit.frame, tasks, fit.new_task, actions, lost.get(NEW, 0), time_limit_seconds)
 
     action, proposal = run_manual_edit(state, titles, fits, ask, show, must_add)
     if action == "dont_add":
-        return _dont_add_fallback(fit.new_task, 1)
+        return dont_add_unverified(fit.new_task, 1)
     return proposal  # None for cancel

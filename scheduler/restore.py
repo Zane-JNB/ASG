@@ -2,7 +2,6 @@ from datetime import date, datetime
 
 from scheduler.calendar_utils import extracted_task_to_dynamic_task
 from scheduler.db import EXTRACTED_TASKS, get_plan_cuts, load_settings
-from scheduler.dropping import _solve_all_fit
 from scheduler.fit_check import build_fit_inputs, starts_from
 
 
@@ -35,8 +34,7 @@ def plan_restores(conn, student_id: int, now: datetime, time_limit_seconds: floa
             else:
                 base = starts_from(extracted_task_to_dynamic_task(saved[tid], now.date(), cap), now)
                 trial[tid] = base.model_copy(update={"duration_slots": r})
-            if _solve_all_fit(fit.fixed, list(trial.values()), fit.anchor.num_days, fit.sleep_rules,
-                              fit.settings, time_limit_seconds):
+            if fit.frame.trial(list(trial.values()), time_limit_seconds):
                 planned, given[tid] = trial, r
                 break
     return given
