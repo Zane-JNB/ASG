@@ -372,3 +372,15 @@ def test_replanning_mid_session_keeps_the_session_in_progress(conn, sid):
     record_plan_sessions(conn, sid, "2026-10-05T08:00", [in_progress, later])
     record_plan_sessions(conn, sid, "2026-10-05T09:00", [])  # re-plan at 09:00, mid-session
     assert due_sessions(conn, sid, "2026-10-06T00:00") == [in_progress]  # still checked in on; 14:00 replaced
+
+
+def test_sessions_passed_while_reminders_are_off_do_not_pile_up(conn, sid):  # #16
+    tid = EXTRACTED_TASKS.add(conn, sid, _task("Alpha"))
+    anchor, _, items, _ = plan_from_saved(conn, sid, now=NINE, time_limit_seconds=10)
+    record_plan(conn, sid, anchor, items, NINE)
+    _set(conn, sid, reminders_enabled=False)
+    later = NINE + timedelta(days=3)
+    assert run_checkin(conn, sid, later, lambda _p: "n", lambda _l: None) == 0
+    _set(conn, sid, reminders_enabled=True)  # turned back on: the old sessions were already let go
+    assert due_checkins(conn, sid, later) == []
+    assert not dict(EXTRACTED_TASKS.get(conn, sid))[tid].completed_at

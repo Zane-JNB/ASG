@@ -48,7 +48,7 @@ def finish_task(conn, student_id: int, task_id: int, now: datetime, ask=input, s
     return {"restored": restores}
 
 
-def record_plan(conn, student_id: int, anchor: PlanAnchor, items, now: datetime) -> int:   
+def record_plan(conn, student_id: int, anchor: PlanAnchor, items, now: datetime) -> int:
     """Remember when each task session of a plan is scheduled, so check-ins can tell which ones
     have passed. Call it after making a plan. Returns how many sessions were recorded."""
     origin = datetime.combine(anchor.start_date, time(0))
@@ -65,28 +65,39 @@ def record_plan(conn, student_id: int, anchor: PlanAnchor, items, now: datetime)
 
 
 @dataclass
-class Checkin:   
+class Checkin:
     task_id: int
     title: str
     ended: str  # ISO time the latest unanswered session ended
 
 
-def due_checkins(conn, student_id: int, now: datetime) -> list[Checkin]:   
-    """One entry per task whose scheduled time has passed, if the student wants reminders for it."""
+def _ended(conn, student_id: int, now: datetime) -> tuple[list[Checkin], set[int]]:
+    """Tasks with ended, unasked sessions: (check-ins to ask, ids of tasks not to ask about --
+    closed, deleted, or not wanted as a reminder)."""
     settings = load_settings(conn, student_id)
     tasks = dict(EXTRACTED_TASKS.get(conn, student_id))
-    out = {}
+    ask, quiet = {}, set()
     for task_id, _start, end in due_sessions(conn, student_id, _iso(now)):
         task = tasks.get(task_id)
         if task is None or task.completed_at or not wants_reminder(task, settings):
-            continue
-        out[task_id] = Checkin(task_id, task.title, end)
-    return list(out.values())
+            quiet.add(task_id)
+        else:
+            ask[task_id] = Checkin(task_id, task.title, end)  # the latest session wins
+    return list(ask.values()), quiet
 
 
-def run_checkin(conn, student_id: int, now: datetime, ask=input, show=print) -> int:   
-    """Ask 'did you finish it?' for each task with passed time. Returns how many were asked."""
-    checkins = due_checkins(conn, student_id, now)
+def due_checkins(conn, student_id: int, now: datetime) -> list[Checkin]:
+    """One entry per task whose scheduled time has passed, if the student wants reminders for it."""
+    return _ended(conn, student_id, now)[0]
+
+
+def run_checkin(conn, student_id: int, now: datetime, ask=input, show=print) -> int:
+    """Ask 'did you finish it?' for each task with passed time. Returns how many were asked.
+    Ended sessions nobody will be asked about are let go, so they don't pile up for later."""
+    checkins, quiet = _ended(conn, student_id, now)
+    with transaction(conn):
+        for task_id in quiet:
+            mark_sessions_asked(conn, student_id, task_id, _iso(now))
     for c in checkins:
         when = datetime.fromisoformat(c.ended)
         show(f"Your time for '{c.title}' ended {when:%a %d %b %H:%M}.")
