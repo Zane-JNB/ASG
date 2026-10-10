@@ -115,8 +115,7 @@ def _cut_combos(tasks: list[DynamicTask], new_task: DynamicTask, settings: Profi
 def _free_slots(frame: PlanFrame, tasks: list[DynamicTask]) -> int:
     """Slots in the window no fixed block covers, from the earliest any task may start.
     Ignores buffers, sleep and deadlines, so it over-counts the real room (a safe bound)."""
-    lo = min((0 if t.earliest_start_day is None else t.earliest_start_day * SLOTS_PER_DAY + t.earliest_start_slot
-              for t in tasks), default=0)
+    lo = min((t.earliest_start for t in tasks), default=0)
     end = frame.num_days * SLOTS_PER_DAY
     covered = sum(max(0, min(e, end) - max(s, lo)) for s, e, _ in merge_fixed_spans(frame.fixed))
     return max(0, end - lo - covered)

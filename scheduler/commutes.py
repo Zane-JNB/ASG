@@ -1,5 +1,3 @@
-from datetime import timedelta
-
 from scheduler.models import Commute, FixedBlock, PlanAnchor, ScheduleWarning
 from scheduler.units import MINUTES_PER_SLOT, clock_range, time_to_minutes
 
@@ -14,8 +12,7 @@ def commute_to_block(commute: Commute, day_index: int) -> FixedBlock:
 
 def expand_commutes(commutes: list[Commute], anchor: PlanAnchor) -> list[FixedBlock]:
     """Every commute on every day of the anchor window it runs on."""
-    days = [anchor.start_date + timedelta(days=i) for i in range(anchor.num_days)]
-    return [commute_to_block(c, i) for c in commutes for i, d in enumerate(days) if c.runs_on(d)]
+    return [commute_to_block(c, i) for c in commutes for i, d in enumerate(anchor.dates) if c.runs_on(d)]
 
 
 def commute_overlaps(others: list[FixedBlock], commute_blocks: list[FixedBlock]) -> list[tuple[FixedBlock, FixedBlock]]:
@@ -27,7 +24,7 @@ def commute_overlaps(others: list[FixedBlock], commute_blocks: list[FixedBlock])
 def overlap_warnings(pairs: list[tuple[FixedBlock, FixedBlock]], anchor: PlanAnchor) -> list[ScheduleWarning]:
     return [
         ScheduleWarning.soft("commute_overlap", (
-            f"{anchor.start_date + timedelta(days=c.day):%a %d %b}: "
+            f"{anchor.date_of(c.day):%a %d %b}: "
             f"{c.title} {clock_range(c.start_slot, c.end_slot)} "
             f"overlaps {o.title} {clock_range(o.start_slot, o.end_slot)} (both kept; tasks avoid both)"))
         for c, o in pairs

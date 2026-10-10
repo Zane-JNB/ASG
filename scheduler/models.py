@@ -17,7 +17,25 @@ IsoDate = Annotated[str, AfterValidator(parse_date)]  # "YYYY-MM-DD"
 
 MAX_PRIORITY = 5
 
-class FixedBlock(BaseModel):
+
+def axis_slot(day: int, slot: int) -> int:
+    """A day's slot on the plan's continuous axis (day * 96 + slot)."""
+    return day * SLOTS_PER_DAY + slot
+
+
+class _OnAxis:
+    """Something placed on one day of the plan: day, start_slot and end_slot (exclusive)."""
+    day: int
+    start_slot: int
+    end_slot: int
+
+    @property
+    def span(self) -> tuple[int, int]:
+        """(start, end) on the plan's continuous slot axis."""
+        return axis_slot(self.day, self.start_slot), axis_slot(self.day, self.end_slot)
+
+
+class FixedBlock(_OnAxis, BaseModel):
     title: str
     start_slot: int = Field(ge=0, lt=SLOTS_PER_DAY)
     end_slot: int = Field(gt=0, le=2 * SLOTS_PER_DAY)  # end is exclusive
@@ -29,11 +47,6 @@ class FixedBlock(BaseModel):
         if self.end_slot <= self.start_slot:
             raise ValueError("end_slot must be after start_slot")
         return self
-
-    @property
-    def span(self) -> tuple[int, int]:
-        """(start, end) on the plan's continuous slot axis (day * 96 + slot)."""
-        return self.day * SLOTS_PER_DAY + self.start_slot, self.day * SLOTS_PER_DAY + self.end_slot
 
     def overlaps(self, other: "FixedBlock") -> bool:
         """True if the two blocks share any time. Back-to-back (end == next start) is fine."""
@@ -54,8 +67,18 @@ class DynamicTask(BaseModel):
     earliest_start_day: int | None = Field(default=None, ge=0)  # None = no earliest bound
     earliest_start_slot: int = Field(default=0, ge=0, lt=SLOTS_PER_DAY)
     max_daily_slots: int | None = Field(default=None, gt=0)
-    completed_at: SkipJsonSchema[str | None] = None
     saved_id: SkipJsonSchema[int | None] = None  # id of the saved task this came from, if any
+
+    @property
+    def earliest_start(self) -> int:
+        """The first slot it may start in, on the plan's continuous axis."""
+        return 0 if self.earliest_start_day is None else axis_slot(self.earliest_start_day, self.earliest_start_slot)
+
+    @property
+    def deadline(self) -> int | None:
+        """The slot it must end by (exclusive), on the plan's continuous axis; None = no deadline."""
+        return None if self.deadline_day is None else axis_slot(self.deadline_day, self.deadline_slot)
+
 
 class SleepRule(BaseModel):
     """One night of sleep. Night 0 starts on the evening of day 0."""
@@ -131,7 +154,7 @@ class ScheduleWarning(BaseModel):
     def soft(cls, kind: str, message: str) -> "ScheduleWarning":
         return cls(severity="soft", kind=kind, message=message)
 
-class ScheduledItem(BaseModel):
+class ScheduledItem(_OnAxis, BaseModel):
     title: str
     start_slot: int
     end_slot: int  # exclusive
@@ -270,6 +293,15 @@ class PlanAnchor(BaseModel):
     """The plan window for ONE solve: day 0 == start_date. Built fresh each run, never stored."""
     start_date: date
     num_days: int = Field(gt=0)
+
+    def date_of(self, day: int) -> date:
+        """The calendar date of a day index."""
+        return self.start_date + timedelta(days=day)
+
+    @property
+    def dates(self) -> list[date]:
+        """Every date in the window, day 0 first."""
+        return [self.date_of(i) for i in range(self.num_days)]
 
 class DropAction(BaseModel):
     task_index: int

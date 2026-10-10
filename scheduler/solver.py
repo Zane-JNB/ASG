@@ -24,8 +24,7 @@ def chunk_sizes(task: DynamicTask) -> list[int]:
 
 def merge_fixed_spans(blocks: list[FixedBlock]) -> list[tuple[int, int, bool]]:
     """Union overlapping fixed spans on the absolute slot axis. Touching spans stay separate."""
-    spans = sorted((b.day * SLOTS_PER_DAY + b.start_slot,
-                    b.day * SLOTS_PER_DAY + b.end_slot, b.buffer_before) for b in blocks)
+    spans = sorted((*b.span, b.buffer_before) for b in blocks)
     merged = []
     for s, e, buf in spans:
         if merged and s < merged[-1][1]:
@@ -124,18 +123,14 @@ def _add_task(plan: _Plan, i: int, task: DynamicTask) -> _Task:
     """One optional interval per session: in order, before the deadline, with the buffer after each."""
     model, buffer = plan.model, plan.settings.buffer_slots
     present = model.NewBoolVar(f"present_{i}")
-    earliest = 0
-    if task.earliest_start_day is not None:
-        earliest = task.earliest_start_day * SLOTS_PER_DAY + task.earliest_start_slot
     chunks = []
     for j, size in enumerate(chunk_sizes(task)):
-        lower = earliest if j == 0 else 0  # later chunks are bounded by the order rule instead
+        lower = task.earliest_start if j == 0 else 0  # later chunks are bounded by the order rule instead
         start = model.NewIntVar(lower, plan.horizon - size, f"start_{i}_{j}")
         plan.spaced.append(model.NewOptionalFixedSizeIntervalVar(start, size + buffer, present, f"task_{i}_{j}"))
         plan.after_blocks.append(model.NewOptionalFixedSizeIntervalVar(start, size, present, f"chunk_{i}_{j}"))
-        if task.deadline_day is not None:
-            deadline = task.deadline_day * SLOTS_PER_DAY + task.deadline_slot
-            model.Add(start + size <= deadline).OnlyEnforceIf(present)
+        if task.deadline is not None:
+            model.Add(start + size <= task.deadline).OnlyEnforceIf(present)
         if chunks:
             prev = chunks[-1]
             model.Add(start >= prev.start + prev.size + buffer).OnlyEnforceIf(present)
@@ -280,7 +275,7 @@ def _night_item(rule: SleepRule, items: list[ScheduledItem]) -> ScheduledItem | 
     """This night's sleep item: the one whose start falls inside the night's bedtime window."""
     base = rule.night * SLOTS_PER_DAY
     return next((i for i in items if i.kind == "sleep"
-                 and base + rule.earliest_bed <= i.day * SLOTS_PER_DAY + i.start_slot <= base + rule.latest_bed),
+                 and base + rule.earliest_bed <= i.span[0] <= base + rule.latest_bed),
                 None)
 
 
@@ -299,7 +294,7 @@ def sleep_warnings(sleep_rules: list[SleepRule], items: list[ScheduledItem]) -> 
         if found is None:
             woke_at_cap = reachable_sleep(rule) == 0  # the cap left no room for any sleep
         else:
-            woke_at_cap = found.day * SLOTS_PER_DAY + found.end_slot - base == rule.latest_wake
+            woke_at_cap = found.span[1] - base == rule.latest_wake
         why = f" It has to end by then: {rule.latest_wake_reason}." if rule.latest_wake_reason and woke_at_cap else ""
         if length < rule.min_slots:
             warnings.append(ScheduleWarning.hard("sleep_short", (
@@ -310,7 +305,7 @@ def sleep_warnings(sleep_rules: list[SleepRule], items: list[ScheduledItem]) -> 
                 f"{label}: {format_hours(length)} of sleep, shorter than your "
                 f"target of {format_hours(rule.length_slots)}.{why}")))
         if found is not None:
-            bed = found.day * SLOTS_PER_DAY + found.start_slot - base
+            bed = found.span[0] - base
             if bed > rule.preferred_bed:
                 warnings.append(ScheduleWarning.soft("late_bedtime", (
                     f"{label}: bedtime is {slot_to_time(bed % SLOTS_PER_DAY)}, later than your "

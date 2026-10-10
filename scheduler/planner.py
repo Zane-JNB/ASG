@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime
 from scheduler.fit_check import build_fit_inputs
 from scheduler.db import has_saved_items
 from scheduler.models import PlanAnchor
@@ -26,8 +26,7 @@ def format_plan(anchor: PlanAnchor, fixed, items, warnings) -> list[str]:
     lines, last_day = [], None
     for day, start, end, kind, title in rows:
         if day != last_day:
-            d = anchor.start_date + timedelta(days=day)
-            lines.append(f"{d:%a %d %b %Y}")
+            lines.append(f"{anchor.date_of(day):%a %d %b %Y}")
             last_day = day
         lines.append(f"  {clock_range(start, end)}  [{kind}]  {title}")
     if warnings:

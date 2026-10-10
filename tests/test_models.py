@@ -84,3 +84,28 @@ def test_sleep_permission_defaults_off_loads_from_old_rows_and_is_hidden_from_th
     assert ExtractedTask.model_validate_json(old_row).may_cut_sleep is False
     assert DynamicTask(title="Essay", duration_slots=4, priority=3).may_cut_sleep is False
     assert "may_cut_sleep" not in str(ExtractionResult.model_json_schema())
+
+
+# ---- one continuous slot axis: every model says where it sits on it ----
+from datetime import date as _date
+from scheduler.models import PlanAnchor, ScheduledItem
+
+
+def test_a_scheduled_item_has_a_span_on_the_continuous_axis_like_a_fixed_block():
+    item = ScheduledItem(title="x", start_slot=90, end_slot=100, kind="sleep", day=2)
+    assert item.span == (2 * 96 + 90, 2 * 96 + 100)
+    assert item.span == FixedBlock(title="x", start_slot=90, end_slot=100, day=2).span
+
+
+def test_a_task_knows_its_earliest_start_and_deadline_on_the_axis():
+    free = DynamicTask(title="x", duration_slots=4, priority=1)
+    assert (free.earliest_start, free.deadline) == (0, None)
+    bound = free.model_copy(update={"earliest_start_day": 1, "earliest_start_slot": 36,
+                                    "deadline_day": 3, "deadline_slot": 40})
+    assert (bound.earliest_start, bound.deadline) == (96 + 36, 3 * 96 + 40)
+
+
+def test_a_plan_anchor_lists_its_dates_and_names_the_date_of_a_day():
+    anchor = PlanAnchor(start_date=_date(2026, 10, 30), num_days=3)
+    assert anchor.dates == [_date(2026, 10, 30), _date(2026, 10, 31), _date(2026, 11, 1)]
+    assert anchor.date_of(2) == _date(2026, 11, 1)

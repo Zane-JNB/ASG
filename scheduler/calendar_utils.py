@@ -1,5 +1,5 @@
 """Stored, calendar-dated items -> the solver's day-indexed inputs for one plan window."""
-from datetime import date, timedelta
+from datetime import date
 
 from scheduler.models import DatedBlock, DynamicTask, ExtractedTask, FixedBlock, PlanAnchor, WeeklyPattern
 from scheduler.units import time_to_slot, weekday_name
@@ -46,9 +46,8 @@ def expand_fixed_blocks(patterns: list[WeeklyPattern], dated_blocks: list[DatedB
     """Saved classes and dated sessions as FixedBlocks for THIS anchor window: each weekly
     pattern on every matching day, each dated block on its own day. Dates outside the window
     are left out (a document may list sessions that are already over)."""
-    days = [anchor.start_date + timedelta(days=i) for i in range(anchor.num_days)]
-    day_of = {d.isoformat(): i for i, d in enumerate(days)}
-    return ([_block(p, i) for p in patterns for i, d in enumerate(days) if weekday_name(d) == p.day]
+    day_of = {d.isoformat(): i for i, d in enumerate(anchor.dates)}
+    return ([_block(p, i) for p in patterns for i, d in enumerate(anchor.dates) if weekday_name(d) == p.day]
             + [_block(b, day_of[b.date]) for b in dated_blocks if b.date in day_of])
 
 

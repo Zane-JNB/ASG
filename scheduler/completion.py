@@ -5,7 +5,7 @@ from scheduler.db import (
     clear_plan_cut, clear_task_sessions, due_sessions, EXTRACTED_TASKS, load_settings,
     mark_sessions_asked, record_plan_sessions, reduce_plan_cut, transaction,
 )
-from scheduler.units import MINUTES_PER_SLOT, SLOTS_PER_DAY, format_hours
+from scheduler.units import MINUTES_PER_SLOT, format_hours
 from scheduler.models import PlanAnchor
 from scheduler.restore import plan_restores
 from scheduler.prompts import confirm
@@ -57,8 +57,7 @@ def record_plan(conn, student_id: int, anchor: PlanAnchor, items, now: datetime)
         tid = it.saved_id if it.kind == "task" else None  # by id, so same-titled tasks stay apart
         if tid is None:
             continue
-        start = origin + timedelta(minutes=MINUTES_PER_SLOT * (it.day * SLOTS_PER_DAY + it.start_slot))
-        end = origin + timedelta(minutes=MINUTES_PER_SLOT * (it.day * SLOTS_PER_DAY + it.end_slot))
+        start, end = (origin + timedelta(minutes=MINUTES_PER_SLOT * s) for s in it.span)
         rows.append((tid, _iso(start), _iso(end)))
     record_plan_sessions(conn, student_id, _iso(now), rows)
     return len(rows)
