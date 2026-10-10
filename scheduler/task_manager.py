@@ -13,7 +13,7 @@ from scheduler.prompts import (ask_missed, ask_until, confirm, describe_task, pa
                                parse_rating, pick)
 from scheduler.settings_menu import run_settings_menu
 from scheduler.task_filter import describe_reminders
-from scheduler.units import parse_time, slots_to_hours
+from scheduler.units import parse_time, plan_start, slots_to_hours
 
 _DEFAULT = ExtractedTask(title="x", date="2000-01-01")  # only used to read the placeholder defaults
 _SESSION_CAP = DynamicTask.model_fields["max_session_slots"].default
@@ -27,7 +27,7 @@ def prompt_new_task(ask=input, show=print, today: date | None = None, session_ca
     def future_due(s: str) -> tuple[str, str | None]:
         d, t = parse_due(s)
         typed = ExtractedTask(title="x", date=d, due_time=t)  # midnight / rounding applied
-        if now is not None and typed.due_at() <= now:
+        if now is not None and typed.due_at() <= plan_start(now):  # no slot left to plan it in
             raise ValueError(f"due {typed.due_label()} has already passed (plans run in 15-minute steps)")
         if date.fromisoformat(typed.date) < today:  # plans start from today, so an earlier date is never planned
             raise ValueError("due date must be today or later")

@@ -1,7 +1,7 @@
 """The app's time axis: 15-minute slots, clock times, dates, weekdays, and how hours are shown.
 Every other module uses these instead of re-parsing 'HH:MM' or re-deriving hours from slots."""
 import math
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Literal, get_args
 
 MINUTES_PER_SLOT = 15
@@ -74,6 +74,12 @@ def next_slot(now: datetime) -> int:
     """First 15-minute slot that has not started yet, counted from midnight today (96 = tomorrow 00:00)."""
     seconds = now.hour * 3600 + now.minute * 60 + now.second + now.microsecond / 1e6
     return math.ceil(seconds / (MINUTES_PER_SLOT * 60))
+
+
+def plan_start(now: datetime) -> datetime:
+    """When a plan made at now begins: the start of next_slot(now), possibly tomorrow 00:00."""
+    midnight = datetime.combine(now.date(), datetime.min.time())
+    return midnight + timedelta(minutes=next_slot(now) * MINUTES_PER_SLOT)
 
 
 def clock_range(start_slot: int, end_slot: int) -> str:
