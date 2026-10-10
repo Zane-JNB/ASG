@@ -1,8 +1,9 @@
 import pytest
 
 from scheduler import db
-from scheduler.db import (connect, get_or_create_student, replace_extraction,
-                          get_weekly_patterns, get_dated_blocks, get_extracted_tasks)
+from scheduler.db import (
+    connect, get_or_create_student, replace_extraction, WEEKLY_PATTERNS, DATED_BLOCKS, EXTRACTED_TASKS,
+)
 from scheduler.models import WeeklyPattern, DatedBlock, ExtractedTask, ExtractionResult
 
 
@@ -19,9 +20,9 @@ def _result(title="DS"):
 
 
 def _titles(conn, sid):
-    return ([p.title for _, p in get_weekly_patterns(conn, sid)],
-            [b.title for _, b in get_dated_blocks(conn, sid)],
-            [t.title for _, t in get_extracted_tasks(conn, sid)])
+    return ([p.title for _, p in WEEKLY_PATTERNS.get(conn, sid)],
+            [b.title for _, b in DATED_BLOCKS.get(conn, sid)],
+            [t.title for _, t in EXTRACTED_TASKS.get(conn, sid)])
 
 
 def test_first_save_then_replace():
@@ -73,7 +74,7 @@ def _task(title, date="2026-10-02"):
 
 
 def _task_titles(conn, sid):
-    return sorted(t.title for _, t in get_extracted_tasks(conn, sid))
+    return sorted(t.title for _, t in EXTRACTED_TASKS.get(conn, sid))
 
 
 def test_timetable_import_replaces_classes_but_keeps_tasks():
@@ -81,7 +82,7 @@ def test_timetable_import_replaces_classes_but_keeps_tasks():
     replace_extraction(conn, sid, ExtractionResult(tasks=[_task("Essay")]))
     replace_extraction(conn, sid, ExtractionResult(weekly_patterns=[_pattern("DS")]))
     replace_extraction(conn, sid, ExtractionResult(weekly_patterns=[_pattern("DS v2")]))
-    assert [p.title for _, p in get_weekly_patterns(conn, sid)] == ["DS v2"]
+    assert [p.title for _, p in WEEKLY_PATTERNS.get(conn, sid)] == ["DS v2"]
     assert _task_titles(conn, sid) == ["Essay"]
 
 
@@ -116,3 +117,10 @@ def test_summary_reports_replaced_counts():
     conn = connect(":memory:"); sid = get_or_create_student(conn, "Z")
     assert replace_extraction(conn, sid, _result()) == {
         "weekly": 1, "dated": 1, "tasks_added": 1, "tasks_skipped": 0}
+
+def test_a_saved_task_that_is_not_json_does_not_break_an_import():
+    conn = connect(":memory:"); sid = get_or_create_student(conn, "Z")
+    conn.execute("INSERT INTO extracted_tasks (student_id, data_json, created_at) VALUES (?, 'not json', '')", (sid,))
+    conn.commit()
+    summary = replace_extraction(conn, sid, ExtractionResult(tasks=[ExtractedTask(title="HW", date="2026-10-02")]))
+    assert summary["tasks_added"] == 1

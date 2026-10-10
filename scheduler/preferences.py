@@ -4,7 +4,8 @@ from dataclasses import dataclass
 from enum import Enum
 from pydantic import ValidationError
 from scheduler.db import (clear_evidence, load_approval_mode, load_evidence_times, load_settings, load_tiers,
-                          log_reflection, save_approval_mode, save_settings, set_tier, load_evidence, save_evidence)
+                          log_reflection, save_approval_mode, save_settings, set_tier, load_evidence, save_evidence,
+                          transaction)
 from scheduler.models import ProfileSettings
 from scheduler.reflection import ReflectionResult, PreferenceChangeProposal, apply_proposal
 from scheduler.preference_policy import POLICY, FieldPolicy, Tier
@@ -76,13 +77,10 @@ def set_values(conn, student_id, changes: dict, actor: Actor) -> ProfileSettings
         return before                                 # no-op: no write, no log row
     summary = ", ".join(f"{f}: {getattr(before, f)} -> {getattr(after, f)}" for f in changes)
     outcome = OUTCOME_USER_EDIT if actor == Actor.USER else OUTCOME_INTERNAL_EDIT
-    try:
-        save_settings(conn, student_id, after, commit=False)
+    with transaction(conn):                      # settings + audit row, one transaction
+        save_settings(conn, student_id, after)
         log_reflection(conn, student_id, f"edit by {actor.value}: {summary}", before=before,
-                       after=after, applied=True, outcome=outcome, commit=False)
-        conn.commit()                                 # settings + audit row, one transaction
-    except Exception:
-        conn.rollback(); raise
+                       after=after, applied=True, outcome=outcome)
     return after
 
 def user_edit(conn, student_id, field, value):  
@@ -106,15 +104,12 @@ def change_tier(conn, student_id, field, new_tier: Tier, actor: Actor) -> bool:
     if new_tier == Tier.MODEL_LEARNED and not policy.model_learnable:
         raise PreferenceError(f"'{policy.label}' can't be learned automatically.")
     settings = load_settings(conn, student_id)        # value is never touched
-    try:
-        set_tier(conn, student_id, field, new_tier, commit=False)
-        clear_evidence(conn, student_id, field, commit=False)   # stale either way
+    with transaction(conn):
+        set_tier(conn, student_id, field, new_tier)
+        clear_evidence(conn, student_id, field)   # stale either way
         log_reflection(conn, student_id, f"ownership: {field} {current.value} -> {new_tier.value}",
                        before=settings, after=settings, applied=False,
-                       outcome=OUTCOME_OWNERSHIP_CHANGE, commit=False)
-        conn.commit()
-    except Exception:
-        conn.rollback(); raise
+                       outcome=OUTCOME_OWNERSHIP_CHANGE)
     return True
 
 
@@ -211,17 +206,14 @@ def process_reflection(conn, student_id, reflection_text, result, now = None) ->
                         f"'{label}' changed {old} -> {new} after repeated reflections."))
 
     outcome = next((o for o in _OUTCOME_PRIORITY if any(r.status == o for r in results)), OUTCOME_NONE)
-    try:                                             # evidence + settings + log: one transaction
+    with transaction(conn):                      # evidence + settings + log: one transaction
         for field, state in writes:
-            if state is None: clear_evidence(conn, student_id, field, commit=False)
-            else: save_evidence(conn, student_id, field, *state, commit=False, at=now.isoformat())
+            if state is None: clear_evidence(conn, student_id, field)
+            else: save_evidence(conn, student_id, field, *state, at=now.isoformat())
         if settings != before:
-            save_settings(conn, student_id, settings, commit=False)
+            save_settings(conn, student_id, settings)
         log_reflection(conn, student_id, reflection_text, before=before, after=settings,
-                       applied=settings != before, outcome=outcome, commit=False)
-        conn.commit()
-    except Exception:
-        conn.rollback(); raise
+                       applied=settings != before, outcome=outcome)
     return ReflectionOutcome(outcome, results, settings)
 
 def get_approval_mode(conn, student_id) -> str:  
@@ -236,13 +228,10 @@ def set_approval_mode(conn, student_id, mode, actor) -> bool:
     if mode == current:
         return False
     settings = load_settings(conn, student_id)
-    try:
-        save_approval_mode(conn, student_id, mode, commit=False)
+    with transaction(conn):
+        save_approval_mode(conn, student_id, mode)
         log_reflection(conn, student_id, f"approval mode: {current} -> {mode}", before=settings,
-                       after=settings, applied=False, outcome=OUTCOME_APPROVAL_MODE, commit=False)
-        conn.commit()
-    except Exception:
-        conn.rollback(); raise
+                       after=settings, applied=False, outcome=OUTCOME_APPROVAL_MODE)
     return True
 
 @dataclass(frozen=True)  
@@ -277,16 +266,13 @@ def resolve_pending(conn, student_id, field, approve: bool, now=None) -> FieldRe
     before = load_settings(conn, student_id)
     after = _validated(before, {field: pending.new}) if approve else before
     outcome = OUTCOME_APPROVED if approve else OUTCOME_DECLINED
-    try:
-        clear_evidence(conn, student_id, field, commit=False)   # consumed either way: 1 approval = 1 change
+    with transaction(conn):
+        clear_evidence(conn, student_id, field)   # consumed either way: 1 approval = 1 change
         if approve:
-            save_settings(conn, student_id, after, commit=False)
+            save_settings(conn, student_id, after)
         log_reflection(conn, student_id,
                        f"{'approved' if approve else 'declined'}: {field} {pending.old} -> {pending.new}",
-                       before=before, after=after, applied=approve, outcome=outcome, commit=False)
-        conn.commit()
-    except Exception:
-        conn.rollback(); raise
+                       before=before, after=after, applied=approve, outcome=outcome)
     msg = (f"'{pending.label}' changed {pending.old} -> {pending.new}." if approve else
            f"OK -- '{pending.label}' left as it is. Evidence starts fresh.")
     return FieldResult(field, outcome, msg)

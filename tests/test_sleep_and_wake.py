@@ -4,12 +4,13 @@ from datetime import date, datetime, timedelta
 
 import pytest
 
-from scheduler.db import add_commute, add_dated_block, connect, get_or_create_student
+from scheduler.db import COMMUTES, DATED_BLOCKS, connect, get_or_create_student
 from scheduler.dropping import _sleep_sacrificed
 from scheduler.fit_check import build_fit_inputs
 from scheduler.models import (
-    Commute, DatedBlock, DynamicTask, FixedBlock, ProfileSettings, ScheduledItem, SLOTS_PER_DAY, SleepRule,
+    Commute, DatedBlock, DynamicTask, FixedBlock, ProfileSettings, ScheduledItem, SleepRule,
 )
+from scheduler.units import SLOTS_PER_DAY
 from scheduler.solver import build_schedule, reachable_sleep, sleep_warnings
 
 RULE = dict(earliest_bed=88, preferred_bed=88, latest_bed=88, length_slots=32, min_slots=24)  # bed 22:00
@@ -31,7 +32,7 @@ def _end(item):
     return item.day * SLOTS_PER_DAY + item.end_slot
 
 def _block(conn, sid, title, day, start, end):
-    add_dated_block(conn, sid, DatedBlock(title=title, date=day.isoformat(), start_time=start, end_time=end))
+    DATED_BLOCKS.add(conn, sid, DatedBlock(title=title, date=day.isoformat(), start_time=start, end_time=end))
 
 
 # ---- solver ----
@@ -115,7 +116,7 @@ def test_a_zero_buffer_is_not_mentioned_in_the_reason(conn, sid):
     assert fit.sleep_rules[-1].latest_wake_reason == "'Work' at 06:00 the next day"
 
 def test_a_commute_the_next_morning_caps_the_night_too(conn, sid):
-    add_commute(conn, sid, Commute(start_time="07:00", length_minutes=30, date=(D + timedelta(days=1)).isoformat()))
+    COMMUTES.add(conn, sid, Commute(start_time="07:00", length_minutes=30, date=(D + timedelta(days=1)).isoformat()))
     fit = build_fit_inputs(conn, sid, datetime(2026, 10, 5, 9, 30))
     assert fit.sleep_rules[-1].latest_wake == SLOTS_PER_DAY + 24  # 06:00
 

@@ -16,18 +16,16 @@ Zane will review and correct each. Referenced from `CLAUDE.md`.
 12. Hard-coded search tunables: `propose_drops` (`max_actions`, `max_proposals`, `max_checks`, `time_limit_seconds`) and the `restore.plan_restores` steps should be `ProfileSettings` fields with `POLICY` entries. Do this with the optimal-schedule work.
 13. Solver/drop search size: `_cheapest_first` rebuilds every combination on each batch (slow with about 40+ open tasks). The buffer-after-block rule adds a variable per (block x chunk) pair. Both go with the optimal-schedule work.
 14. Unused reminder fields on `ExtractedTask` (`reminders_enabled`, `reminder_min_*`) are sent in the Groq extraction schema. Remove them or mark them `SkipJsonSchema` (see 10).
-15. Commutes: adding one doesn't check for overlaps or ask the student (it breaks the commute invariant; planning only gives a soft warning). `Commute` doesn't use the shared `_check_time`/`_check_date`, so a date like `20261005` passes but never matches.
+15. Commutes: adding one doesn't check for overlaps or ask the student (it breaks the commute invariant; planning only gives a soft warning).
 16. Small CLI issues:
     - "inf" as hours crashes (`review.hours_to_slots` raises OverflowError).
     - `24:00` is rejected as an end time when editing an import (`review._time`).
-    - Sleep warnings round to 2 significant figures (`solver.hours`; reuse `drop_review._h`).
     - Manual cuts always read "still one block".
     - Old reminder sessions with reminders turned off are never marked as asked (`completion.py`), so they pile up.
 17. A due time inside the current 15-minute slot (e.g. due 10:15 at 10:05) passes `prompt_new_task`, but plans start at the next slot, so it can never be placed and the drop menu opens for nothing. Reject `due_slot <= next_slot(now)` on the same day.
 18. `restore.plan_restores` only gives time back if every planned task fits (`_solve_all_fit`), so one task that can't fit anyway (due too soon) blocks all restores. Leave such tasks out with `already_unplaced`, like `add_task_with_fit`.
-19. `db.record_plan_sessions` deletes sessions that haven't ended yet, including the one in progress. Re-planning mid-session means that session is never checked in on.
 20. `reflect.py` treats every `ValueError` (including our own `PreferenceError`) as a backend failure and offers another Groq call. Narrow it to real backend errors.
-21. Duplicate helpers: `task_manager._ask_field` ~ `menu_input.ask_until`; `task_manager._rating` ~ `settings_menu._rating`; `commute_menu._clock` and `settings_menu._clock` re-parse HH:MM instead of using `models._check_time` (see 15).
-22. `fit_check.unreadable_warnings` re-reads and re-parses all four planner tables on every `build_fit_inputs`, after `_get_items` already parsed them. Collect unreadable rows in the same pass.
-23. Dead or fragile code: `dropping.cut_task(t, 0)` returns a 0-slot task (`sizes[-0:]` is the whole list; only tests use it). `solver.generate_study_tasks` reassigns its own `max_session_slots` parameter in the loop. `fit_check.planned_tasks` is only used by tests.
+21. Duplicate helpers: `task_manager._ask_field` ~ `menu_input.ask_until`; `task_manager._rating` ~ `settings_menu._rating`; `commute_menu._clock` and `settings_menu._clock` re-parse HH:MM instead of using `units.parse_time` (see 15).
+23. Dead or fragile code: `dropping.cut_task(t, 0)` returns a 0-slot task (`sizes[-0:]` is the whole list; only tests use it). `fit_check.planned_tasks` is only used by tests.
 
+24. Preference storage in `db.py` (for G7): `load_tiers` writes (backfills default tiers) on every read; `load_evidence` and `load_evidence_times` read the same table in two queries; `get_reflections` returns loose dicts instead of a typed row (only tests read it).

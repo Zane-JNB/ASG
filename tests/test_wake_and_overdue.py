@@ -3,12 +3,10 @@ from datetime import date, datetime, timedelta
 import pytest
 
 from scheduler.add_with_fit import add_task_with_fit
-from scheduler.db import (
-    add_commute, add_dated_block, add_extracted_task, connect, get_extracted_tasks,
-    get_or_create_student,
-)
+from scheduler.db import COMMUTES, DATED_BLOCKS, EXTRACTED_TASKS, connect, get_or_create_student
 from scheduler.fit_check import build_fit_inputs
-from scheduler.models import Commute, DatedBlock, ExtractedTask, SLOTS_PER_DAY
+from scheduler.models import Commute, DatedBlock, ExtractedTask
+from scheduler.units import SLOTS_PER_DAY
 from scheduler.planner import plan_from_saved
 
 D = date(2026, 10, 5)  # a Monday
@@ -28,7 +26,7 @@ def _task(title, hours, due, **kw):
                          priority=3, difficulty=3, **kw)
 
 def _block(conn, sid, title, day, start, end):
-    add_dated_block(conn, sid, DatedBlock(title=title, date=day.isoformat(), start_time=start, end_time=end))
+    DATED_BLOCKS.add(conn, sid, DatedBlock(title=title, date=day.isoformat(), start_time=start, end_time=end))
 
 def _shifts(conn, sid):  # the review's case: work until 21:00, an early shift the next morning
     _block(conn, sid, "Work", D, "09:30", "21:00")
@@ -43,7 +41,7 @@ def test_last_night_must_end_a_buffer_before_the_next_mornings_shift(conn, sid):
 
 def test_a_commute_before_the_shift_sets_the_wake_up_instead(conn, sid):
     _shifts(conn, sid)
-    add_commute(conn, sid, Commute(start_time="05:30", length_minutes=30, date=(D + timedelta(days=1)).isoformat()))
+    COMMUTES.add(conn, sid, Commute(start_time="05:30", length_minutes=30, date=(D + timedelta(days=1)).isoformat()))
     fit = build_fit_inputs(conn, sid, NOW, _task("Essay", 2, D))
     assert fit.sleep_rules[-1].latest_wake == SLOTS_PER_DAY + 18  # 04:30
 
@@ -58,28 +56,28 @@ def test_task_that_only_fits_by_sleeping_through_the_shift_is_not_just_added(con
     add_task_with_fit(conn, sid, _task("Essay", 2, D, splittable=False), NOW,
                       ask=lambda _p: "", show=shown.append)
     assert "Added." not in shown
-    assert get_extracted_tasks(conn, sid) == []
+    assert EXTRACTED_TASKS.get(conn, sid) == []
 
 def test_saved_plan_sleep_ends_before_the_next_mornings_shift(conn, sid):
     _shifts(conn, sid)
-    add_extracted_task(conn, sid, _task("Reading", 1, D))
+    EXTRACTED_TASKS.add(conn, sid, _task("Reading", 1, D))
     _, _, items, _ = plan_from_saved(conn, sid, now=NOW, time_limit_seconds=10)
     (sleep,) = [i for i in items if i.kind == "sleep"]
     assert sleep.day * SLOTS_PER_DAY + sleep.end_slot <= SLOTS_PER_DAY + 20
 
 
 def test_overdue_task_gives_a_hard_warning(conn, sid):
-    add_extracted_task(conn, sid, _task("Overdue essay", 2, D - timedelta(days=4)))
+    EXTRACTED_TASKS.add(conn, sid, _task("Overdue essay", 2, D - timedelta(days=4)))
     fit = build_fit_inputs(conn, sid, NOW)
     assert [(w.severity, w.kind) for w in fit.warnings] == [("hard", "task_overdue")]
     assert fit.planned == []  # an overdue task is warned about, not planned
 
 def test_finished_and_future_tasks_give_no_date_warnings(conn, sid):
-    add_extracted_task(conn, sid, _task("Done", 2, D - timedelta(days=4), completed_at="2026-10-01T10:00"))
-    add_extracted_task(conn, sid, _task("Today", 1, D))
+    EXTRACTED_TASKS.add(conn, sid, _task("Done", 2, D - timedelta(days=4), completed_at="2026-10-01T10:00"))
+    EXTRACTED_TASKS.add(conn, sid, _task("Today", 1, D))
     assert build_fit_inputs(conn, sid, NOW).warnings == []
 
 def test_saved_plan_reports_an_overdue_task(conn, sid):
-    add_extracted_task(conn, sid, _task("Overdue essay", 2, D - timedelta(days=4)))
+    EXTRACTED_TASKS.add(conn, sid, _task("Overdue essay", 2, D - timedelta(days=4)))
     _, _, _, warnings = plan_from_saved(conn, sid, now=NOW, time_limit_seconds=10)
     assert any(w.kind == "task_overdue" and w.severity == "hard" for w in warnings)

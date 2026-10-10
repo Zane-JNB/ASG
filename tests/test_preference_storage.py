@@ -4,7 +4,7 @@ import pytest
 
 from scheduler.db import (
     clear_evidence, connect, get_or_create_student, get_reflections, load_evidence,
-    load_settings, load_tiers, log_reflection, save_evidence, save_settings, set_tier,
+    load_settings, load_tiers, log_reflection, save_evidence, save_settings, set_tier, transaction,
 )
 from scheduler.models import ProfileSettings
 from scheduler.preference_policy import POLICY, Tier
@@ -105,12 +105,14 @@ def test_log_reflection_stores_outcome_and_defaults_to_none(conn):
     assert [r["outcome"] for r in get_reflections(conn, sid)] == [None, "evidence_recorded"]
 
 
-def test_commit_false_lets_callers_roll_back_everything_together(conn):
+def test_a_failed_transaction_rolls_back_everything_together(conn):
     sid = get_or_create_student(conn, "Zane")
     st = load_settings(conn, sid)
-    save_settings(conn, sid, st.model_copy(update={"buffer_slots": 4}), commit=False)
-    save_evidence(conn, sid, "buffer_slots", 1, "small", commit=False)
-    log_reflection(conn, sid, "x", before=st, after=st, applied=True, commit=False)
-    conn.rollback()
+    with pytest.raises(RuntimeError):
+        with transaction(conn):
+            save_settings(conn, sid, st.model_copy(update={"buffer_slots": 4}))
+            save_evidence(conn, sid, "buffer_slots", 1, "small")
+            log_reflection(conn, sid, "x", before=st, after=st, applied=True)
+            raise RuntimeError("boom")
     assert load_settings(conn, sid).buffer_slots == st.buffer_slots
     assert load_evidence(conn, sid) == {} and get_reflections(conn, sid) == []

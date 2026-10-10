@@ -4,8 +4,8 @@ import pytest
 
 from scheduler.add_with_fit import add_task_with_fit
 from scheduler.db import (
-    add_dated_block, add_extracted_task, connect, get_extracted_tasks, get_or_create_student,
-    get_plan_cuts, load_settings, save_settings,
+    DATED_BLOCKS, EXTRACTED_TASKS, connect, get_or_create_student, get_plan_cuts, load_settings,
+    save_settings,
 )
 from scheduler.drop_apply import apply_drop_choice
 from scheduler.drop_review import describe_proposal
@@ -51,9 +51,9 @@ def sid(conn):
 
 def _tight_day(conn, sid):
     """Class 09-17, a 5h one-block Lab, and a 4h one-block Essay due today: it cannot all fit."""
-    add_dated_block(conn, sid, DatedBlock(title="Class", date=D.isoformat(), start_time="09:00", end_time="17:00"))
-    add_extracted_task(conn, sid, ExtractedTask(title="Lab", date=D.isoformat(), duration_slots=20,
-                                                priority=4, difficulty=3, splittable=False))
+    DATED_BLOCKS.add(conn, sid, DatedBlock(title="Class", date=D.isoformat(), start_time="09:00", end_time="17:00"))
+    EXTRACTED_TASKS.add(conn, sid, ExtractedTask(title="Lab", date=D.isoformat(), duration_slots=20,
+                                                 priority=4, difficulty=3, splittable=False))
     return ExtractedTask(title="Essay", date=D.isoformat(), duration_slots=16, priority=5,
                          difficulty=3, splittable=False)
 
@@ -112,7 +112,7 @@ def test_shortening_the_new_task_keeps_full_hours_saved_and_records_a_plan_cut(c
                            fit.sleep_rules, settings=fit.settings)
     choice = next(p for p in report.proposals if p.new_task_slots_cut)
     summary = apply_drop_choice(conn, sid, choice, fit.planned, essay)
-    saved = {t.title: t.duration_slots for _, t in get_extracted_tasks(conn, sid)}
+    saved = {t.title: t.duration_slots for _, t in EXTRACTED_TASKS.get(conn, sid)}
     assert saved["Essay"] == 16  # saved at full hours
     assert get_plan_cuts(conn, sid)[summary["new_task_id"]] == choice.new_task_slots_cut
     planned = {t.title: t.duration_slots for _, t in planned_tasks(conn, sid, PlanAnchor(start_date=D, num_days=1))}
@@ -137,7 +137,7 @@ def test_screen_and_summary_say_shorten_and_still_one_block(conn, sid):
 # ---------- session length ----------
 def test_the_students_session_length_reaches_the_solver_tasks(conn, sid):
     save_settings(conn, sid, load_settings(conn, sid).model_copy(update={"default_max_session_slots": 4}))
-    add_extracted_task(conn, sid, ExtractedTask(title="Essay", date=D.isoformat(), duration_slots=12))
+    EXTRACTED_TASKS.add(conn, sid, ExtractedTask(title="Essay", date=D.isoformat(), duration_slots=12))
     [(_, t)] = planned_tasks(conn, sid, PlanAnchor(start_date=D, num_days=1))
     assert t.max_session_slots == 4
     fit = build_fit_inputs(conn, sid, NOW, ExtractedTask(title="New", date=D.isoformat(), duration_slots=12))
@@ -157,7 +157,7 @@ def test_menu_session_time_saves_and_takes_effect_immediately(conn, sid):
     run_menu(conn, sid, ask, shown.append, today=date(2026, 9, 28))
     assert load_settings(conn, sid).default_max_session_slots == 4
     assert any("up to 1h" in l for l in shown)
-    assert get_extracted_tasks(conn, sid)[0][1].splittable is False
+    assert EXTRACTED_TASKS.get(conn, sid)[0][1].splittable is False
 
 
 def test_menu_session_time_enter_keeps_and_junk_is_rejected(conn, sid):

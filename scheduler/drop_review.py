@@ -1,20 +1,16 @@
-from scheduler.models import DropAction, DropProposal, DropReport, DynamicTask, MINUTES_PER_SLOT   
-
-
-def _h(slots: int) -> str:  #    -- 7 -> "1.75h"
-    h, m = divmod(slots * MINUTES_PER_SLOT, 60) 
-    return " ".join(part for part in (f"{h}h" if h else "", f"{m}m" if m else "") if part) or "0m"  
+from scheduler.models import DropAction, DropProposal, DropReport, DynamicTask
+from scheduler.units import format_hours
 
 
 def _action_line(a: DropAction) -> str:   
     if a.shrink:   
-        what = (f"Shorten '{a.title}' by {_h(a.slots_lost)} ({_h(a.slots_kept + a.slots_lost)} -> "
-                f"{_h(a.slots_kept)}, still one block)")
+        what = (f"Shorten '{a.title}' by {format_hours(a.slots_lost)} ({format_hours(a.slots_kept + a.slots_lost)} -> "
+                f"{format_hours(a.slots_kept)}, still one block)")
     elif a.is_full_drop:
-        what = f"Drop '{a.title}' entirely (-{_h(a.slots_lost)})"
+        what = f"Drop '{a.title}' entirely (-{format_hours(a.slots_lost)})"
     else:
         what = (f"Cut {a.chunks_cut} of {a.total_chunks} sessions of '{a.title}': "
-                f"{_h(a.slots_kept + a.slots_lost)} -> {_h(a.slots_kept)} (-{_h(a.slots_lost)})")
+                f"{format_hours(a.slots_kept + a.slots_lost)} -> {format_hours(a.slots_kept)} (-{format_hours(a.slots_lost)})")
     detail = f"priority {a.priority}, difficulty {a.difficulty}" + (", has a deadline" if a.has_deadline else "")
     return f"{what} [{detail}]"
 
@@ -26,17 +22,17 @@ def describe_proposal(n: int, p: DropProposal, new_task: DynamicTask) -> list[st
     if p.new_task_added:
         lines += [f"   - {_action_line(a)}" for a in p.actions]
         if p.new_task_slots_cut:
-            lines.append(f"   - Adds '{new_task.title}' shortened to {_h(new_task.duration_slots - p.new_task_slots_cut)} "
-                         f"(from {_h(new_task.duration_slots)}, still one block; priority {new_task.priority}, "
+            lines.append(f"   - Adds '{new_task.title}' shortened to {format_hours(new_task.duration_slots - p.new_task_slots_cut)} "
+                         f"(from {format_hours(new_task.duration_slots)}, still one block; priority {new_task.priority}, "
                          f"difficulty {new_task.difficulty})")
         else:
-            lines.append(f"   - Adds '{new_task.title}' ({_h(new_task.duration_slots)}, "
+            lines.append(f"   - Adds '{new_task.title}' ({format_hours(new_task.duration_slots)}, "
                          f"priority {new_task.priority}, difficulty {new_task.difficulty})")
     else:
-        lines.append(f"   - Don't add '{new_task.title}' ({_h(new_task.duration_slots)}, "
+        lines.append(f"   - Don't add '{new_task.title}' ({format_hours(new_task.duration_slots)}, "
                      f"priority {new_task.priority}, difficulty {new_task.difficulty}); nothing else changes")
     lines.append("   - Sleep: target kept" if p.sleep_sacrificed_slots == 0
-                 else f"   - Sleep: {_h(p.sleep_sacrificed_slots)} below target")
+                 else f"   - Sleep: {format_hours(p.sleep_sacrificed_slots)} below target")
     lines += [f"   !! {f}" for f in p.flags]
     return lines
 

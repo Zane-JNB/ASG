@@ -1,6 +1,5 @@
-from scheduler.drop_review import _h   
+from scheduler.units import format_hours, slots_to_hours
 from scheduler.manual_cuts import NEW, CutState   
-from scheduler.models import MINUTES_PER_SLOT
 from scheduler.review import _hours   
 
 
@@ -23,8 +22,8 @@ def _show_list(state: CutState, titles: dict, order: list, show) -> None:
             what = "removed"
         else:
             k = len(state.sizes_fn(i, left))
-            what = f"{_h(left)}, {k} session{'s' if k != 1 else ''}"
-        was = f" (was {_h(state.durations[i])})" if state.lost.get(i) else ""
+            what = f"{format_hours(left)}, {k} session{'s' if k != 1 else ''}"
+        was = f" (was {format_hours(state.durations[i])})" if state.lost.get(i) else ""
         show(f"  {n}. {titles[i]}{' (new)' if i == NEW else ''} -- {what}{was}")
 
 
@@ -54,7 +53,7 @@ def _edit_task(state: CutState, i: int, ask, show) -> bool:
                 raise ValueError(f"enter a whole number from 1 to {sessions - 1}")
             state.cut_chunks(i, int(text))
         elif raw == "t":
-            state.reduce(i, _hours_or_error(ask(f"  Reduce by how many hours (up to {(left - 1) * MINUTES_PER_SLOT / 60:g}, e.g. 1.5)? ").strip()))
+            state.reduce(i, _hours_or_error(ask(f"  Reduce by how many hours (up to {slots_to_hours(left - 1):g}, e.g. 1.5)? ").strip()))
         else:
             show("  Choose one of the options shown.")
             return False
@@ -76,7 +75,7 @@ def run_manual_edit(state: CutState, titles: dict, fits, ask=input, show=print,
             if result:
                 show("Everything fits now.")
                 if result.sleep_sacrificed_slots:
-                    show(f"  !! Sleep: {_h(result.sleep_sacrificed_slots)} below target")
+                    show(f"  !! Sleep: {format_hours(result.sleep_sacrificed_slots)} below target")
                 for f in result.flags:
                     show(f"  !! {f}")
             else:

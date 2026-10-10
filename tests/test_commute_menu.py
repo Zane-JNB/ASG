@@ -2,7 +2,7 @@ from datetime import date
 
 from scheduler.commute_menu import run_commute_menu
 from scheduler.commutes import expand_commutes
-from scheduler.db import connect, get_commutes, get_or_create_student
+from scheduler.db import connect, COMMUTES, get_or_create_student
 from scheduler.models import PlanAnchor
 
 TODAY = date(2026, 10, 5)  # a Monday
@@ -23,7 +23,7 @@ def _run(answers):
 
 
 def _saved(conn, sid):
-    return [c for _, c in get_commutes(conn, sid)]
+    return [c for _, c in COMMUTES.get(conn, sid)]
 
 
 def test_recurring_commute_on_several_weekdays_makes_one_each():

@@ -161,3 +161,15 @@ def test_apply_and_log_skips_a_proposal_that_would_make_settings_invalid(conn, s
     monkeypatch.setattr(rc, "apply_proposal", to_invalid)
     before = load_settings(conn, student_id)
     assert apply_and_log(conn, student_id, "x", bad, accepted=[True]) == before
+
+
+def test_apply_and_log_is_all_or_nothing(conn, student_id, monkeypatch):
+    before = load_settings(conn, student_id)
+    def broken(*_a, **_kw):
+        raise RuntimeError("disk full")
+    monkeypatch.setattr("scheduler.reflection_cycle.log_reflection", broken)
+    result = make_result(PreferenceChangeProposal(field="buffer_slots", direction="increase",
+                                                  magnitude="small", reason="rushed"))
+    with pytest.raises(RuntimeError):
+        apply_and_log(conn, student_id, "rushed", result, [True])
+    assert load_settings(conn, student_id) == before  # no settings change without its log row

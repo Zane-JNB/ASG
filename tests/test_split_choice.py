@@ -3,9 +3,7 @@ from datetime import date, datetime, timedelta
 import pytest
 
 from scheduler.calendar_utils import extracted_task_to_dynamic_task
-from scheduler.db import (
-    add_extracted_task, connect, get_extracted_tasks, get_or_create_student, update_extracted_task,
-)
+from scheduler.db import EXTRACTED_TASKS, connect, get_or_create_student
 from scheduler.models import ExtractedTask, ExtractionResult
 from scheduler.planner import plan_from_saved
 from scheduler.review import _describe
@@ -46,8 +44,8 @@ def test_old_saved_tasks_without_the_field_load_as_splittable():
 
 
 def test_the_choice_reaches_the_solver_task():
-    assert extracted_task_to_dynamic_task(_task(splittable=False), D).splittable is False
-    assert extracted_task_to_dynamic_task(_task(splittable=True), D).splittable is True
+    assert extracted_task_to_dynamic_task(_task(splittable=False), D, 8).splittable is False
+    assert extracted_task_to_dynamic_task(_task(splittable=True), D, 8).splittable is True
 
 
 def test_short_tasks_are_not_asked_about_splitting():
@@ -68,8 +66,8 @@ def test_unclear_answer_reasks():
 
 
 def test_non_splittable_task_is_planned_as_one_block_and_splittable_as_sessions(conn, sid):
-    add_extracted_task(conn, sid, _task("Whole", 3, splittable=False))
-    add_extracted_task(conn, sid, _task("Parts", 3, splittable=True))
+    EXTRACTED_TASKS.add(conn, sid, _task("Whole", 3, splittable=False))
+    EXTRACTED_TASKS.add(conn, sid, _task("Parts", 3, splittable=True))
     _, _, items, _ = plan_from_saved(conn, sid, now=NOW, time_limit_seconds=10)
     whole = [i for i in items if i.title.startswith("Whole")]
     parts = [i for i in items if i.title.startswith("Parts")]
@@ -78,36 +76,36 @@ def test_non_splittable_task_is_planned_as_one_block_and_splittable_as_sessions(
 
 
 def test_menu_split_option_changes_and_saves_the_setting(conn, sid):
-    add_extracted_task(conn, sid, _task("Essay", 3, splittable=True))
+    EXTRACTED_TASKS.add(conn, sid, _task("Essay", 3, splittable=True))
     ask, shown = scripted(["s", "1", "n", "q"])
     run_menu(conn, sid, ask, shown.append, today=TODAY)
-    assert get_extracted_tasks(conn, sid)[0][1].splittable is False
+    assert EXTRACTED_TASKS.get(conn, sid)[0][1].splittable is False
     assert any("one block" in l for l in shown)
 
 
 def test_menu_split_option_enter_keeps_the_current_setting(conn, sid):
-    add_extracted_task(conn, sid, _task("Essay", 3, splittable=False))
+    EXTRACTED_TASKS.add(conn, sid, _task("Essay", 3, splittable=False))
     ask, shown = scripted(["s", "1", "", "q"])
     run_menu(conn, sid, ask, shown.append, today=TODAY)
-    assert get_extracted_tasks(conn, sid)[0][1].splittable is False
+    assert EXTRACTED_TASKS.get(conn, sid)[0][1].splittable is False
 
 
 def test_menu_split_option_handles_empty_cancel_and_bad_numbers(conn, sid):
     ask, shown = scripted(["s", "q"])
     run_menu(conn, sid, ask, shown.append, today=TODAY)
     assert "No tasks saved." in shown
-    add_extracted_task(conn, sid, _task("Essay", 3))
+    EXTRACTED_TASKS.add(conn, sid, _task("Essay", 3))
     ask, shown = scripted(["s", "", "s", "9", "q"])
     run_menu(conn, sid, ask, shown.append, today=TODAY)
     assert any("between 1 and 1" in l for l in shown)
-    assert get_extracted_tasks(conn, sid)[0][1].splittable is True
+    assert EXTRACTED_TASKS.get(conn, sid)[0][1].splittable is True
 
 
 def test_update_only_touches_the_owners_task(conn, sid):
-    tid = add_extracted_task(conn, sid, _task("Essay", 3))
+    tid = EXTRACTED_TASKS.add(conn, sid, _task("Essay", 3))
     other = get_or_create_student(conn, "Other")
-    assert update_extracted_task(conn, other, tid, _task("Hacked", 1)) is False
-    assert get_extracted_tasks(conn, sid)[0][1].title == "Essay"
+    assert EXTRACTED_TASKS.update(conn, other, tid, _task("Hacked", 1)) is False
+    assert EXTRACTED_TASKS.get(conn, sid)[0][1].title == "Essay"
 
 
 def test_list_line_marks_one_block_tasks_only():

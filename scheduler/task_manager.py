@@ -1,10 +1,8 @@
 from datetime import date, datetime, time
 from scheduler.add_with_fit import add_task_with_fit
-from scheduler.db import (
-    delete_extracted_task, delete_unreadable_item, get_extracted_tasks, get_unreadable_items,
-    update_extracted_task, load_settings
-)
-from scheduler.models import DynamicTask, ExtractedTask, MINUTES_PER_SLOT, _check_time   
+from scheduler.db import EXTRACTED_TASKS, get_unreadable_items, load_settings
+from scheduler.models import DynamicTask, ExtractedTask
+from scheduler.units import parse_time, slots_to_hours
 from scheduler.review import _confirm, _describe, _due, _hours, _missed
 from scheduler.completion import finish_task, run_checkin   
 from scheduler.task_filter import describe_reminders   
@@ -51,7 +49,7 @@ def prompt_new_task(ask=input, show=print, today: date | None = None, session_ca
         if date.fromisoformat(typed.date) < today:  # plans start from today, so an earlier date is never planned
             raise ValueError("due date must be today or later")
         clock = s.strip().partition(" ")[2].strip()
-        if clock and _check_time(clock, end=True) != typed.due_time or typed.date != d:
+        if clock and parse_time(clock, end=True) != typed.due_time or typed.date != d:
             show(f"  Saved as due {typed.due_label()} (plans run in 15-minute steps).")
         return typed.date, typed.due_time
 
@@ -59,7 +57,7 @@ def prompt_new_task(ask=input, show=print, today: date | None = None, session_ca
     due, due_time = _ask_field(ask, show, "due date YYYY-MM-DD (add HH:MM if it has a time)", future_due)
     fields = {"title": title, "date": due, "due_time": due_time}
     for label, key, parse, default in (
-        ("hours", "duration_slots", _hours, f"{_DEFAULT.duration_slots * 15 / 60:g}"),
+        ("hours", "duration_slots", _hours, f"{slots_to_hours(_DEFAULT.duration_slots):g}"),
         ("priority 1-5", "priority", _rating, _DEFAULT.priority),
         ("difficulty 1-5", "difficulty", _rating, _DEFAULT.difficulty),
     ):
@@ -68,14 +66,14 @@ def prompt_new_task(ask=input, show=print, today: date | None = None, session_ca
             fields[key] = value
     task = ExtractedTask(**fields)
     if task.duration_slots > session_cap:  #   -- splitting only matters for tasks longer than one session
-        hours, cap = task.duration_slots * MINUTES_PER_SLOT / 60, session_cap * MINUTES_PER_SLOT / 60
+        hours, cap = slots_to_hours(task.duration_slots), slots_to_hours(session_cap)
         can = _confirm(ask, f"  {hours:g}h is longer than a {cap:g}h session. Can it be split across several sessions?", True)
         task = task.model_copy(update={"splittable": can})
     return task
 
 
 def _sorted_tasks(conn, student_id):
-    open_tasks = [(i, t) for i, t in get_extracted_tasks(conn, student_id) if not t.completed_at]  #   -- done = history
+    open_tasks = [(i, t) for i, t in EXTRACTED_TASKS.get(conn, student_id) if not t.completed_at]  #   -- done = history
     return sorted(open_tasks, key=lambda x: (x[1].date, x[1].due_slot(), x[1].title.lower()))
 
 def _ask_level(ask, show, prompt: str) -> int | None:   
@@ -124,12 +122,12 @@ def _unreadable_menu(conn, student_id, ask, show) -> None:
     if not bad:
         show("Every saved item can be read.")
         return
-    for n, (label, row_id, reason) in enumerate(bad, 1):
-        show(f"{n}. Saved {label} (id {row_id}): {reason}")
+    for n, u in enumerate(bad, 1):
+        show(f"{n}. Saved {u.table.label} (id {u.row_id}): {u.reason}")
     raw = ask("Number to delete (Enter to keep them all): ").strip()
     if raw.isdigit() and 1 <= int(raw) <= len(bad):
-        label, row_id, _ = bad[int(raw) - 1]
-        delete_unreadable_item(conn, student_id, label, row_id)
+        u = bad[int(raw) - 1]
+        u.table.delete(conn, student_id, u.row_id)
         show("Deleted.")
     elif raw:
         show(f"Enter a number between 1 and {len(bad)}.")
@@ -162,7 +160,7 @@ def run_menu(conn, student_id, ask=input, show=print, today: date | None = None,
                 continue    
             raw = ask("Number to delete (Enter to cancel): ").strip()
             if raw.isdigit() and 1 <= int(raw) <= len(tasks):
-                delete_extracted_task(conn, student_id, tasks[int(raw) - 1][0])
+                EXTRACTED_TASKS.delete(conn, student_id, tasks[int(raw) - 1][0])
                 show("Deleted.")
             elif raw:
                 show(f"Enter a number between 1 and {len(tasks)}.")
@@ -192,13 +190,13 @@ def run_menu(conn, student_id, ask=input, show=print, today: date | None = None,
             if raw.isdigit() and 1 <= int(raw) <= len(tasks):
                 task_id, task = tasks[int(raw) - 1]
                 can = _confirm(ask, f"  Can '{task.title}' be split across several sessions?", task.splittable)
-                update_extracted_task(conn, student_id, task_id, task.model_copy(update={"splittable": can}))
+                EXTRACTED_TASKS.update(conn, student_id, task_id, task.model_copy(update={"splittable": can}))
                 show("Saved." if can else "Saved -- it will be planned as one block.")
             elif raw:
                 show(f"Enter a number between 1 and {len(tasks)}.")
         elif choice == "t":  #   -- how long each session of a task lasts by default
             settings = load_settings(conn, student_id)
-            now_h = settings.default_max_session_slots * MINUTES_PER_SLOT / 60
+            now_h = slots_to_hours(settings.default_max_session_slots)
             raw = ask(f"Longest single session in hours [{now_h:g}] (Enter to keep): ").strip()
             if raw:
                 try:
@@ -211,7 +209,7 @@ def run_menu(conn, student_id, ask=input, show=print, today: date | None = None,
                 except PreferenceError as e:
                     show(str(e))
                     continue
-                show(f"Saved -- tasks are now planned in sessions of up to {slots * MINUTES_PER_SLOT / 60:g}h.")
+                show(f"Saved -- tasks are now planned in sessions of up to {slots_to_hours(slots):g}h.")
         elif choice == "m":   
             run_commute_menu(conn, student_id, ask, show, today)
         elif choice == "p":                                        
@@ -225,7 +223,7 @@ def run_menu(conn, student_id, ask=input, show=print, today: date | None = None,
                 show("No open tasks saved.")
             elif ask(f"Delete ALL {count} open task(s)? Completed ones are kept. Type yes to confirm: ").strip().lower() == "yes":
                 for task_id, _ in open_tasks:
-                    delete_extracted_task(conn, student_id, task_id)
+                    EXTRACTED_TASKS.delete(conn, student_id, task_id)
                 show(f"Deleted {count} open task(s).")
             else:
                 show("Cancelled -- nothing deleted.")

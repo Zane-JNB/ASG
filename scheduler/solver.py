@@ -1,8 +1,9 @@
 import math
 from ortools.sat.python import cp_model
 from scheduler.models import (
-    DynamicTask,Exam, FixedBlock, MINUTES_PER_SLOT, ProfileSettings, ScheduledItem, ScheduleWarning,
-    SleepRule, SLOTS_PER_DAY, slot_to_time, StudyPlanRule, )
+    DynamicTask, FixedBlock, ProfileSettings, ScheduledItem, ScheduleWarning, SleepRule,
+)
+from scheduler.units import SLOTS_PER_DAY, format_hours, slot_to_time
 
 #Splits tasks into chunks no larger than the student's preference.
 def split_sizes(duration: int, max_session: int) -> list[int]:
@@ -10,9 +11,6 @@ def split_sizes(duration: int, max_session: int) -> list[int]:
     n = math.ceil(duration / max_session)
     base, extra = divmod(duration, n)
     return [base + 1] * extra + [base] * (n - extra)
-
-def hours(slots: int) -> str:  
-    return f"{slots * MINUTES_PER_SLOT / 60:.2g}h"  
 
 def merge_fixed_spans(blocks: list[FixedBlock]) -> list[tuple[int, int, bool]]:   
     """Union overlapping fixed spans on the absolute slot axis. Touching spans stay separate."""
@@ -298,14 +296,14 @@ def sleep_warnings(sleep_rules: list[SleepRule],
         if length < rule.min_slots:   
             warnings.append(ScheduleWarning(   
                 severity="hard", kind="sleep_short",   
-                message=(f"{label}: only {hours(length)} of sleep fits, below your minimum "   
-                         f"of {hours(rule.min_slots)}.{why}"),   
+                message=(f"{label}: only {format_hours(length)} of sleep fits, below your minimum "   
+                         f"of {format_hours(rule.min_slots)}.{why}"),   
             ))   
         elif length < rule.length_slots:   
             warnings.append(ScheduleWarning(   
                 severity="soft", kind="sleep_short",   
-                message=(f"{label}: {hours(length)} of sleep, shorter than your "   
-                         f"target of {hours(rule.length_slots)}.{why}"),   
+                message=(f"{label}: {format_hours(length)} of sleep, shorter than your "   
+                         f"target of {format_hours(rule.length_slots)}.{why}"),   
             ))   
  
         if found is not None:  
@@ -333,44 +331,4 @@ def task_warnings(unscheduled: list[DynamicTask]) -> list[ScheduleWarning]:
                 severity="soft", kind="task_unscheduled",  
                 message=f"'{task.title}' did not fit in this plan.",   
             ))  
-    return warnings   
-
-def generate_study_tasks(exams: list[Exam], rule: StudyPlanRule |
-                        None = None, max_session_slots: int | None = None,
-                        settings: ProfileSettings | None = None) -> list[DynamicTask]:
-    """Turn each exam into a study DynamicTask, sized and windowed by its difficulty band.
-    
-    Sessions are capped at DEFAULT_MAX_SESSION_SLOTS (2h) unless max_session_slots is given
-    explicitly -- band.max_hours_per_day is the daily study target, not a session-length cap.
-    """
-    rule = rule or StudyPlanRule()
-    settings = settings or ProfileSettings()
-    session_cap = max_session_slots or settings.default_max_session_slots  
-    tasks = []
-
-    for exam in exams:
-        band = rule.band_for(exam.difficulty)
-        slots_per_hour = 60 // MINUTES_PER_SLOT
-
-        duration_slots = round(band.min_hours_per_day * band.days_before * slots_per_hour)
-        max_session_slots = round(band.max_hours_per_day * slots_per_hour)
-
-        earliest_day = max(0, exam.day - band.days_before)
-
-        tasks.append(DynamicTask(
-            title=f"Study: {exam.title}",
-            duration_slots=duration_slots,
-            priority=exam.priority,
-            difficulty=exam.difficulty,
-            splittable=True,
-            max_session_slots=session_cap,
-            max_daily_slots=round(band.max_hours_per_day * slots_per_hour),
-            deadline_day=exam.day,
-            deadline_slot=exam.slot,
-            earliest_start_day=earliest_day,
-            earliest_start_slot=0,
-        ))
-    return tasks
- 
- 
- 
+    return warnings

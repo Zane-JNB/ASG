@@ -5,8 +5,8 @@ from typing import Annotated
 
 from pydantic import Field, ValidationError, field_validator
 
-from scheduler.calendar_utils import build_plan_inputs, find_overlaps
-from scheduler.db import get_dated_blocks, get_weekly_patterns, replace_extraction, load_settings
+from scheduler.calendar_utils import expand_fixed_blocks, find_overlaps
+from scheduler.db import DATED_BLOCKS, WEEKLY_PATTERNS, replace_extraction, load_settings
 from scheduler.fit_check import overlap_lines
 from scheduler.llm_backends import is_backend_failure
 from scheduler.models import ExtractionResult, PlanAnchor
@@ -133,12 +133,12 @@ def _clashes_with_saved(conn, student_id, reviewed: ExtractionResult, today: dat
     new_weekly, new_dated = reviewed.weekly_patterns, reviewed.dated_blocks
     if bool(new_weekly) == bool(new_dated):  # both replaced, or neither: nothing saved to clash with
         return []
-    old_weekly = [] if new_weekly else [p for _, p in get_weekly_patterns(conn, student_id)]
-    old_dated = [] if new_dated else [b for _, b in get_dated_blocks(conn, student_id)]
+    old_weekly = [] if new_weekly else [p for _, p in WEEKLY_PATTERNS.get(conn, student_id)]
+    old_dated = [] if new_dated else [b for _, b in DATED_BLOCKS.get(conn, student_id)]
     last = max([today] + [date.fromisoformat(b.date) for b in new_dated + old_dated])
     anchor = PlanAnchor(start_date=today, num_days=max((last - today).days + 1, 7))  # a full week of classes
-    new_blocks, _ = build_plan_inputs(new_weekly, new_dated, [], anchor)
-    old_blocks, _ = build_plan_inputs(old_weekly, old_dated, [], anchor)
+    new_blocks = expand_fixed_blocks(new_weekly, new_dated, anchor)
+    old_blocks = expand_fixed_blocks(old_weekly, old_dated, anchor)
     new_ids = {id(b) for b in new_blocks}
     pairs = [(a, b) for a, b in find_overlaps(new_blocks + old_blocks) if (id(a) in new_ids) != (id(b) in new_ids)]
     return overlap_lines(today, pairs)
