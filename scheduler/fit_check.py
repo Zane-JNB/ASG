@@ -2,9 +2,9 @@
 last deadline in play, fixed blocks, open tasks with their plan cuts, sleep, and warnings."""
 import math
 from dataclasses import dataclass, field, replace
-from datetime import date, datetime, timedelta
+from datetime import datetime
 from scheduler.commutes import commute_overlaps, expand_commutes, overlap_warnings
-from scheduler.calendar_utils import expand_fixed_blocks, extracted_task_to_dynamic_task, find_overlaps
+from scheduler.calendar_utils import expand_fixed_blocks, extracted_task_to_dynamic_task, find_overlaps, overlap_lines
 from scheduler.db import (
     COMMUTES, DATED_BLOCKS, EXTRACTED_TASKS, PLANNER_TABLES, WEEKLY_PATTERNS, Unreadable, get_plan_cuts,
     load_settings,
@@ -14,9 +14,7 @@ from scheduler.models import (
 )
 from scheduler.nights import sleep_setup
 from scheduler.solver import PlanFrame
-from scheduler.units import SLOTS_PER_DAY, clock_range, format_hours, next_slot
-
-MAX_OVERLAPS_SHOWN = 5
+from scheduler.units import SLOTS_PER_DAY, format_hours, next_slot
 
 
 @dataclass
@@ -42,8 +40,13 @@ class FitInputs:
         return replace(self, planned=[p for i, p in enumerate(self.planned) if i not in indices])
 
 
-def _planned_and_overdue(saved_tasks: list[tuple[int, ExtractedTask]], cuts: dict[int, int],
-                         start: date, now: datetime, session: int):
+def to_plan(saved: ExtractedTask, now: datetime, session: int) -> DynamicTask:
+    """A saved task as the solver plans it from now: day-indexed, never before the next slot."""
+    return starts_from(extracted_task_to_dynamic_task(saved, now.date(), session), now)
+
+
+def _planned_and_overdue(saved_tasks: list[tuple[int, ExtractedTask]], cuts: dict[int, int], now: datetime,
+                         session: int) -> tuple[list[tuple[int, DynamicTask]], list[ScheduleWarning]]:
     """One pass over the saved open tasks: ([(saved task id, DynamicTask)] with plan cuts
     applied, warnings). A task whose due time is at or before `now` is left out of the plan with
     a hard task_overdue warning; a fully cut task gets a hard task_dropped warning, a partly cut
@@ -57,7 +60,7 @@ def _planned_and_overdue(saved_tasks: list[tuple[int, ExtractedTask]], cuts: dic
                 f"'{saved.title}' was due {saved.due_label()} and isn't closed. "
                 "Mark it done or missed in manage_tasks.py ([f]).")))
             continue
-        task = extracted_task_to_dynamic_task(saved, start, session)
+        task = to_plan(saved, now, session)
         remaining = task.duration_slots - cuts.get(task_id, 0)
         if remaining <= 0:  # every saved task has a due date, so a full drop misses it: never silent
             warnings.append(ScheduleWarning.hard("task_dropped", (
@@ -80,19 +83,7 @@ def unreadable_warnings(unreadable: list[Unreadable]) -> list[ScheduleWarning]:
             for u in unreadable if not u.closed]  # a closed task is history
 
 
-def overlap_lines(start_date: date, overlaps: list[tuple[FixedBlock, FixedBlock]]) -> list[str]:
-    """'Mon 05 Oct: 'A' 10:00-12:00 overlaps 'B' 11:00-13:00', the first few pairs, then '...and N more'."""
-    lines = []
-    for a, b in overlaps[:MAX_OVERLAPS_SHOWN]:
-        d = start_date + timedelta(days=a.day)
-        lines.append(f"{d:%a %d %b}: '{a.title}' {clock_range(a.start_slot, a.end_slot)} "
-                     f"overlaps '{b.title}' {clock_range(b.start_slot, b.end_slot)}")
-    if len(overlaps) > MAX_OVERLAPS_SHOWN:
-        lines.append(f"...and {len(overlaps) - MAX_OVERLAPS_SHOWN} more overlap(s)")
-    return lines
-
-
-def _block_overlap_warnings(anchor: PlanAnchor, overlaps) -> list[ScheduleWarning]:
+def _block_overlap_warnings(anchor: PlanAnchor, overlaps: list[tuple[FixedBlock, FixedBlock]]) -> list[ScheduleWarning]:
     """Saved classes/sessions that overlap are a hard warning, not an error: both are kept and the
     solver plans around their union (merge_fixed_spans), so one bad import never blocks planning."""
     return [ScheduleWarning.hard("block_overlap", (
@@ -120,10 +111,9 @@ def build_fit_inputs(conn, student_id: int, now: datetime,
     saved = {table: [item for _, item in readable] for table, (readable, _) in reads.items()}
     unreadable = [u for _, bad in reads.values() for u in bad]
 
-    open_tasks, overdue_warnings = _planned_and_overdue(reads[EXTRACTED_TASKS][0], get_plan_cuts(conn, student_id),
-                                                        today, now, session)
-    planned = [(i, starts_from(t, now)) for i, t in open_tasks]
-    new_dyn = starts_from(extracted_task_to_dynamic_task(new_task, today, session), now) if new_task else None
+    planned, overdue_warnings = _planned_and_overdue(reads[EXTRACTED_TASKS][0], get_plan_cuts(conn, student_id),
+                                                     now, session)
+    new_dyn = to_plan(new_task, now, session) if new_task else None
 
     tasks = [t for _, t in planned] + ([new_dyn] if new_dyn else [])
     last_deadline = max((t.deadline_day for t in tasks if t.deadline_day is not None), default=0)

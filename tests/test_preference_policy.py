@@ -1,6 +1,6 @@
 import pytest
 from scheduler.models import ProfileSettings
-from scheduler.preference_policy import MODEL_DELTAS, POLICY, FieldPolicy, Tier
+from scheduler.preference_policy import MAGNITUDES, MODEL_DELTAS, POLICY, ApprovalMode, FieldPolicy, Kind, Tier
 
 PENALTIES = [n for n in ProfileSettings.model_fields if n.endswith("_penalty")]
 
@@ -18,19 +18,40 @@ def test_claimable_set_and_default_tiers():
         "buffer_slots", "default_max_session_slots", "default_sleep_length_slots", "default_preferred_bed"}
     assert POLICY["default_max_session_slots"].default_tier == Tier.USER
 
-@pytest.mark.parametrize("kwargs", [
-    dict(default_tier=Tier.LOCKED, user_editable=True),
-    dict(default_tier=Tier.USER),
-    dict(default_tier=Tier.MODEL_LEARNED),
+@pytest.mark.parametrize("kind,kwargs", [
+    (Kind.LOCKED, dict(deltas={"small": 1})),     # deltas on a field nothing learns
+    (Kind.USER_ONLY, dict(deltas={"small": 1})),
+    (Kind.INTERNAL, dict()),                       # learnable, but no deltas to learn with
+    (Kind.CLAIMABLE, dict()),
+    (Kind.INTERNAL, dict(claimed=True)),           # only a claimable field can start claimed
 ])
-def test_invalid_policy_combinations_are_rejected(kwargs):
-    dict(default_tier=Tier.USER, user_editable=True, user_claimable=True),  # claimable, not learnable
-    dict(default_tier=Tier.USER, user_editable=True, deltas={"small": 1}),  # deltas w/o learnable
+def test_invalid_policies_are_rejected(kind, kwargs):
     with pytest.raises(ValueError):
-        FieldPolicy(label="x", description="y", **kwargs)
+        FieldPolicy(kind, "x", "y", **kwargs)
+
+
+@pytest.mark.parametrize("kind,tier,learnable,editable,claimable", [
+    (Kind.LOCKED, Tier.LOCKED, False, False, False),
+    (Kind.USER_ONLY, Tier.USER, False, True, False),
+    (Kind.INTERNAL, Tier.MODEL_LEARNED, True, False, False),
+    (Kind.CLAIMABLE, Tier.MODEL_LEARNED, True, True, True),
+])
+def test_a_kind_decides_who_may_change_a_field(kind, tier, learnable, editable, claimable):
+    p = FieldPolicy(kind, "x", "y", deltas={"small": 1} if learnable else None)
+    assert (p.default_tier, p.model_learnable, p.user_editable, p.user_claimable) == (tier, learnable, editable, claimable)
+
+
+def test_a_claimed_field_starts_as_the_students():
+    assert FieldPolicy(Kind.CLAIMABLE, "x", "y", deltas={"small": 1}, claimed=True).default_tier == Tier.USER
+
 
 def test_tier_serialized_values_are_exact():
     assert [t.value for t in Tier] == ["locked", "user", "model_learned"]
+
+
+def test_approval_mode_and_magnitude_values_are_exact():
+    assert [m.value for m in ApprovalMode] == ["auto", "ask"]
+    assert MAGNITUDES == ("small", "medium", "large")
 
 
 def test_adjustable_fields_unchanged_by_the_refactor():   # replace the short version

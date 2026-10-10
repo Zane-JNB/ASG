@@ -45,13 +45,16 @@ The project uses Python 3.14 in `.venv` (Windows). Run everything from the repo 
 ## Conventions
 
 - Interactive functions take `ask=input, show=print` (and often `now`/`today`) as injectable parameters. Tests drive them with scripted answer lists and fixed datetimes, so keep this pattern and never call `input()`, `print()` or `datetime.now()` deep inside the logic.
+- `now`/`today` are required parameters. Only the entry scripts read the clock, plus `db._now` (row timestamps) and `task_manager.run_menu`'s default clock.
+- Menus are a `{key: (label, action)}` table run by `prompts.run_choices`; asking and parsing go through `scheduler/prompts.py`.
+- A `_name` is private to its module (tests included): share it by making it public. `tests/test_conventions.py` checks this and the clock rule.
 
 ## LLM backends
 
 All LLM access goes through `scheduler/llm_backends.py` (`call_llm` for text and `call_vision_llm` for images). Groq is the only provider: `PROVIDER = "groq"` picks from the `_BACKENDS` / `_VISION_BACKENDS` tables. There is no `LLM_BACKEND` env var and no offline/fake backend in the app.
-- Groq needs `GROQ_API_KEY`. `GROQ_MODEL` and `GROQ_VISION_MODEL` override the models. Its vision model takes images only; PDFs go through `pdf_extraction` (text per page, scanned pages rendered to images).
+- Groq needs `GROQ_API_KEY`. `GROQ_MODEL` and `GROQ_VISION_MODEL` override the models. Its vision model takes images only. Every upload goes through `pdf_extraction.extract_document`: PDFs page by page (text per page, scanned pages rendered to images), images to the vision call.
 - Entry points (`reflect.py`, import) always ask before the Groq call. `main.py`'s demo makes one Groq call and skips the reflection part if it fails.
-- Tests never call Groq except `@pytest.mark.live` ones. Code that takes a `client=` stand-in expects an OpenAI-SDK shape (`chat.completions.create`).
+- Tests never call Groq except `@pytest.mark.live` ones. `call_llm`/`call_vision_llm` take `client=`: an OpenAI-SDK-shaped stand-in (`chat.completions.create`) that always runs the Groq code, so no caller imports a private backend. `llm_backends.as_items` reads the list keys a model sends.
 
 Plan for more providers (model comparison, 4.1): each candidate model gets its own branch; suitable ones are added to the provider tables and chosen by a task/depth-based router (4.0) that replaces `PROVIDER`. Routing goes by task (reflection / image / PDF) and depth (page count, text length, image size), optionally with a fallback model on a 429.
 Backend failures (missing key, retired model, rate limit, no tool call) raise a clear `RuntimeError`. Entry points report them using `llm_backends.is_backend_failure` instead of crashing; real code bugs still raise.
@@ -66,13 +69,13 @@ Every backend uses forced tool-calling with a JSON schema that comes from the py
 - Every DB query is scoped by `student_id`. Schema changes are additive via `SCHEMA` + `_migrate`. Never drop or rewrite student data.
 - All SQL lives in `db.py`. One commit rule: every write runs inside `db.transaction(conn)` (nested blocks join the outer one; only the outermost commits, any error rolls the whole block back). Group related writes in one `with transaction(conn):`; never call `conn.commit()`.
 - Saved planner rows go through the `db.ItemTable` stores (`WEEKLY_PATTERNS`, `DATED_BLOCKS`, `EXTRACTED_TASKS`, `COMMUTES`; `PLANNER_TABLES` = all four): `add`/`read`/`get`/`find`/`update`/`delete`/`clear`.
-- `plan_from_saved` always plans from now, through `build_fit_inputs` (the fit check's window). There is no fixed start-date mode.
+- `plan_from_saved` always plans from now, through `build_fit_inputs` (the fit check's window), and returns a `Plan`. There is no fixed start-date mode.
 - Saved rows that fail their model checks are skipped, never dropped or rewritten, and get a hard `saved_row_unreadable` warning (`db.get_unreadable_items`); the student deletes them via `[u]` in `manage_tasks.py`.
 
 **Scheduling rules**
 - Buffers: mandatory between task-task, task-block, block-task; not between two fixed blocks. After a commute: normal buffer. Before a commute: none. After waking: `wake_buffer_slots` (default 1h, student-editable) before any task, class or commute, every night, instead of the normal buffer (solver: each night's interval covers sleep + wake buffer; none on a night with no sleep). This morning's version is the "Sleep (night before)" + "Getting ready" blocks (`nights.sleep_setup`).
 - Sleep and deadlines are never silently traded away. Missing minimum sleep, skipping a night, or missing a deadline is a hard warning. Other drops are soft. Open tasks past their due date and optional `due_time` (rounded down to its slot, like the solver deadline) get a hard `task_overdue` warning (`fit_check._planned_and_overdue`). A task whose plan cut takes all its time gets a hard `task_dropped` warning on every plan; a partly cut one gets a soft `task_cut`.
-- Overlapping saved classes/sessions are a hard `block_overlap` warning, never an error: both are kept and the solver plans around their union. Import asks before saving blocks that clash with the saved table it doesn't replace.
+- Overlapping saved classes/sessions are a hard `block_overlap` warning, never an error: both are kept and the solver plans around their union. Import asks before saving blocks that clash with the saved table it doesn't replace. Overlaps are found and worded in `calendar_utils` (`find_overlaps`, `overlaps_between`, `overlap_lines`).
 - Every night must end by `SleepRule.latest_wake`: the next day's first class/commute minus `wake_buffer_slots`, with `latest_wake_reason` naming it (`nights.with_wake_limit`). For the window's last night that is the morning after the window, which is only looked at, never planned, so the window doesn't grow. Drop proposals count only sleep below what each night allows (`solver.reachable_sleep`), and a short-sleep warning names the cap only when it was the limit.
 - Objective order (highest cost first): sleep minimum > sleep target > task fit/priority > same-day spread > bedtime drift. Target sleep goes only to a task with `may_cut_sleep` (the student's leave, saved on the task: chosen in the make-room menu or with `[s]` in `manage_tasks.py`), and only up to that task's own time plus breaks (`solver._guard_sleep_target`). Minimum sleep still outranks every task.
 - Commutes are fixed blocks with priority over tasks. If one overlaps another block, tell the student and ask; never silently drop it.
@@ -83,8 +86,8 @@ Every backend uses forced tool-calling with a JSON schema that comes from the py
 
 **Preferences and LLM**
 - No hardcoded algorithm tunables: all live in `ProfileSettings`, per student.
-- Every `ProfileSettings` field needs a `POLICY` entry (a test fails otherwise). Tiers: `LOCKED` (nobody), `USER` (student only), `MODEL_LEARNED` (reflections); students can claim a field.
-- The LLM never picks values or thresholds. Reflections return direction + magnitude only. One reflection never changes a setting; it needs repeated evidence across separate reflections (`EVIDENCE_THRESHOLD`, `EVIDENCE_TTL_DAYS`).
+- Every `ProfileSettings` field needs a `POLICY` entry (a test fails otherwise). Each entry's `Kind` (locked, user-only, internal, claimable) sets its default tier and who may edit or learn it. Tiers: `LOCKED` (nobody), `USER` (student only), `MODEL_LEARNED` (reflections); students can claim a claimable field.
+- The LLM never picks values or thresholds. Reflections return direction + magnitude only; `preferences.stepped_value` turns them into a bounded number. One reflection never changes a setting; it needs repeated evidence across separate reflections (`EVIDENCE_THRESHOLD`, `EVIDENCE_TTL_DAYS`).
 - Penalty fields and `drop_deadline_multiplier` are never user-editable.
 - Write settings via `preferences.set_values` (it enforces tiers). Legacy path that skips tier checks via `db.save_settings`: `reflection_cycle.apply_and_log` only (the demo's y/N is the student's consent).
 

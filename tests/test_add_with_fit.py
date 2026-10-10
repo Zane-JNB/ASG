@@ -91,7 +91,7 @@ def test_near_deadline_task_shuffles_a_later_one_instead_of_cutting_it(conn, sid
     EXTRACTED_TASKS.add(conn, sid, _task("Report", 6, 3, D + timedelta(days=3)))
     result, shown = _run(conn, sid, _task("Quiz prep", 4, 5, D), [])  # no answers: must not ask
     assert shown == ["Added."]
-    assert result["cuts"] == {} and get_plan_cuts(conn, sid) == {}
+    assert result.cuts == {} and get_plan_cuts(conn, sid) == {}
 
 def _tight_day(conn, sid):
     _class_all_day(conn, sid)
@@ -103,7 +103,7 @@ def test_impossible_deadline_offers_ranked_options_and_saves_the_pick(conn, sid)
     essay = _tight_day(conn, sid)
     result, shown = _run(conn, sid, essay, ["s", "1"])
     assert any("Options, best first" in l for l in shown)
-    assert result["new_task_id"] is not None and sum(get_plan_cuts(conn, sid).values()) > 0
+    assert result.new_task_id is not None and sum(get_plan_cuts(conn, sid).values()) > 0
     saved = {t.title: t.duration_slots for _, t in EXTRACTED_TASKS.get(conn, sid)}
     assert saved == {"Lab": 20, "Essay": 16}  # saved hours untouched
 
@@ -111,7 +111,7 @@ def test_impossible_deadline_offers_ranked_options_and_saves_the_pick(conn, sid)
 def test_choosing_not_to_add_saves_nothing(conn, sid):
     essay = _tight_day(conn, sid)
     result, shown = _run(conn, sid, essay, ["s", "2"])
-    assert result["new_task_id"] is None and result["cuts"] == {}
+    assert result.new_task_id is None and result.cuts == {}
     assert get_plan_cuts(conn, sid) == {} and len(EXTRACTED_TASKS.get(conn, sid)) == 1
 
 
@@ -139,7 +139,7 @@ def test_overlapping_saved_blocks_no_longer_stop_the_check(conn, sid):
     assert not any("Could not check the fit" in l for l in shown)
 
 
-def test_report_moves_later_so_the_task_due_today_fits_and_nothing_is_cut(conn, sid):   
+def test_report_moves_later_so_the_task_due_today_fits_and_nothing_is_cut(conn, sid):
     _class_all_day(conn, sid)
     EXTRACTED_TASKS.add(conn, sid, _task("Report", 6, 3, D + timedelta(days=3)))
     add_task_with_fit(conn, sid, _task("Quiz prep", 4, 5, D), NINE_AM,
@@ -153,53 +153,53 @@ def test_report_moves_later_so_the_task_due_today_fits_and_nothing_is_cut(conn, 
     assert not [w for w in warnings if w.kind == "task_unscheduled"]
     assert get_plan_cuts(conn, sid) == {}  # shuffled, not cut
 
-def test_manual_drop_then_save_cuts_only_what_the_student_chose(conn, sid):   
+def test_manual_drop_then_save_cuts_only_what_the_student_chose(conn, sid):
     essay = _tight_day(conn, sid)  # screen order: 1 = Lab, 2 = Essay (new)
     result, shown = _run(conn, sid, essay, ["m", "1", "d", "s"])
     lab_id = next(i for i, t in EXTRACTED_TASKS.get(conn, sid) if t.title == "Lab")
     assert get_plan_cuts(conn, sid) == {lab_id: 20}
-    assert result["new_task_id"] is not None
+    assert result.new_task_id is not None
 
 
-def test_manual_cancel_after_cutting_restores_the_timetable(conn, sid):   
+def test_manual_cancel_after_cutting_restores_the_timetable(conn, sid):
     essay = _tight_day(conn, sid)
     result, shown = _run(conn, sid, essay, ["m", "1", "d", "", "y", ""])
     assert result is None and get_plan_cuts(conn, sid) == {}
     assert len(EXTRACTED_TASKS.get(conn, sid)) == 1
 
 
-def test_manual_dont_add_discards_the_cuts_made_so_far(conn, sid):   
+def test_manual_dont_add_discards_the_cuts_made_so_far(conn, sid):
     essay = _tight_day(conn, sid)
     result, shown = _run(conn, sid, essay, ["m", "1", "d", "n"])
-    assert result["new_task_id"] is None and get_plan_cuts(conn, sid) == {}
+    assert result.new_task_id is None and get_plan_cuts(conn, sid) == {}
     assert len(EXTRACTED_TASKS.get(conn, sid)) == 1
 
 
-def test_manual_can_shorten_the_new_task_and_keep_cutting(conn, sid):   
+def test_manual_can_shorten_the_new_task_and_keep_cutting(conn, sid):
     essay = _tight_day(conn, sid)
     result, shown = _run(conn, sid, essay, ["m", "2", "t", "1", "1", "d", "s"])
-    assert get_plan_cuts(conn, sid)[result["new_task_id"]] == 4  # 1h of the new task, plan-only
+    assert get_plan_cuts(conn, sid)[result.new_task_id] == 4  # 1h of the new task, plan-only
 
-def test_automatic_applies_the_top_plan_on_y(conn, sid):   
+def test_automatic_applies_the_top_plan_on_y(conn, sid):
     essay = _tight_day(conn, sid)
     result, shown = _run(conn, sid, essay, ["a", "y"])
-    assert result["new_task_id"] is not None and sum(get_plan_cuts(conn, sid).values()) > 0
+    assert result.new_task_id is not None and sum(get_plan_cuts(conn, sid).values()) > 0
 
 
-def test_automatic_declined_saves_nothing(conn, sid):   
+def test_automatic_declined_saves_nothing(conn, sid):
     essay = _tight_day(conn, sid)
     result, shown = _run(conn, sid, essay, ["a", "", ""])
     assert result is None and get_plan_cuts(conn, sid) == {}
     assert len(EXTRACTED_TASKS.get(conn, sid)) == 1
 
-def test_declining_automatic_returns_to_the_mode_prompt(conn, sid):   
+def test_declining_automatic_returns_to_the_mode_prompt(conn, sid):
     essay = _tight_day(conn, sid)
     result, shown = _run(conn, sid, essay, ["a", "n", "m", "1", "d", "s"])
     assert "Nothing saved yet. Choose another way, or Enter to cancel." in shown
-    assert result["new_task_id"] is not None
+    assert result.new_task_id is not None
 
 
-def test_the_ranked_search_runs_once_across_mode_switches(conn, sid, monkeypatch):   
+def test_the_ranked_search_runs_once_across_mode_switches(conn, sid, monkeypatch):
     from scheduler.dropping import propose_drops
     calls = []
     monkeypatch.setattr("scheduler.add_with_fit.propose_drops",
@@ -215,7 +215,7 @@ def _long_day_then_early_class(conn, sid):
 
 
 def test_a_task_that_only_fits_by_cutting_target_sleep_is_never_added_silently(conn, sid):
-    # #11: it used to be added with a warning after "Added."; now the student is asked first
+    # it used to be added with a warning after "Added."; now the student is asked first
     _long_day_then_early_class(conn, sid)
     result, shown = _run(conn, sid, _task("Essay", 1.5, 3, D), [""])
     assert result is None and "Added." not in shown and EXTRACTED_TASKS.get(conn, sid) == []
@@ -224,7 +224,7 @@ def test_a_task_that_only_fits_by_cutting_target_sleep_is_never_added_silently(c
 def test_letting_the_new_task_use_sleep_is_saved_with_it_and_planned(conn, sid):
     _long_day_then_early_class(conn, sid)
     result, shown = _run(conn, sid, _task("Essay", 1.5, 3, D), ["a", "y"])
-    assert result["cuts"] == {} and dict(EXTRACTED_TASKS.get(conn, sid))[result["new_task_id"]].may_cut_sleep
+    assert result.cuts == {} and dict(EXTRACTED_TASKS.get(conn, sid))[result.new_task_id].may_cut_sleep
     assert "  'Essay' may use sleep below your target (saved with the task)" in shown
     _, _, items, warnings = plan_from_saved(conn, sid, now=NINE_AM)
     assert "Essay" in [i.title for i in items if i.kind == "task"]
@@ -242,14 +242,14 @@ def test_manual_cuts_that_only_fit_with_sleep_below_target_show_it_and_save_the_
     # the check falls back to letting it use sleep below target, shown before saving
     result, shown = _run(conn, sid, _task("Essay", 1.5, 3, D), ["m", "1", "t", "0.25", "s"])
     assert "Everything fits now." in shown and any(l.startswith("  !! Sleep:") for l in shown)
-    assert dict(EXTRACTED_TASKS.get(conn, sid))[result["new_task_id"]].may_cut_sleep
+    assert dict(EXTRACTED_TASKS.get(conn, sid))[result.new_task_id].may_cut_sleep
     assert "  'Essay' may use sleep below your target (saved with the task)" in shown
 
 
 def test_manual_cuts_that_fit_on_their_own_keep_target_sleep(conn, sid):
     essay = _tight_day(conn, sid)
     result, _ = _run(conn, sid, essay, ["m", "1", "d", "s"])
-    assert not dict(EXTRACTED_TASKS.get(conn, sid))[result["new_task_id"]].may_cut_sleep
+    assert not dict(EXTRACTED_TASKS.get(conn, sid))[result.new_task_id].may_cut_sleep
 
 
 def test_a_failed_full_search_returns_to_the_mode_prompt(conn, sid, monkeypatch):
@@ -265,5 +265,5 @@ def test_a_saved_task_that_cannot_fit_anyway_does_not_block_a_new_one(conn, sid)
     EXTRACTED_TASKS.add(conn, sid, ExtractedTask(title="Lab", date=D.isoformat(), due_time="10:00",
                                                  duration_slots=32, priority=3))  # 8h, due in 1h
     result, shown = _run(conn, sid, _task("Reading", 0.5, 2, D + timedelta(days=7)), [])
-    assert result["new_task_id"] is not None and "Added." in shown
+    assert result.new_task_id is not None and "Added." in shown
     assert any("'Lab' can't fit in the plan even without 'Reading'" in s for s in shown)

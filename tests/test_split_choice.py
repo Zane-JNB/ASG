@@ -50,19 +50,19 @@ def test_the_choice_reaches_the_solver_task():
 
 def test_short_tasks_are_not_asked_about_splitting():
     ask, shown = scripted(["Quiz", "2026-10-05", "2", "", ""])  # 2h = one session, nothing to split
-    task = prompt_new_task(ask, shown.append, today=TODAY)  # a further ask would raise StopIteration
+    task = prompt_new_task(ask, shown.append, now=datetime.combine(TODAY, datetime.min.time()), session_cap=8)  # a further ask would raise StopIteration
     assert task.splittable is True and not any("split" in l for l in shown)
 
 
 @pytest.mark.parametrize("answer, expected", [("n", False), ("y", True), ("", True)])
 def test_long_tasks_ask_and_the_answer_is_kept(answer, expected):
     ask, shown = scripted(["Report", "2026-10-05", "5", "", "", answer])
-    assert prompt_new_task(ask, shown.append, today=TODAY).splittable is expected
+    assert prompt_new_task(ask, shown.append, now=datetime.combine(TODAY, datetime.min.time()), session_cap=8).splittable is expected
 
 
 def test_unclear_answer_reasks():
     ask, shown = scripted(["Report", "2026-10-05", "5", "", "", "maybe", "n"])
-    assert prompt_new_task(ask, shown.append, today=TODAY).splittable is False
+    assert prompt_new_task(ask, shown.append, now=datetime.combine(TODAY, datetime.min.time()), session_cap=8).splittable is False
 
 
 def test_non_splittable_task_is_planned_as_one_block_and_splittable_as_sessions(conn, sid):

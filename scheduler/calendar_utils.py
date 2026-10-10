@@ -2,7 +2,9 @@
 from datetime import date, timedelta
 
 from scheduler.models import DatedBlock, DynamicTask, ExtractedTask, FixedBlock, PlanAnchor, WeeklyPattern
-from scheduler.units import time_to_slot, weekday_name
+from scheduler.units import clock_range, time_to_slot, weekday_name
+
+MAX_OVERLAPS_SHOWN = 5
 
 
 def day_index_for_date(plan_start_date: date, target_date: date) -> int:
@@ -46,9 +48,8 @@ def expand_fixed_blocks(patterns: list[WeeklyPattern], dated_blocks: list[DatedB
     """Saved classes and dated sessions as FixedBlocks for THIS anchor window: each weekly
     pattern on every matching day, each dated block on its own day. Dates outside the window
     are left out (a document may list sessions that are already over)."""
-    days = [anchor.start_date + timedelta(days=i) for i in range(anchor.num_days)]
-    day_of = {d.isoformat(): i for i, d in enumerate(days)}
-    return ([_block(p, i) for p in patterns for i, d in enumerate(days) if weekday_name(d) == p.day]
+    day_of = {d.isoformat(): i for i, d in enumerate(anchor.dates)}
+    return ([_block(p, i) for p in patterns for i, d in enumerate(anchor.dates) if weekday_name(d) == p.day]
             + [_block(b, day_of[b.date]) for b in dated_blocks if b.date in day_of])
 
 
@@ -69,3 +70,22 @@ def find_overlaps(blocks: list[FixedBlock]) -> list[tuple[FixedBlock, FixedBlock
                 break
             pairs.append((b1, b2))
     return pairs
+
+
+def overlaps_between(blocks: list[FixedBlock], others: list[FixedBlock]) -> list[tuple[FixedBlock, FixedBlock]]:
+    """Pairs of one block from each list that share time, each pair earlier block first, earliest pair first."""
+    pairs = [tuple(sorted((a, b), key=lambda x: x.span)) for a in blocks for b in others if a.overlaps(b)]
+    return sorted(pairs, key=lambda p: (p[0].span, p[1].span))
+
+
+def overlap_lines(start_date: date, overlaps: list[tuple[FixedBlock, FixedBlock]]) -> list[str]:
+    """'Mon 05 Oct: 'A' 10:00-12:00 overlaps 'B' 11:00-13:00' for the first few pairs, then
+    '...and N more overlap(s)'. start_date is the date of day 0."""
+    lines = []
+    for a, b in overlaps[:MAX_OVERLAPS_SHOWN]:
+        d = start_date + timedelta(days=a.day)
+        lines.append(f"{d:%a %d %b}: '{a.title}' {clock_range(a.start_slot, a.end_slot)} "
+                     f"overlaps '{b.title}' {clock_range(b.start_slot, b.end_slot)}")
+    if len(overlaps) > MAX_OVERLAPS_SHOWN:
+        lines.append(f"...and {len(overlaps) - MAX_OVERLAPS_SHOWN} more overlap(s)")
+    return lines

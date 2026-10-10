@@ -109,3 +109,45 @@ def test_tasks_sorted_by_date():
     })
     result = extract_schedule(b"bytes", "image/png", client=client)
     assert [t.title for t in result.tasks] == ["Due sooner", "Due later"]
+
+# ---- the LLM layer owns its seams: a client stand-in, lenient list reading, one sort ----
+from scheduler.llm_backends import BadModelOutput, as_items, call_llm, call_vision_llm
+from scheduler.models import DatedBlock, ExtractedTask, ExtractionResult, WeeklyPattern
+from scheduler.schedule_extraction import combine
+
+
+def test_a_client_stand_in_runs_the_groq_code_even_while_the_tables_hold_stubs():
+    """The provider tables hold the offline stubs (conftest); a client stand-in is OpenAI-SDK
+    shaped, so it always goes through the real Groq request and returns what it sent."""
+    sent = {"summary": "from the stand-in", "proposals": []}
+    assert call_llm("system", "text", "tool", {}, client=FakeClient(sent)) == sent
+    assert call_vision_llm("system", "text", "aGk=", "image/png", "tool", {}, client=FakeClient(sent)) == sent
+
+
+@pytest.mark.parametrize("value,expected", [
+    (None, []), ({}, []), ("N/A", []), ([{"title": "x"}], [{"title": "x"}]),
+    ({"title": "x"}, [{"title": "x"}]), ('[{"title": "x"}]', [{"title": "x"}]),
+])
+def test_as_items_reads_what_models_send_for_a_list(value, expected):
+    assert as_items("tasks", value) == expected
+
+
+@pytest.mark.parametrize("value", [5, True, "a sentence", {"no_title": 1}])
+def test_as_items_refuses_a_shape_it_cannot_trust(value):
+    with pytest.raises(BadModelOutput):
+        as_items("tasks", value)
+
+
+def test_combine_merges_results_and_sorts_every_list():
+    first = ExtractionResult(
+        weekly_patterns=[WeeklyPattern(title="Fri", day="Fri", start_time="09:00", end_time="10:00")],
+        tasks=[ExtractedTask(title="Late", date="2026-10-09")])
+    second = ExtractionResult(
+        weekly_patterns=[WeeklyPattern(title="Mon", day="Mon", start_time="11:00", end_time="12:00")],
+        dated_blocks=[DatedBlock(title="B", date="2026-10-06", start_time="13:00", end_time="14:00"),
+                      DatedBlock(title="A", date="2026-10-06", start_time="08:00", end_time="09:00")],
+        tasks=[ExtractedTask(title="Early", date="2026-10-02", due_time="10:00")])
+    merged = combine([first, second])
+    assert [p.title for p in merged.weekly_patterns] == ["Mon", "Fri"]
+    assert [b.title for b in merged.dated_blocks] == ["A", "B"]
+    assert [t.title for t in merged.tasks] == ["Early", "Late"]

@@ -21,12 +21,12 @@ def _saved(conn, sid):
 
 def test_add_with_all_defaults_takes_title_and_date_only():
     ask, shown = scripted(["Essay", "2026-10-05", "", "", ""])
-    task = prompt_new_task(ask, shown.append, today=TODAY)
+    task = prompt_new_task(ask, shown.append, now=datetime.combine(TODAY, datetime.min.time()), session_cap=8)
     assert task == ExtractedTask(title="Essay", date="2026-10-05")  # 1h, priority 3, difficulty 3
 
 def test_add_with_custom_values():
     ask, shown = scripted(["Report", "2026-10-05", "6", "5", "4", "n"])
-    task = prompt_new_task(ask, shown.append, today=TODAY)
+    task = prompt_new_task(ask, shown.append, now=datetime.combine(TODAY, datetime.min.time()), session_cap=8)
     assert (task.duration_slots, task.priority, task.difficulty) == (24, 5, 4)
 
 def test_bad_input_reasks_only_that_field():
@@ -35,11 +35,11 @@ def test_bad_input_reasks_only_that_field():
                            "0", "2",                          # under 15 minutes, then 2h
                            "9", "5",                          # priority out of range, then 5
                            "", ])                             # difficulty Enter = default
-    task = prompt_new_task(ask, shown.append, today=TODAY)
+    task = prompt_new_task(ask, shown.append, now=datetime.combine(TODAY, datetime.min.time()), session_cap=8)
     assert (task.title, task.date, task.duration_slots, task.priority, task.difficulty) == \
            ("Essay", "2026-10-05", 8, 5, 3)
-    text = " ".join(" ".join(shown).split()) 
-    assert "required" in text and "today or later" in text and "1 to 5" in text
+    text = " ".join(" ".join(shown).split())
+    assert "required" in text and "2026-09-27 has already passed" in text and "1 to 5" in text
 
 def test_menu_add_list_and_quit():
     conn, sid = _conn()
@@ -142,18 +142,18 @@ def test_added_task_reaches_the_plan():
     essay = [i for i in items if i.title.startswith("Essay")]
     assert essay and all(i.day <= 3 for i in essay)  # due Fri 2 Oct = day 3 from Tue 29 Sep
 
-def test_due_today_is_accepted():   
+def test_due_today_is_accepted():
     ask, shown = scripted(["Quiz", "2026-09-28", "", "", ""])
-    task = prompt_new_task(ask, shown.append, today=TODAY)
+    task = prompt_new_task(ask, shown.append, now=datetime.combine(TODAY, datetime.min.time()), session_cap=8)
     assert task.date == "2026-09-28"
 
-def test_menu_m_opens_the_commute_menu():   
+def test_menu_m_opens_the_commute_menu():
     conn, sid = _conn()
     ask, shown = scripted(["m", "l", "b", "q"])
     run_menu(conn, sid, ask, shown.append, today=TODAY)
     assert "No commutes saved." in shown
 
-def test_session_time_inf_is_rejected_not_a_crash():  # #16
+def test_session_time_inf_is_rejected_not_a_crash():
     conn, sid = _conn()
     ask, shown = scripted(["t", "inf", "q"])
     run_menu(conn, sid, ask, shown.append, today=TODAY)

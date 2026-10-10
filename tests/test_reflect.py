@@ -4,8 +4,8 @@ import reflect
 from scheduler.reflection_cycle import reflect_and_record
 from scheduler.db import connect, get_or_create_student, get_reflections
 from scheduler.db import load_evidence, load_settings
-from scheduler.preferences import APPROVAL_ASK, Actor, Outcome, change_tier, set_approval_mode
-from scheduler.preference_policy import Tier
+from scheduler.preferences import Actor, Outcome, change_tier, set_approval_mode
+from scheduler.preference_policy import ApprovalMode, Tier
 
 @pytest.fixture
 def conn():
@@ -35,7 +35,7 @@ def feed_inputs(monkeypatch, answers: list[str]):
     monkeypatch.setattr(builtins, "input", fake_input)
 
 
-def test_first_reflection_records_evidence_only(monkeypatch, capsys, conn): 
+def test_first_reflection_records_evidence_only(monkeypatch, capsys, conn):
     feed_inputs(monkeypatch, ["y", "Zane", "felt rushed today, no breaks"])
     reflect.main()
     out = capsys.readouterr().out
@@ -44,7 +44,7 @@ def test_first_reflection_records_evidence_only(monkeypatch, capsys, conn):
     assert load_settings(conn, sid).buffer_slots == 1
 
 
-def test_third_reflection_applies_one_learned_update(monkeypatch, capsys, conn):  
+def test_third_reflection_applies_one_learned_update(monkeypatch, capsys, conn):
     for _ in range(3):
         feed_inputs(monkeypatch, ["y", "Zane", "felt rushed today, no breaks"])
         reflect.main()
@@ -52,7 +52,7 @@ def test_third_reflection_applies_one_learned_update(monkeypatch, capsys, conn):
     sid = get_or_create_student(conn, "Zane")
     assert load_settings(conn, sid).buffer_slots == 3 and load_evidence(conn, sid) == {}
 
-def test_user_owned_field_is_reported_and_untouched(monkeypatch, capsys, conn):   
+def test_user_owned_field_is_reported_and_untouched(monkeypatch, capsys, conn):
     sid = get_or_create_student(conn, "Zane")
     change_tier(conn, sid, "buffer_slots", Tier.USER, Actor.USER)
     feed_inputs(monkeypatch, ["y", "Zane", "felt rushed today, no breaks"])
@@ -88,7 +88,7 @@ def test_declining_the_cost_warning_makes_no_db_changes(monkeypatch, capsys, con
     assert conn.execute("SELECT COUNT(*) FROM students").fetchone()[0] == 0
 
 
-def test_reflection_is_logged_with_outcome(monkeypatch, conn):   
+def test_reflection_is_logged_with_outcome(monkeypatch, conn):
     feed_inputs(monkeypatch, ["y", "Zane", "felt rushed today, no breaks"])
     reflect.main()
     h = get_reflections(conn, get_or_create_student(conn, "Zane"))
@@ -100,7 +100,7 @@ def _reflect(monkeypatch, extra=()):
 
 def test_ask_mode_prompts_only_at_threshold_and_yes_applies(monkeypatch, capsys, conn):
     sid = get_or_create_student(conn, "Zane")
-    set_approval_mode(conn, sid, APPROVAL_ASK, Actor.USER)
+    set_approval_mode(conn, sid, ApprovalMode.ASK, Actor.USER)
     _reflect(monkeypatch); _reflect(monkeypatch)                 # no 3rd input: no prompt yet
     assert load_settings(conn, sid).buffer_slots == 1
     _reflect(monkeypatch, ["y"])
@@ -110,18 +110,18 @@ def test_ask_mode_prompts_only_at_threshold_and_yes_applies(monkeypatch, capsys,
 
 def test_ask_mode_no_leaves_value_unchanged(monkeypatch, conn):
     sid = get_or_create_student(conn, "Zane")
-    set_approval_mode(conn, sid, APPROVAL_ASK, Actor.USER)
+    set_approval_mode(conn, sid, ApprovalMode.ASK, Actor.USER)
     _reflect(monkeypatch); _reflect(monkeypatch); _reflect(monkeypatch, ["n"])
     assert load_settings(conn, sid).buffer_slots == 1 and load_evidence(conn, sid) == {}
 
 def _fail_first(monkeypatch, error, times=1):
     """Make reflect_and_record raise `error` for the first `times` calls, then work normally."""
     calls = []
-    def flaky(conn, sid, text):
+    def flaky(conn, sid, text, now):
         calls.append(text)
         if len(calls) <= times:
             raise error
-        return reflect_and_record(conn, sid, text)
+        return reflect_and_record(conn, sid, text, now=now)
     monkeypatch.setattr(reflect, "reflect_and_record", flaky)
     return calls
 
@@ -164,7 +164,7 @@ def test_model_answering_in_the_wrong_format_offers_a_retry_and_logs_nothing(mon
     assert get_reflections(conn, get_or_create_student(conn, "Zane")) == []
 
 
-def test_a_preference_error_is_our_bug_not_a_backend_failure(monkeypatch, conn):  # #20
+def test_a_preference_error_is_our_bug_not_a_backend_failure(monkeypatch, conn):
     from scheduler.llm_backends import is_backend_failure
     from scheduler.preferences import PreferenceError
     assert not is_backend_failure(PreferenceError("'Break time' is protected and can't be changed."))

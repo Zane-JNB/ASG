@@ -106,16 +106,16 @@ def test_dated_only_import_does_not_wipe_weekly_classes():
 def test_duplicate_tasks_are_skipped_ignoring_case_and_reported():
     conn = connect(":memory:"); sid = get_or_create_student(conn, "Z")
     first = replace_extraction(conn, sid, ExtractionResult(tasks=[_task("Essay"), _task("Essay")]))
-    assert first == {"weekly": 0, "dated": 0, "tasks_added": 1, "tasks_skipped": 1}  # repeat inside one import
+    assert first._asdict() == {"weekly": 0, "dated": 0, "tasks_added": 1, "tasks_skipped": 1}  # repeat inside one import
     second = replace_extraction(conn, sid, ExtractionResult(
         tasks=[_task(" ESSAY "), _task("Essay", date="2026-10-09"), _task("Lab report")]))
-    assert second["tasks_added"] == 2 and second["tasks_skipped"] == 1  # same title, different date is NEW
+    assert second.tasks_added == 2 and second.tasks_skipped == 1  # same title, different date is NEW
     assert _task_titles(conn, sid) == ["Essay", "Essay", "Lab report"]
 
 
 def test_summary_reports_replaced_counts():
     conn = connect(":memory:"); sid = get_or_create_student(conn, "Z")
-    assert replace_extraction(conn, sid, _result()) == {
+    assert replace_extraction(conn, sid, _result())._asdict() == {
         "weekly": 1, "dated": 1, "tasks_added": 1, "tasks_skipped": 0}
 
 def test_a_saved_task_that_is_not_json_does_not_break_an_import():
@@ -123,4 +123,4 @@ def test_a_saved_task_that_is_not_json_does_not_break_an_import():
     conn.execute("INSERT INTO extracted_tasks (student_id, data_json, created_at) VALUES (?, 'not json', '')", (sid,))
     conn.commit()
     summary = replace_extraction(conn, sid, ExtractionResult(tasks=[ExtractedTask(title="HW", date="2026-10-02")]))
-    assert summary["tasks_added"] == 1
+    assert summary.tasks_added == 1

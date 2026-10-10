@@ -14,12 +14,18 @@ Nothing here calls a specific provider directly: everything goes through llm_bac
 so adding another provider later (model routing, 4.0) needs no change here.
 """
 
+import io
+
 import pdfplumber
 import pypdfium2 as pdfium
 
-from scheduler.llm_backends import BadModelOutput, is_backend_failure
+from scheduler.llm_backends import BadModelOutput, call_llm, call_vision_llm, is_backend_failure
 from scheduler.models import ExtractionResult
-from scheduler.schedule_extraction import _sort_result, build_extraction_system_prompt, extraction_from_dict
+from scheduler.schedule_extraction import (
+    TOOL_NAME, build_extraction_system_prompt, combine, extract_schedule, extraction_from_dict, image_request,
+)
+
+PDF = "application/pdf"
 
 MIN_TEXT_CHARS = 40  # below this, treat the page as "no usable text" and render it instead
 RENDER_SCALE = 2.0   # ~144 DPI; enough to read timetable text without huge file sizes
@@ -38,17 +44,24 @@ class PartialExtraction(RuntimeError):
         self.result, self.failed_pages, self.cause = result, failed_pages, cause
 
 
-def _merge(results: list[ExtractionResult]) -> ExtractionResult:
-    return ExtractionResult(
-        weekly_patterns=[p for r in results for p in r.weekly_patterns],
-        dated_blocks=[b for r in results for b in r.dated_blocks],
-        tasks=[t for r in results for t in r.tasks],
-    )
+def extract_document(file_bytes: bytes, media_type: str) -> ExtractionResult:
+    """Any uploaded document: a PDF page by page (Groq's vision model rejects PDFs), an image
+    through the vision path."""
+    if media_type == PDF:
+        return extract_schedule_from_pdf(file_bytes)
+    return extract_schedule(file_bytes, media_type)
+
+
+def page_count(file_bytes: bytes) -> int:
+    """How many pages the PDF has (no call made). pdfplumber/pdfminer raise their own errors
+    for a broken or invalid PDF."""
+    with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
+        return len(pdf.pages)
+
 
 def extract_text_page(page_text: str, call_text_llm) -> ExtractionResult:
     """One page's extracted text -> ExtractionResult. call_text_llm is llm_backends.call_llm
     (injectable for tests, same as extract_schedule takes an injectable client)."""
-    schema = ExtractionResult.model_json_schema()
     user_message = (
         "This text was extracted from one page of a student's schedule document. Extract the "
         "recurring weekly class schedule, any one-off dated sessions, and any dated tasks/"
@@ -58,28 +71,18 @@ def extract_text_page(page_text: str, call_text_llm) -> ExtractionResult:
     raw = call_text_llm(
         system_prompt=build_extraction_system_prompt(),
         user_message=user_message,
-        tool_name="extract_schedule",
-        tool_schema=schema,
+        tool_name=TOOL_NAME,
+        tool_schema=ExtractionResult.model_json_schema(),
     )
     return extraction_from_dict(raw)
 
 
 def extract_image_page(image_bytes: bytes, call_vision) -> ExtractionResult:
-    """One rendered page image -> ExtractionResult, via the existing vision path."""
-    schema = ExtractionResult.model_json_schema()
-    raw = call_vision(
-        system_prompt=build_extraction_system_prompt(),
-        user_text="Extract the recurring weekly class schedule, any one-off dated sessions, "
-                 "and any dated tasks/deadlines from this document page.",
-        image_base64=__import__("base64").standard_b64encode(image_bytes).decode("utf-8"),
-        media_type="image/png",
-        tool_name="extract_schedule",
-        tool_schema=schema,
-    )
-    return extraction_from_dict(raw)
+    """One rendered page image -> ExtractionResult, via the same vision request as an upload."""
+    return extraction_from_dict(call_vision(**image_request(image_bytes, "image/png", "this document page")))
 
 
-def extract_schedule_from_pdf(file_bytes: bytes, call_text_llm=None, call_vision=None) -> ExtractionResult:
+def extract_schedule_from_pdf(file_bytes: bytes, call_text_llm=call_llm, call_vision=call_vision_llm) -> ExtractionResult:
     """Read every page of a PDF: pages with real text go through the text path, pages that
     are scans/images get rendered and go through the vision path. Injectable call_text_llm /
     call_vision default to the real backend (Groq, via llm_backends) so callers don't need to
@@ -90,16 +93,11 @@ def extract_schedule_from_pdf(file_bytes: bytes, call_text_llm=None, call_vision
     would fail too). The renderer is opened only when a page needs it; if it can't open the
     PDF or render a page, only the pages that needed it fail. If some pages were read,
     PartialExtraction carries them; if none were, the error itself is raised."""
-    if call_text_llm is None:
-        from scheduler.llm_backends import call_llm as call_text_llm
-    if call_vision is None:
-        from scheduler.llm_backends import call_vision_llm as call_vision
-
     results, failed = [], []
     model_cause = render_cause = None  # a model error says more than a renderer error; name both
     renderer = _LazyRenderer(file_bytes)
     try:
-        with pdfplumber.open(__import__("io").BytesIO(file_bytes)) as pdf:
+        with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
             num_pages = len(pdf.pages)
             for i, page in enumerate(pdf.pages):
                 text_error = None
@@ -138,8 +136,8 @@ def extract_schedule_from_pdf(file_bytes: bytes, call_text_llm=None, call_vision
             if note:  # name both; a new error, since an SDK error can't be rebuilt from a message
                 raise (BadModelOutput if isinstance(cause, BadModelOutput) else RuntimeError)(f"{cause}{note}") from cause
             raise cause
-        raise PartialExtraction(_sort_result(_merge(results)), failed, cause, note)
-    return _sort_result(_merge(results))
+        raise PartialExtraction(combine(results), failed, cause, note)
+    return combine(results)
 
 
 class _LazyRenderer:
@@ -158,8 +156,8 @@ class _LazyRenderer:
         if self._error is not None:
             raise RenderError(f"the PDF renderer couldn't open this file: {self._error}")
         try:
-            return _render_page(self._doc, page_index)
-        except Exception as e:  # _render_page is only pdfium/Pillow calls: any failure is this page's
+            return render_page(self._doc, page_index)
+        except Exception as e:  # render_page is only pdfium/Pillow calls: any failure is this page's
             raise RenderError(f"page {page_index + 1} couldn't be rendered: {e}") from e
 
     def close(self) -> None:
@@ -167,11 +165,11 @@ class _LazyRenderer:
             self._doc.close()
 
 
-def _render_page(doc, page_index: int) -> bytes:
+def render_page(doc, page_index: int) -> bytes:
     """One page of an open pypdfium2 PdfDocument -> PNG bytes (pypdfium2 is permissively
     licensed, unlike PyMuPDF)."""
     page = doc.get_page(page_index)
     bitmap = page.render(scale=RENDER_SCALE)
-    buf = __import__("io").BytesIO()
+    buf = io.BytesIO()
     bitmap.to_pil().save(buf, format="PNG")
     return buf.getvalue()

@@ -1,22 +1,22 @@
 """Who may change which setting (tiers), and how reflections earn a change: evidence across
 separate reflections, a threshold, then an automatic change or the student's approval."""
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
-from enum import Enum, StrEnum
+from datetime import datetime, timedelta
+from enum import StrEnum
 
+import annotated_types
 from pydantic import ValidationError
 
 from scheduler.db import (clear_evidence, load_approval_mode, load_evidence, load_settings,
                           load_tiers, log_reflection, save_approval_mode, save_evidence, save_settings, set_tier,
                           transaction)
 from scheduler.models import ProfileSettings
-from scheduler.preference_policy import POLICY, FieldPolicy, Tier
-from scheduler.reflection import PreferenceChangeProposal, apply_proposal
+from scheduler.preference_policy import MAGNITUDES, POLICY, ApprovalMode, Direction, FieldPolicy, Magnitude, Tier
+from scheduler.reflection import PreferenceChangeProposal, ReflectionResult
 
 EVIDENCE_THRESHOLD = 3
 EVIDENCE_TTL_DAYS = 14
-APPROVAL_AUTO, APPROVAL_ASK = "auto", "ask"
-_MAGNITUDE_ORDER = {"small": 0, "medium": 1, "large": 2}
+Evidence = tuple[int, Magnitude]  # (net votes, the smallest magnitude voted)
 
 
 class Outcome(StrEnum):
@@ -39,7 +39,7 @@ class Outcome(StrEnum):
 _OUTCOME_PRIORITY = [Outcome.APPLIED, Outcome.PENDING, Outcome.EVIDENCE, Outcome.AT_LIMIT, Outcome.IGNORED]
 
 
-class Actor(str, Enum):
+class Actor(StrEnum):
     USER = "user"
     MODEL = "model"
     INTERNAL = "internal"  # developer/app code
@@ -78,6 +78,34 @@ def check_may_edit(field: str, tiers: dict[str, Tier], actor: Actor) -> None:
     if tier != Tier.USER:
         raise PreferenceError(f"'{policy.label}' is currently managed automatically. "
                               "Take ownership of it first if you want to set it yourself.")
+
+
+def _bounds(field: str) -> tuple[int, int | None]:
+    """(lowest, highest or None) that ProfileSettings' own Field(...) constraints allow."""
+    lo, hi = 0, None
+    for c in ProfileSettings.model_fields[field].metadata:
+        if isinstance(c, annotated_types.Gt):
+            lo = c.gt + 1
+        elif isinstance(c, annotated_types.Ge):
+            lo = c.ge
+        elif isinstance(c, annotated_types.Lt):
+            hi = c.lt - 1
+        elif isinstance(c, annotated_types.Le):
+            hi = c.le
+    return lo, hi
+
+
+def stepped_value(settings: ProfileSettings, field: str, direction: Direction, magnitude: Magnitude) -> int:
+    """The field moved one POLICY step of that magnitude, clamped to its valid range. The LLM
+    only ever names the direction and magnitude; this is where they become a number."""
+    delta = POLICY[field].deltas[magnitude]
+    lo, hi = _bounds(field)
+    value = max(getattr(settings, field) + (delta if direction == "increase" else -delta), lo)
+    return value if hi is None else min(value, hi)
+
+
+def _direction(score: int) -> Direction:
+    return "increase" if score > 0 else "decrease"
 
 
 def validated_settings(before: ProfileSettings, changes: dict) -> ProfileSettings:
@@ -149,17 +177,17 @@ class ReflectionOutcome:
     settings: ProfileSettings
 
 
-def next_evidence(prev, direction, magnitude):
+def next_evidence(prev: Evidence | None, direction: Direction, magnitude: Magnitude) -> Evidence:
     """A dial: +-1 per reflection. An opposing vote cancels one vote; 0 = fully cancelled."""
     vote = 1 if direction == "increase" else -1
     if prev is None or prev[0] == 0:
         return vote, magnitude  # first vote
     if (prev[0] > 0) != (vote > 0):
         return prev[0] + vote, prev[1]
-    return prev[0] + vote, min(prev[1], magnitude, key=_MAGNITUDE_ORDER.__getitem__)
+    return prev[0] + vote, min(prev[1], magnitude, key=MAGNITUDES.index)
 
 
-def collapse_proposals(proposals):
+def collapse_proposals(proposals: list[PreferenceChangeProposal]) -> dict[str, tuple[Direction, Magnitude] | None]:
     """One vote per field per reflection: {field: (direction, smallest magnitude)}, or None for a
     field that got both directions."""
     grouped = {}
@@ -171,7 +199,7 @@ def collapse_proposals(proposals):
             votes[field] = None  # self-contradicting -> skipped
         else:
             votes[field] = (group[0].direction,
-                            min((p.magnitude for p in group), key=_MAGNITUDE_ORDER.__getitem__))
+                            min((p.magnitude for p in group), key=MAGNITUDES.index))
     return votes
 
 
@@ -180,11 +208,10 @@ def learnable_fields(conn, student_id) -> list[str]:
     return [n for n in POLICY if _is_learnable(n, tiers)]
 
 
-def _threshold_change(settings, field, score, magnitude):
-    proposal = PreferenceChangeProposal(field=field, magnitude=magnitude,
-                                        direction="increase" if score > 0 else "decrease",
-                                        reason=f"consistent evidence across {EVIDENCE_THRESHOLD} reflections")
-    old, new = getattr(settings, field), getattr(apply_proposal(settings, proposal), field)
+def _threshold_change(settings: ProfileSettings, field: str, score: int,
+                      magnitude: Magnitude) -> tuple[ProfileSettings, int, int]:
+    """(settings with the field moved one step, old value, new value) once evidence is in."""
+    old, new = getattr(settings, field), stepped_value(settings, field, _direction(score), magnitude)
     if new == old:
         raise PreferenceError("already at its limit")
     return validated_settings(settings, {field: new}), old, new
@@ -204,11 +231,11 @@ def _why_ignored(field: str, vote, tiers: dict[str, Tier]) -> str | None:
     return None
 
 
-def process_reflection(conn, student_id, reflection_text, result, now=None) -> ReflectionOutcome:
+def process_reflection(conn, student_id: int, reflection_text: str, result: ReflectionResult,
+                       *, now: datetime) -> ReflectionOutcome:
     """Count one reflection's proposals as evidence. A field that reaches the threshold changes
     (auto mode) or waits for approval (ask mode). Evidence, settings and the log row are saved
     in one transaction."""
-    now = now or datetime.now(timezone.utc)
     tiers, evidence = load_tiers(conn, student_id), live_evidence(conn, student_id, now)
     mode = load_approval_mode(conn, student_id)
     before = settings = load_settings(conn, student_id)
@@ -224,10 +251,9 @@ def process_reflection(conn, student_id, reflection_text, result, now=None) -> R
         score, smallest = next_evidence(evidence.get(field), *vote)
         if abs(score) < EVIDENCE_THRESHOLD:
             writes.append((field, (score, smallest) if score else None))
-            word = "increase" if score > 0 else "decrease"
             results.append(FieldResult(field, Outcome.EVIDENCE,
                 f"Noted: opposing suggestions for '{label}' cancelled out. Starting fresh." if score == 0 else
-                f"Noted: '{label}' may need to {word} ({abs(score)}/{EVIDENCE_THRESHOLD} reflections). No change yet."))
+                f"Noted: '{label}' may need to {_direction(score)} ({abs(score)}/{EVIDENCE_THRESHOLD} reflections). No change yet."))
             continue
         try:
             candidate, old, new = _threshold_change(settings, field, score, smallest)
@@ -236,7 +262,7 @@ def process_reflection(conn, student_id, reflection_text, result, now=None) -> R
             results.append(FieldResult(field, Outcome.AT_LIMIT,
                 f"'{label}' reached the threshold but can't move further within its limits."))
             continue
-        if mode == APPROVAL_ASK:  # evidence held AT the threshold = "pending"
+        if mode == ApprovalMode.ASK:  # evidence held AT the threshold = "pending"
             writes.append((field, (max(-EVIDENCE_THRESHOLD, min(EVIDENCE_THRESHOLD, score)), smallest)))
             results.append(FieldResult(field, Outcome.PENDING,
                 f"'{label}' has enough evidence to change -- waiting for your approval."))
@@ -260,12 +286,14 @@ def process_reflection(conn, student_id, reflection_text, result, now=None) -> R
     return ReflectionOutcome(outcome, results, settings)
 
 
-def set_approval_mode(conn, student_id, mode, actor) -> bool:
-    """Switch between 'auto' and 'ask'. False if it was already that mode."""
+def set_approval_mode(conn, student_id, mode: ApprovalMode | str, actor: Actor) -> bool:
+    """Switch between auto and ask. False if it was already that mode."""
     if actor == Actor.MODEL:
         raise PreferenceError("The learning system can't change approval settings.")
-    if mode not in (APPROVAL_AUTO, APPROVAL_ASK):
-        raise PreferenceError(f"Unknown approval mode '{mode}'.")
+    try:
+        mode = ApprovalMode(mode)
+    except ValueError:
+        raise PreferenceError(f"Unknown approval mode '{mode}'.") from None
     current = load_approval_mode(conn, student_id)
     if mode == current:
         return False
@@ -281,16 +309,15 @@ def set_approval_mode(conn, student_id, mode, actor) -> bool:
 class PendingChange:
     field: str
     label: str
-    direction: str
+    direction: Direction
     old: int
     new: int
 
 
-def pending_approvals(conn, student_id, now=None) -> list[PendingChange]:
+def pending_approvals(conn, student_id: int, *, now: datetime) -> list[PendingChange]:
     """Changes that reached the threshold in ask mode and wait for the student's yes or no."""
-    if load_approval_mode(conn, student_id) != APPROVAL_ASK:
+    if load_approval_mode(conn, student_id) != ApprovalMode.ASK:
         return []
-    now = now or datetime.now(timezone.utc)
     tiers, settings, out = load_tiers(conn, student_id), load_settings(conn, student_id), []
     for field, (score, magnitude) in live_evidence(conn, student_id, now).items():
         if abs(score) < EVIDENCE_THRESHOLD or not _is_learnable(field, tiers):
@@ -299,12 +326,13 @@ def pending_approvals(conn, student_id, now=None) -> list[PendingChange]:
             _, old, new = _threshold_change(settings, field, score, magnitude)
         except PreferenceError:
             continue
-        out.append(PendingChange(field, POLICY[field].label, "increase" if score > 0 else "decrease", old, new))
+        out.append(PendingChange(field, POLICY[field].label, _direction(score), old, new))
     return out
 
 
-def resolve_pending(conn, student_id, field, approve: bool, now=None) -> FieldResult:
-    pending = next((p for p in pending_approvals(conn, student_id, now) if p.field == field), None)
+def resolve_pending(conn, student_id: int, field: str, approve: bool, *, now: datetime) -> FieldResult:
+    """Apply (approve) or drop one pending change; its evidence is used up either way."""
+    pending = next((p for p in pending_approvals(conn, student_id, now=now) if p.field == field), None)
     if pending is None:
         raise PreferenceError("Nothing is waiting for your approval for that setting.")
     before = load_settings(conn, student_id)
@@ -322,6 +350,6 @@ def resolve_pending(conn, student_id, field, approve: bool, now=None) -> FieldRe
     return FieldResult(field, outcome, msg)
 
 
-def live_evidence(conn, student_id, now):
+def live_evidence(conn, student_id: int, now: datetime) -> dict[str, Evidence]:
     """Stored evidence minus anything idle for EVIDENCE_TTL_DAYS or longer."""
     return load_evidence(conn, student_id, fresh_since=now - timedelta(days=EVIDENCE_TTL_DAYS))

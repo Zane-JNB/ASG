@@ -47,7 +47,7 @@ def test_commute_can_cross_midnight():
     b = commute_to_block(recurring(start_time="23:30", length_minutes=60), 0)
     assert (b.start_slot, b.end_slot) == (94, 98)
 
-def test_overlap_is_reported_not_dropped():   
+def test_overlap_is_reported_not_dropped():
     cls = FixedBlock(title="Class", day=0, start_slot=30, end_slot=40)  # 07:30-10:00
     blocks = [commute_to_block(recurring(), 0)]  # 07:00-07:45
     pairs = commute_overlaps([cls], blocks)
@@ -56,11 +56,11 @@ def test_overlap_is_reported_not_dropped():
     assert w[0].kind == "commute_overlap" and w[0].severity == "soft"
     assert "Mon 05 Oct" in w[0].message and "Class" in w[0].message
 
-def test_back_to_back_is_not_an_overlap():   
+def test_back_to_back_is_not_an_overlap():
     cls = FixedBlock(title="Class", day=0, start_slot=32, end_slot=40)
     assert commute_overlaps([cls], [commute_to_block(recurring(), 0)]) == []
 
-def test_commute_vs_commute_reported_once():   
+def test_commute_vs_commute_reported_once():
     a = commute_to_block(recurring(), 0)
     b = commute_to_block(recurring(start_time="07:30"), 0)
     assert len(commute_overlaps([], [a, b])) == 1
@@ -78,7 +78,7 @@ def test_invalid_commutes_rejected(kw):
     with pytest.raises((ValidationError, ValueError)):
         Commute(**{**dict(start_time="07:00", length_minutes=30), **kw})
 def test_commute_dates_and_times_use_the_shared_checks():
-    # "20261005" used to pass unchecked and never match a plan day (#15)
+    # "20261005" used to pass unchecked and never match a plan day
     c = Commute(start_time="7:05", length_minutes=30, date="20261005")
     assert (c.start_time, c.date) == ("07:05", "2026-10-05")
     assert [b.day for b in expand_commutes([c], anchor())] == [0]
@@ -98,3 +98,13 @@ def test_skipping_a_commute_date_stores_the_normalised_date():
     assert skip_commute_date(conn, sid, cid, "2026-10-12") is True
     assert skip_commute_date(conn, sid, cid, "20261012") is True  # the same day: no duplicate
     assert COMMUTES.get(conn, sid)[0][1].skip_dates == ["2026-10-12"]
+
+
+def test_commute_overlap_warnings_read_like_class_overlaps_and_are_capped():
+    """One overlap format for the student: quoted titles, and at most five lines plus a count."""
+    cls = FixedBlock(title="Class", day=0, start_slot=30, end_slot=40)
+    commute = commute_to_block(recurring(), 0)  # 07:00-07:45
+    [w] = overlap_warnings([(commute, cls)], anchor())
+    assert w.message == "Mon 05 Oct: 'Commute' 07:00-07:45 overlaps 'Class' 07:30-10:00 (both kept; tasks avoid both)"
+    many = overlap_warnings([(commute, cls)] * 7, anchor())
+    assert len(many) == 6 and many[-1].message.startswith("...and 2 more overlap(s)")

@@ -1,55 +1,65 @@
 """Review of an extraction before it is saved: list everything found, then edit or delete by number."""
+from collections.abc import Callable
+from typing import Any, NamedTuple
+
 from pydantic import ValidationError
 
-from scheduler.models import ExtractedTask, ExtractionResult, WeeklyPattern, DatedBlock
+from scheduler.models import DatedBlock, ExtractedTask, ExtractionResult, TimeRange, WeeklyPattern
 from scheduler.prompts import confirm, describe_task, parse_due, parse_hours, parse_rating
-from scheduler.units import parse_date, parse_time, parse_weekday, slots_to_hours, time_to_slot
+from scheduler.units import parse_date, parse_time, parse_weekday, slots_to_hours
+
+Item = WeeklyPattern | DatedBlock | ExtractedTask
+_KIND = {WeeklyPattern: "Weekly", DatedBlock: "Session", ExtractedTask: "Task"}
 
 
-def _end_time(s: str) -> str:
-    return parse_time(s, end=True)  # an end may be 24:00 (midnight at the end of the day)
+class _Field(NamedTuple):
+    """One editable answer: its prompt label, the current value as shown, and the parser that
+    turns a typed answer into model changes."""
+    label: str
+    shown: Callable[[Any], object]
+    parse: Callable[[str], dict]
 
 
-#   -- what can be edited per item type: (prompt label, model field, parser)
-_EDIT_FIELDS = {
-    WeeklyPattern: [("title", "title", str), ("day", "day", parse_weekday),
-                    ("start HH:MM", "start_time", parse_time), ("end HH:MM", "end_time", _end_time)],
-    DatedBlock: [("title", "title", str), ("date YYYY-MM-DD", "date", parse_date),
-                 ("start HH:MM", "start_time", parse_time), ("end HH:MM", "end_time", _end_time)],
-    ExtractedTask: [("title", "title", str), ("due YYYY-MM-DD [HH:MM]", "date", parse_due),
-                    ("hours", "duration_slots", parse_hours), ("priority 1-5", "priority", parse_rating),
-                    ("difficulty 1-5", "difficulty", parse_rating)],
+def _plain(label: str, key: str, parse: Callable[[str], object]) -> _Field:
+    return _Field(label, lambda item: getattr(item, key), lambda s: {key: parse(s)})
+
+
+_TITLE = _plain("title", "title", str)
+_TIMES = [_plain("start HH:MM", "start_time", parse_time),
+          _plain("end HH:MM", "end_time", lambda s: parse_time(s, end=True))]  # an end may be 24:00
+_FIELDS: dict[type, list[_Field]] = {
+    WeeklyPattern: [_TITLE, _plain("day", "day", parse_weekday), *_TIMES],
+    DatedBlock: [_TITLE, _plain("date YYYY-MM-DD", "date", parse_date), *_TIMES],
+    ExtractedTask: [
+        _TITLE,
+        _Field("due YYYY-MM-DD [HH:MM]", ExtractedTask.due_label,  # one answer sets the date and the time
+               lambda s: dict(zip(("date", "due_time"), parse_due(s)))),
+        _Field("hours", lambda t: f"{slots_to_hours(t.duration_slots):g}",
+               lambda s: {"duration_slots": parse_hours(s)}),
+        _plain("priority 1-5", "priority", parse_rating),
+        _plain("difficulty 1-5", "difficulty", parse_rating),
+    ],
 }
 
 
-def _current(item, key: str):
-    value = getattr(item, key)
-    if key == "date" and isinstance(item, ExtractedTask):
-        return item.due_label()
-    return f"{slots_to_hours(value):g}" if key == "duration_slots" else value
-
-
-def _describe(kind: str, item) -> str:
-    if kind == "Task":
+def _describe(item: Item) -> str:
+    if isinstance(item, ExtractedTask):
         return describe_task(item)
-    when = item.day if kind == "Weekly" else item.date
-    return f"{item.title} -- {when} {item.start_time}-{item.end_time}"
+    return f"{item.title} -- {item.when} {item.start_time}-{item.end_time}"
 
 
-def _edit_item(item, ask, show, session_cap: int | None):
+def _edit_item(item: Item, ask, show, session_cap: int | None) -> Item:
     """Ask for each field (Enter keeps the current value). Bad input shows why and re-asks."""
     while True:
         try:
             changes = {}
-            for label, key, parse in _EDIT_FIELDS[type(item)]:
-                raw = ask(f"  {label} [{_current(item, key)}]: ").strip()
-                if raw and parse is parse_due:  #   -- one answer sets the date and the (optional) time
-                    changes["date"], changes["due_time"] = parse(raw)
-                    if item.due_time and changes["due_time"] is None:
-                        show(f"  Due time {item.due_time} removed: now due at the end of that day.")
-                elif raw:
-                    changes[key] = parse(raw)
-            if isinstance(item, ExtractedTask) and session_cap:  #   -- only long tasks can be split
+            for field in _FIELDS[type(item)]:
+                raw = ask(f"  {field.label} [{field.shown(item)}]: ").strip()
+                if raw:
+                    changes |= field.parse(raw)
+                if raw and isinstance(item, ExtractedTask) and item.due_time and changes.get("due_time", "") is None:
+                    show(f"  Due time {item.due_time} removed: now due at the end of that day.")
+            if isinstance(item, ExtractedTask) and session_cap:  # only long tasks can be split
                 if changes.get("duration_slots", item.duration_slots) > session_cap:
                     cap_h = slots_to_hours(session_cap)
                     changes["splittable"] = confirm(
@@ -67,32 +77,25 @@ def _parse_picks(text: str, count: int) -> list[int]:
     return picks
 
 
-def _overlap_notes(items) -> list[str]:
+def _overlap_notes(items: list[Item]) -> list[str]:
     """Numbered items that clash: weekly ones on the same weekday, sessions on the same date."""
-    notes = []
-    for i, (kind_a, a) in enumerate(items):
-        for j in range(i + 1, len(items)):
-            kind_b, b = items[j]
-            if kind_a != kind_b or kind_a == "Task":
-                continue
-            same_day = a.day == b.day if kind_a == "Weekly" else a.date == b.date
-            if same_day and (time_to_slot(a.start_time) < time_to_slot(b.end_time)
-                             and time_to_slot(b.start_time) < time_to_slot(a.end_time)):
-                notes.append(f"{i + 1} and {j + 1}")
-    return notes
+    return [f"{i + 1} and {j + 1}" for i, a in enumerate(items) for j in range(i + 1, len(items))
+            if isinstance(a, TimeRange) and a.clashes(items[j])]
+
+
+def _line(n: int, item: Item) -> str:
+    return f"{n}. [{_KIND[type(item)]}] {_describe(item)}"
 
 
 def review_extraction(result: ExtractionResult, ask=input, show=print, session_cap: int | None = None) -> ExtractionResult:
     """Show everything found, then ONE prompt: Enter accepts all, or pick numbers to edit/delete."""
-    items = ([("Weekly", p) for p in result.weekly_patterns]
-             + [("Session", b) for b in result.dated_blocks]
-             + [("Task", t) for t in result.tasks])
+    items: list[Item | None] = [*result.weekly_patterns, *result.dated_blocks, *result.tasks]
     if not items:
         return ExtractionResult()
 
     show("Found:")
-    for n, (kind, item) in enumerate(items, 1):
-        show(f"{n}. [{kind}] {_describe(kind, item)}")
+    for n, item in enumerate(items, 1):
+        show(_line(n, item))
     clashes = _overlap_notes(items)
     if clashes:
         show("WARNING -- these overlap in time (often the same class listed twice): "
@@ -113,8 +116,8 @@ def review_extraction(result: ExtractionResult, ask=input, show=print, session_c
             show(f"Enter numbers between 1 and {len(items)}, like: 2 5")
 
     for n in picks:
-        kind, item = items[n - 1]
-        show(f"{n}. [{kind}] {_describe(kind, item)}")
+        item = items[n - 1]
+        show(_line(n, item))
         while True:
             action = ask("  [e]dit, [d]elete, or Enter to leave as is: ").strip().lower()
             if action in ("", "e", "d"):
@@ -122,10 +125,9 @@ def review_extraction(result: ExtractionResult, ask=input, show=print, session_c
         if action == "d":
             items[n - 1] = None
         elif action == "e":
-            items[n - 1] = (kind, _edit_item(item, ask, show, session_cap))
-    kept = [x for x in items if x is not None]
+            items[n - 1] = _edit_item(item, ask, show, session_cap)
     return ExtractionResult(
-        weekly_patterns=[i for k, i in kept if k == "Weekly"],
-        dated_blocks=[i for k, i in kept if k == "Session"],
-        tasks=[i for k, i in kept if k == "Task"],
+        weekly_patterns=[i for i in items if isinstance(i, WeeklyPattern)],
+        dated_blocks=[i for i in items if isinstance(i, DatedBlock)],
+        tasks=[i for i in items if isinstance(i, ExtractedTask)],
     )

@@ -136,7 +136,7 @@ def test_add_task_rejects_a_time_that_already_passed():
     (datetime(2026, 10, 5, 10, 0), "2026-10-05 10:00", "2026-10-05 10:15"),
     (datetime(2026, 10, 5, 23, 55), "2026-10-06 00:00", "2026-10-06 00:15"),  # plans start tomorrow 00:00
 ])
-def test_add_task_rejects_a_due_time_before_the_plan_can_start(now, too_soon, fine):  # #17
+def test_add_task_rejects_a_due_time_before_the_plan_can_start(now, too_soon, fine):
     ask, shown = _scripted(["Quiz prep", too_soon, fine, "0.25", "", ""])
     t = prompt_new_task(ask, shown.append, session_cap=8, now=now)
     assert (t.date + " " + t.due_time) == fine
@@ -284,19 +284,18 @@ def test_reimport_counts_an_unreadable_saved_task_as_a_repeat(conn, sid):
     from scheduler.db import replace_extraction
     _raw_row(conn, sid, "extracted_tasks", '{"title": "Essay", "date": "2026-10-06", "due_time": "99:00"}')
     summary = replace_extraction(conn, sid, ExtractionResult(tasks=[ExtractedTask(title="Essay", date="2026-10-06")]))
-    assert summary["tasks_skipped"] == 1
+    assert summary.tasks_skipped == 1
 
 def test_extraction_leaves_classes_without_a_due_time_key():
     from scheduler.schedule_extraction import extraction_from_dict
     raw = {"weekly_patterns": [{"title": "Lab", "day": "Mon", "start_time": "09:00", "end_time": "10:00"}]}
     assert len(extraction_from_dict(raw).weekly_patterns) == 1
 
-def test_only_commutes_is_still_no_schedule(conn, sid):
+def test_only_commutes_still_gives_a_plan(conn, sid):
     from scheduler.db import COMMUTES
     from scheduler.models import Commute
     COMMUTES.add(conn, sid, Commute(start_time="08:00", length_minutes=30, date="2026-10-06"))
-    with pytest.raises(ValueError, match="no saved schedule items"):
-        plan_from_saved(conn, sid, now=EVENING)
+    assert plan_from_saved(conn, sid, now=EVENING, time_limit_seconds=5).anchor.start_date == EVENING.date()
 
 
 def test_building_a_plan_reads_each_saved_table_once(conn, sid, monkeypatch):

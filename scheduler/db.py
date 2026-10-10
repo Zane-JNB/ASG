@@ -9,7 +9,7 @@ from typing import NamedTuple
 from pydantic import BaseModel, ValidationError
 
 from scheduler.models import Commute, DatedBlock, ExtractedTask, ExtractionResult, ProfileSettings, WeeklyPattern
-from scheduler.preference_policy import POLICY, Tier
+from scheduler.preference_policy import POLICY, ApprovalMode, Tier
 from scheduler.units import parse_date
 
 SCHEMA = """
@@ -234,13 +234,13 @@ def save_evidence(conn: sqlite3.Connection, student_id: int, field: str, score: 
                         updated_at = excluded.updated_at""",
                      (student_id, field, score, magnitude, at or _now()))
 
-def load_approval_mode(conn: sqlite3.Connection, student_id: int) -> str:
-    """How learned changes are approved: 'auto' (the default) or 'ask'."""
+def load_approval_mode(conn: sqlite3.Connection, student_id: int) -> ApprovalMode:
+    """How learned changes are approved (auto unless the student chose ask)."""
     row = conn.execute("SELECT approval_mode FROM preference_settings WHERE student_id = ?",
                        (student_id,)).fetchone()
-    return row[0] if row else "auto"
+    return ApprovalMode(row[0]) if row else ApprovalMode.AUTO
 
-def save_approval_mode(conn: sqlite3.Connection, student_id: int, mode: str) -> None:
+def save_approval_mode(conn: sqlite3.Connection, student_id: int, mode: ApprovalMode) -> None:
     """Insert or overwrite the approval mode."""
     with transaction(conn):
         conn.execute("""INSERT INTO preference_settings (student_id, approval_mode) VALUES (?, ?)
@@ -382,8 +382,8 @@ def get_unreadable_items(conn: sqlite3.Connection, student_id: int) -> list[Unre
     return [u for table in PLANNER_TABLES for u in table.read(conn, student_id)[1]]
 
 def has_saved_items(conn: sqlite3.Connection, student_id: int) -> bool:
-    """Any saved class, dated session or task (readable or not). Commutes alone are not a schedule."""
-    return any(table.rows(conn, student_id) for table in (WEEKLY_PATTERNS, DATED_BLOCKS, EXTRACTED_TASKS))
+    """Anything saved to plan around: a class, dated session, task or commute (readable or not)."""
+    return any(table.rows(conn, student_id) for table in PLANNER_TABLES)
 
 def skip_commute_date(conn: sqlite3.Connection, student_id: int, item_id: int, day: str) -> bool:
     """Leave one date out of a recurring commute. False if there is no such recurring commute."""
@@ -396,26 +396,30 @@ def skip_commute_date(conn: sqlite3.Connection, student_id: int, item_id: int, d
         COMMUTES.update(conn, student_id, item_id, found)
     return True
 
-def replace_extraction(conn: sqlite3.Connection, student_id: int, result: ExtractionResult) -> dict[str, int]:
+class ImportCounts(NamedTuple):
+    weekly: int  # weekly classes saved (the old ones replaced)
+    dated: int  # dated sessions saved (the old ones replaced)
+    tasks_added: int
+    tasks_skipped: int  # repeats of a saved task
+
+def replace_extraction(conn: sqlite3.Connection, student_id: int, result: ExtractionResult) -> ImportCounts:
     """Save a reviewed import, all-or-nothing. Fixed blocks are REPLACED, tasks are ADDED:
     weekly patterns and dated blocks are each replaced only if the import contains some
     (so an exam sheet can't wipe your classes); tasks are appended, skipping exact repeats
-    (same title and due date, ignoring case; a different due time is still a repeat). Returns counts of what was written."""
+    (same title and due date, ignoring case; a different due time is still a repeat)."""
     if not (result.weekly_patterns or result.dated_blocks or result.tasks):
         raise ValueError("nothing was extracted; existing data left untouched")
 
     def repeat_key(title: object, day: object) -> tuple[str, object]:
         return str(title).strip().lower(), day
 
-    summary = {"weekly": 0, "dated": 0, "tasks_added": 0, "tasks_skipped": 0}
+    added = skipped = 0
     with transaction(conn):
-        for table, key, items in ((WEEKLY_PATTERNS, "weekly", result.weekly_patterns),
-                                  (DATED_BLOCKS, "dated", result.dated_blocks)):
+        for table, items in ((WEEKLY_PATTERNS, result.weekly_patterns), (DATED_BLOCKS, result.dated_blocks)):
             if items:  # an import with none of this type leaves the old ones alone
                 table.clear(conn, student_id)
                 for item in items:
                     table.add(conn, student_id, item)
-                summary[key] = len(items)
 
         # from the raw rows, so an unreadable saved task still counts as a repeat
         saved = (_raw_dict(data) for _, data in EXTRACTED_TASKS.rows(conn, student_id))
@@ -423,12 +427,12 @@ def replace_extraction(conn: sqlite3.Connection, student_id: int, result: Extrac
         for task in result.tasks:  # tasks are appended, never replaced
             key = repeat_key(task.title, task.date)
             if key in seen:
-                summary["tasks_skipped"] += 1
+                skipped += 1
                 continue
             seen.add(key)
             EXTRACTED_TASKS.add(conn, student_id, task)
-            summary["tasks_added"] += 1
-    return summary
+            added += 1
+    return ImportCounts(len(result.weekly_patterns), len(result.dated_blocks), added, skipped)
 
 def add_plan_cut(conn: sqlite3.Connection, student_id: int, task_id: int, slots: int) -> None:
     """Cut `slots` more from this task's plan. Cuts add up and never shrink the saved task."""

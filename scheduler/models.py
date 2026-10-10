@@ -17,7 +17,25 @@ IsoDate = Annotated[str, AfterValidator(parse_date)]  # "YYYY-MM-DD"
 
 MAX_PRIORITY = 5
 
-class FixedBlock(BaseModel):
+
+def axis_slot(day: int, slot: int) -> int:
+    """A day's slot on the plan's continuous axis (day * 96 + slot)."""
+    return day * SLOTS_PER_DAY + slot
+
+
+class _OnAxis:
+    """Something placed on one day of the plan: day, start_slot and end_slot (exclusive)."""
+    day: int
+    start_slot: int
+    end_slot: int
+
+    @property
+    def span(self) -> tuple[int, int]:
+        """(start, end) on the plan's continuous slot axis."""
+        return axis_slot(self.day, self.start_slot), axis_slot(self.day, self.end_slot)
+
+
+class FixedBlock(_OnAxis, BaseModel):
     title: str
     start_slot: int = Field(ge=0, lt=SLOTS_PER_DAY)
     end_slot: int = Field(gt=0, le=2 * SLOTS_PER_DAY)  # end is exclusive
@@ -29,11 +47,6 @@ class FixedBlock(BaseModel):
         if self.end_slot <= self.start_slot:
             raise ValueError("end_slot must be after start_slot")
         return self
-
-    @property
-    def span(self) -> tuple[int, int]:
-        """(start, end) on the plan's continuous slot axis (day * 96 + slot)."""
-        return self.day * SLOTS_PER_DAY + self.start_slot, self.day * SLOTS_PER_DAY + self.end_slot
 
     def overlaps(self, other: "FixedBlock") -> bool:
         """True if the two blocks share any time. Back-to-back (end == next start) is fine."""
@@ -54,8 +67,18 @@ class DynamicTask(BaseModel):
     earliest_start_day: int | None = Field(default=None, ge=0)  # None = no earliest bound
     earliest_start_slot: int = Field(default=0, ge=0, lt=SLOTS_PER_DAY)
     max_daily_slots: int | None = Field(default=None, gt=0)
-    completed_at: SkipJsonSchema[str | None] = None
     saved_id: SkipJsonSchema[int | None] = None  # id of the saved task this came from, if any
+
+    @property
+    def earliest_start(self) -> int:
+        """The first slot it may start in, on the plan's continuous axis."""
+        return 0 if self.earliest_start_day is None else axis_slot(self.earliest_start_day, self.earliest_start_slot)
+
+    @property
+    def deadline(self) -> int | None:
+        """The slot it must end by (exclusive), on the plan's continuous axis; None = no deadline."""
+        return None if self.deadline_day is None else axis_slot(self.deadline_day, self.deadline_slot)
+
 
 class SleepRule(BaseModel):
     """One night of sleep. Night 0 starts on the evening of day 0."""
@@ -131,7 +154,7 @@ class ScheduleWarning(BaseModel):
     def soft(cls, kind: str, message: str) -> "ScheduleWarning":
         return cls(severity="soft", kind=kind, message=message)
 
-class ScheduledItem(BaseModel):
+class ScheduledItem(_OnAxis, BaseModel):
     title: str
     start_slot: int
     end_slot: int  # exclusive
@@ -139,8 +162,9 @@ class ScheduledItem(BaseModel):
     day: int = 0
     saved_id: int | None = None  # task items: the saved task's id, if it has one
 
-class _TimeRange(BaseModel):
-    """Base for a block with a start_time and end_time on one day: the end must come after the start."""
+class TimeRange(BaseModel):
+    """Base for a saved block with a start_time and end_time on one day (`when`: a weekday or a
+    date): the end must come after the start."""
 
     @model_validator(mode="after")
     def times_make_sense(self):
@@ -148,7 +172,19 @@ class _TimeRange(BaseModel):
             raise ValueError("end_time must be after start_time")
         return self
 
-class WeeklyPattern(_TimeRange):
+    @property
+    def slots(self) -> tuple[int, int]:
+        """(start, end) slots within its day."""
+        return time_to_slot(self.start_time), time_to_slot(self.end_time)
+
+    def clashes(self, other: "TimeRange") -> bool:
+        """Same kind on the same day, sharing time. Back to back is fine."""
+        if type(self) is not type(other) or self.when != other.when:
+            return False
+        (s1, e1), (s2, e2) = self.slots, other.slots
+        return s1 < e2 and s2 < e1
+
+class WeeklyPattern(TimeRange):
     """A recurring fixed commitment on ONE specific day of the week -- e.g. 'Data Structures,
     Monday, 09:00-11:00'. If a class meets on several days, that's several WeeklyPattern
     entries, one per day -- this model deliberately cannot represent more than one day per
@@ -161,6 +197,10 @@ class WeeklyPattern(_TimeRange):
     day: Weekday
     start_time: ClockTime
     end_time: EndTime
+
+    @property
+    def when(self) -> Weekday:
+        return self.day
 
 class ExtractedTask(BaseModel):
     """A task/assignment found in an uploaded document, with a real calendar deadline.
@@ -179,9 +219,6 @@ class ExtractedTask(BaseModel):
     difficulty: int = Field(default=3, ge=1, le=5)  # placeholder: medium
     splittable: SkipJsonSchema[bool] = True  # placeholder: can be split into sessions
     may_cut_sleep: SkipJsonSchema[bool] = False  # chosen when making room for it (see DynamicTask)
-    reminders_enabled: bool = True
-    reminder_min_difficulty: int | None = Field(default=None, ge=1, le=5)  # None = ignore difficulty
-    reminder_min_priority: int | None = Field(default=None, ge=1, le=5)  # None = ignore priority
     completed_at: SkipJsonSchema[str | None] = None
     missed: SkipJsonSchema[bool] = False  # closed without being done (kept as history, like completed_at)
 
@@ -213,7 +250,7 @@ class ExtractedTask(BaseModel):
         return SLOTS_PER_DAY if self.due_time is None else time_to_slot(self.due_time)
 
 
-class DatedBlock(_TimeRange):
+class DatedBlock(TimeRange):
     """A one-off commitment on a specific calendar date with a specific time -- e.g. a module
     timetable that lists individual class sessions by date rather than a recurring weekly
     pattern. Distinct from WeeklyPattern (recurs every week) and ExtractedTask (a deadline
@@ -223,6 +260,10 @@ class DatedBlock(_TimeRange):
     date: IsoDate
     start_time: ClockTime
     end_time: EndTime
+
+    @property
+    def when(self) -> str:
+        return self.date
 
 
 class ExtractionResult(BaseModel):
@@ -271,6 +312,15 @@ class PlanAnchor(BaseModel):
     start_date: date
     num_days: int = Field(gt=0)
 
+    def date_of(self, day: int) -> date:
+        """The calendar date of a day index."""
+        return self.start_date + timedelta(days=day)
+
+    @property
+    def dates(self) -> list[date]:
+        """Every date in the window, day 0 first."""
+        return [self.date_of(i) for i in range(self.num_days)]
+
 class DropAction(BaseModel):
     task_index: int
     title: str
@@ -287,17 +337,22 @@ class DropAction(BaseModel):
     def is_full_drop(self) -> bool:
         return self.slots_kept == 0
 
+class AddedTask(BaseModel):
+    """How a proposal adds the new task: shortened by slots_cut for this plan only, and maybe with
+    leave to use sleep below target (saved with the task)."""
+    slots_cut: int = Field(default=0, ge=0)
+    may_cut_sleep: bool = False
+
+
 class DropProposal(BaseModel):
     rank: int = 0
     actions: list[DropAction]
-    new_task_added: bool  # False = "don't add the new task"
+    added: AddedTask | None  # None = "don't add the new task"
     score: float  # lower is better
     slots_freed: int
     sleep_sacrificed_slots: int
     flags: list[str]  # hard problems the student must see
     schedule: list[ScheduledItem]  # already solved
-    new_task_slots_cut: int = 0
-    new_task_may_cut_sleep: bool = False  # it is added with leave to use sleep below target
 
 class DropReport(BaseModel):
     new_task_title: str

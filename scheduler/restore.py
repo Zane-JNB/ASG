@@ -1,8 +1,7 @@
 """Giving time back: after a task is closed, how much of each plan cut can be restored."""
 from datetime import date, datetime
-from scheduler.calendar_utils import extracted_task_to_dynamic_task
 from scheduler.db import EXTRACTED_TASKS, get_plan_cuts, load_settings
-from scheduler.fit_check import build_fit_inputs, starts_from
+from scheduler.fit_check import build_fit_inputs, to_plan
 from scheduler.solver import FIT_CHECK_SECONDS
 
 
@@ -37,8 +36,7 @@ def plan_restores(conn, student_id: int, now: datetime, time_limit_seconds: floa
             if tid in planned:
                 trial[tid] = planned[tid].model_copy(update={"duration_slots": planned[tid].duration_slots + r})
             else:
-                base = starts_from(extracted_task_to_dynamic_task(saved[tid], now.date(), cap), now)
-                trial[tid] = base.model_copy(update={"duration_slots": r})
+                trial[tid] = to_plan(saved[tid], now, cap).model_copy(update={"duration_slots": r})
             if fit.frame.trial(list(trial.values()), time_limit_seconds):
                 planned, given[tid] = trial, r
                 break

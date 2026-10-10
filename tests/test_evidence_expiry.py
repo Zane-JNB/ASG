@@ -2,7 +2,8 @@ import sqlite3
 from datetime import datetime, timedelta, timezone
 import pytest
 from scheduler.db import connect, get_or_create_student, load_evidence, load_settings
-from scheduler.preferences import (APPROVAL_ASK, Actor, PreferenceError, pending_approvals, process_reflection,
+from scheduler.preference_policy import ApprovalMode
+from scheduler.preferences import (Actor, PreferenceError, pending_approvals, process_reflection,
                                    resolve_pending, set_approval_mode)
 from scheduler.reflection import PreferenceChangeProposal, ReflectionResult
 
@@ -48,7 +49,7 @@ def test_expired_rows_are_purged_by_the_next_reflection(conn, sid):
     assert load_evidence(conn, sid) == {}
 
 def test_pending_approval_also_expires_when_idle(conn, sid):
-    set_approval_mode(conn, sid, APPROVAL_ASK, Actor.USER)
+    set_approval_mode(conn, sid, ApprovalMode.ASK, Actor.USER)
     for _ in range(3): vote_at(conn, sid, T0)
     assert [p.field for p in pending_approvals(conn, sid, now=day(13))] == ["buffer_slots"]
     assert pending_approvals(conn, sid, now=day(14)) == []

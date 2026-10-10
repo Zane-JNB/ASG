@@ -24,8 +24,7 @@ def chunk_sizes(task: DynamicTask) -> list[int]:
 
 def merge_fixed_spans(blocks: list[FixedBlock]) -> list[tuple[int, int, bool]]:
     """Union overlapping fixed spans on the absolute slot axis. Touching spans stay separate."""
-    spans = sorted((b.day * SLOTS_PER_DAY + b.start_slot,
-                    b.day * SLOTS_PER_DAY + b.end_slot, b.buffer_before) for b in blocks)
+    spans = sorted((*b.span, b.buffer_before) for b in blocks)
     merged = []
     for s, e, buf in spans:
         if merged and s < merged[-1][1]:
@@ -74,15 +73,25 @@ class _Plan:
         return self.num_days * SLOTS_PER_DAY
 
 
+SOLVE_SECONDS = 30.0  # time limit for one plan
+
+
 def build_schedule(fixed_blocks: list[FixedBlock], tasks: list[DynamicTask], num_days: int = 1,
                    sleep_rules: list[SleepRule] | None = None,
-                   time_limit_seconds: float | None = 30.0,
-                   settings: ProfileSettings | None = None):
+                   time_limit_seconds: float | None = SOLVE_SECONDS,
+                   settings: ProfileSettings | None = None) -> tuple[list[ScheduledItem], list[DynamicTask]]:
     """(scheduled items, tasks that did not fit). With a time limit, the best plan found by then is
     used; RuntimeError if there is none."""
-    sleep_rules = sleep_rules or []
+    items, unplaced = _schedule(fixed_blocks, tasks, num_days, sleep_rules or [], time_limit_seconds,
+                                settings or ProfileSettings())
+    return items, [tasks[i] for i in unplaced]
+
+
+def _schedule(fixed_blocks: list[FixedBlock], tasks: list[DynamicTask], num_days: int, sleep_rules: list[SleepRule],
+              time_limit_seconds: float | None, settings: ProfileSettings) -> tuple[list[ScheduledItem], list[int]]:
+    """(scheduled items, positions in tasks of the ones that did not fit)."""
     _check_days(fixed_blocks, sleep_rules, num_days)
-    plan = _Plan(num_days, settings or ProfileSettings())
+    plan = _Plan(num_days, settings)
     _add_fixed_blocks(plan, fixed_blocks)
     placed = [_add_task(plan, i, task) for i, task in enumerate(tasks)]
     nights = [_add_night(plan, rule) for rule in sleep_rules if not rule.skip]  # skipped: free for tasks
@@ -124,18 +133,14 @@ def _add_task(plan: _Plan, i: int, task: DynamicTask) -> _Task:
     """One optional interval per session: in order, before the deadline, with the buffer after each."""
     model, buffer = plan.model, plan.settings.buffer_slots
     present = model.NewBoolVar(f"present_{i}")
-    earliest = 0
-    if task.earliest_start_day is not None:
-        earliest = task.earliest_start_day * SLOTS_PER_DAY + task.earliest_start_slot
     chunks = []
     for j, size in enumerate(chunk_sizes(task)):
-        lower = earliest if j == 0 else 0  # later chunks are bounded by the order rule instead
+        lower = task.earliest_start if j == 0 else 0  # later chunks are bounded by the order rule instead
         start = model.NewIntVar(lower, plan.horizon - size, f"start_{i}_{j}")
         plan.spaced.append(model.NewOptionalFixedSizeIntervalVar(start, size + buffer, present, f"task_{i}_{j}"))
         plan.after_blocks.append(model.NewOptionalFixedSizeIntervalVar(start, size, present, f"chunk_{i}_{j}"))
-        if task.deadline_day is not None:
-            deadline = task.deadline_day * SLOTS_PER_DAY + task.deadline_slot
-            model.Add(start + size <= deadline).OnlyEnforceIf(present)
+        if task.deadline is not None:
+            model.Add(start + size <= task.deadline).OnlyEnforceIf(present)
         if chunks:
             prev = chunks[-1]
             model.Add(start >= prev.start + prev.size + buffer).OnlyEnforceIf(present)
@@ -145,7 +150,7 @@ def _add_task(plan: _Plan, i: int, task: DynamicTask) -> _Task:
     return _Task(task, present, chunks)
 
 
-def _add_days(plan: _Plan, i: int, task: DynamicTask, present, chunks: list[_Chunk]) -> None:
+def _add_days(plan: _Plan, i: int, task: DynamicTask, present: cp_model.IntVar, chunks: list[_Chunk]) -> None:
     """A split task: a cost for two sessions on the same day, and its own daily cap."""
     model = plan.model
     days = []
@@ -202,7 +207,7 @@ def _add_night(plan: _Plan, rule: SleepRule) -> _Night:
 
 
 def _guard_sleep_target(plan: _Plan, nights: list[_Night], placed: list[_Task]) -> None:
-    """Target sleep is never traded for a task the student hasn't let use it (#11). Sleep below
+    """Target sleep is never traded for a task the student hasn't let use it. Sleep below
     what the nights allow costs sleep_target_penalty (_add_night). The part of it beyond the time of
     the planned tasks that may use it (each session plus a break on either side) also costs more
     per slot than any task can gain from that slot, so sleep below target never adds up to more
@@ -247,23 +252,23 @@ def _item(title: str, abs_start: int, length: int, kind: str, saved_id: int | No
 
 
 def _read_back(solver: cp_model.CpSolver, fixed_blocks: list[FixedBlock], nights: list[_Night],
-               placed: list[_Task]) -> tuple[list[ScheduledItem], list[DynamicTask]]:
+               placed: list[_Task]) -> tuple[list[ScheduledItem], list[int]]:
     items = [ScheduledItem(title=b.title, start_slot=b.start_slot, end_slot=b.end_slot, kind="fixed", day=b.day)
              for b in fixed_blocks]
     for night in nights:
         length = solver.Value(night.size)
         if length:  # 0 = no room at all; sleep_warnings reports it
             items.append(_item("Sleep", solver.Value(night.start), length, "sleep"))
-    unscheduled = []
-    for p in placed:
+    unplaced = []
+    for i, p in enumerate(placed):
         if not solver.Value(p.present):
-            unscheduled.append(p.task)
+            unplaced.append(i)
             continue
         for j, chunk in enumerate(p.chunks):
             title = p.task.title if len(p.chunks) == 1 else f"{p.task.title} ({j + 1}/{len(p.chunks)})"
             items.append(_item(title, solver.Value(chunk.start), chunk.size, "task", p.task.saved_id))
     items.sort(key=lambda i: (i.day, i.start_slot))
-    return items, unscheduled
+    return items, unplaced
 
 
 def reachable_sleep(rule: SleepRule) -> int:
@@ -280,7 +285,7 @@ def _night_item(rule: SleepRule, items: list[ScheduledItem]) -> ScheduledItem | 
     """This night's sleep item: the one whose start falls inside the night's bedtime window."""
     base = rule.night * SLOTS_PER_DAY
     return next((i for i in items if i.kind == "sleep"
-                 and base + rule.earliest_bed <= i.day * SLOTS_PER_DAY + i.start_slot <= base + rule.latest_bed),
+                 and base + rule.earliest_bed <= i.span[0] <= base + rule.latest_bed),
                 None)
 
 
@@ -299,7 +304,7 @@ def sleep_warnings(sleep_rules: list[SleepRule], items: list[ScheduledItem]) -> 
         if found is None:
             woke_at_cap = reachable_sleep(rule) == 0  # the cap left no room for any sleep
         else:
-            woke_at_cap = found.day * SLOTS_PER_DAY + found.end_slot - base == rule.latest_wake
+            woke_at_cap = found.span[1] - base == rule.latest_wake
         why = f" It has to end by then: {rule.latest_wake_reason}." if rule.latest_wake_reason and woke_at_cap else ""
         if length < rule.min_slots:
             warnings.append(ScheduleWarning.hard("sleep_short", (
@@ -310,7 +315,7 @@ def sleep_warnings(sleep_rules: list[SleepRule], items: list[ScheduledItem]) -> 
                 f"{label}: {format_hours(length)} of sleep, shorter than your "
                 f"target of {format_hours(rule.length_slots)}.{why}")))
         if found is not None:
-            bed = found.day * SLOTS_PER_DAY + found.start_slot - base
+            bed = found.span[0] - base
             if bed > rule.preferred_bed:
                 warnings.append(ScheduleWarning.soft("late_bedtime", (
                     f"{label}: bedtime is {slot_to_time(bed % SLOTS_PER_DAY)}, later than your "
@@ -337,7 +342,8 @@ class PlanFrame:
     sleep_rules: list[SleepRule] = field(default_factory=list)
     settings: ProfileSettings = field(default_factory=ProfileSettings)
 
-    def solve(self, tasks: list[DynamicTask], time_limit_seconds: float | None = 30.0):
+    def solve(self, tasks: list[DynamicTask], time_limit_seconds: float | None = SOLVE_SECONDS
+              ) -> tuple[list[ScheduledItem], list[DynamicTask]]:
         return build_schedule(self.fixed, tasks, num_days=self.num_days, sleep_rules=self.sleep_rules,
                               time_limit_seconds=time_limit_seconds, settings=self.settings)
 
@@ -357,7 +363,5 @@ class PlanFrame:
             return None
 
     def unplaced(self, tasks: list[DynamicTask], time_limit_seconds: float = FIT_CHECK_SECONDS) -> list[int]:
-        """Indices of the tasks that don't fit (e.g. due too soon)."""
-        _, unscheduled = self.solve(tasks, time_limit_seconds)
-        out = {id(t) for t in unscheduled}
-        return [i for i, t in enumerate(tasks) if id(t) in out]
+        """Positions in tasks of the ones that don't fit (e.g. due too soon)."""
+        return _schedule(self.fixed, tasks, self.num_days, self.sleep_rules, time_limit_seconds, self.settings)[1]

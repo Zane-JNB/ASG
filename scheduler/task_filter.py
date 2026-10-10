@@ -1,17 +1,19 @@
-from scheduler.models import ProfileSettings
+"""Which tasks the student wants check-in reminders for (profile settings, not per task)."""
+from scheduler.models import DynamicTask, ExtractedTask, ProfileSettings
 
 
-def task_matters(task, min_difficulty: int | None = None, min_priority: int | None = None) -> bool:
+def task_matters(task: ExtractedTask | DynamicTask, min_difficulty: int | None = None,
+                 min_priority: int | None = None) -> bool:
     """True if the task meets EITHER threshold (difficulty at/above, or priority at/above).
     A threshold of None is ignored; with both None, every task matters. Works on saved and planned
-    tasks alike, so reminders and the coming task-dropping features can share one rule."""
+    tasks alike."""
     if min_difficulty is None and min_priority is None:
         return True
     return ((min_difficulty is not None and task.difficulty >= min_difficulty)
             or (min_priority is not None and task.priority >= min_priority))
 
 
-def wants_reminder(task, settings: ProfileSettings) -> bool:
+def wants_reminder(task: ExtractedTask | DynamicTask, settings: ProfileSettings) -> bool:
     return settings.reminders_enabled and task_matters(
         task, settings.reminder_min_difficulty, settings.reminder_min_priority)
 

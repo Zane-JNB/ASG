@@ -1,7 +1,7 @@
 import pytest
 from scheduler.make_room import choose_drop_proposal, describe_proposal
 from scheduler.dropping import manual_actions, propose_drops
-from scheduler.models import DropProposal, DynamicTask, FixedBlock, SleepRule
+from scheduler.models import AddedTask, DropProposal, DynamicTask, FixedBlock, SleepRule
 from scheduler.solver import PlanFrame
 from tests.test_dropping import busy_day
 
@@ -59,9 +59,9 @@ def test_bad_input_reasks():
 
 def test_dont_add_is_always_offered_even_when_unverified():
     report, new = _overloaded()
-    assert not any(not p.new_task_added for p in report.proposals)
+    assert not any(p.added is None for p in report.proposals)
     picked, shown = _run(report, new, ["9", "%d" % (len(report.proposals) + 1)])
-    assert picked.new_task_added is False and picked.actions == []
+    assert picked.added is None and picked.actions == []
     assert any("Not verified" in l for l in shown)
 
 
@@ -78,7 +78,7 @@ def test_verified_dont_add_keeps_its_ranked_position():
     new = DynamicTask(title="Optional reading", duration_slots=20, priority=1, difficulty=1)
     report = propose_drops(PlanFrame(fixed, 1, [SleepRule(night=0)]), tasks, new)
     picked, shown = _run(report, new, ["1"])
-    assert picked.new_task_added is False
+    assert picked.added is None
     assert sum("Don't add" in l for l in shown) == 1
 
 
@@ -91,7 +91,7 @@ def test_fits_already_is_rejected():
 
 def test_describe_shows_cut_details_and_flags():
     report, new = _busy()
-    cut = next(p for p in report.proposals if p.new_task_added)
+    cut = next(p for p in report.proposals if p.added is not None)
     text = "\n".join(describe_proposal(2, cut, new))
     assert "sessions of 'Big project'" in text and "Adds 'Essay'" in text and "Sleep:" in text
 
@@ -105,14 +105,14 @@ def test_search_stopped_note_is_shown():
     _, shown = _run(report, new, [""])
     assert any("search stopped" in l for l in shown)
 
-def test_higher_priority_new_task_beats_not_adding_when_cutting_a_lower_priority_one():   
+def test_higher_priority_new_task_beats_not_adding_when_cutting_a_lower_priority_one():
     fixed, tasks, new, rules = busy_day()  # Essay is priority 4, Big project priority 2
     report = propose_drops(PlanFrame(fixed, 1, rules), tasks, new)
-    assert report.proposals[0].new_task_added
+    assert report.proposals[0].added is not None
     assert [a.title for a in report.proposals[0].actions] == ["Big project"]
 
 def _manual_line(task, slots_cut):
-    proposal = DropProposal(actions=manual_actions([task], {0: slots_cut}), new_task_added=True, score=0,
+    proposal = DropProposal(actions=manual_actions([task], {0: slots_cut}), added=AddedTask(), score=0,
                             slots_freed=slots_cut, sleep_sacrificed_slots=0, flags=[], schedule=[])
     new = DynamicTask(title="New", duration_slots=4, priority=3)
     return describe_proposal(1, proposal, new)[1]
@@ -124,7 +124,7 @@ def _manual_line(task, slots_cut):
     (16, "Drop 'Essay' entirely (-4h)"),
 ])
 def test_a_manual_cut_of_a_split_task_says_how_many_sessions_are_left(slots_cut, expected):
-    # #16: a manual cut always read "still one block", even for a task planned in two sessions
+    # a manual cut always read "still one block", even for a task planned in two sessions
     essay = DynamicTask(title="Essay", duration_slots=16, priority=3, max_session_slots=8)
     assert _manual_line(essay, slots_cut).startswith(f"   - {expected} [")
 
@@ -136,7 +136,7 @@ def test_a_manual_cut_of_a_one_block_task_is_still_one_block():
 
 def test_an_option_that_lets_the_new_task_use_sleep_says_so():
     new = DynamicTask(title="Quiz", duration_slots=4, priority=5)
-    proposal = DropProposal(actions=[], new_task_added=True, new_task_may_cut_sleep=True, score=0,
+    proposal = DropProposal(actions=[], added=AddedTask(may_cut_sleep=True), score=0,
                             slots_freed=0, sleep_sacrificed_slots=6, flags=[], schedule=[])
     lines = describe_proposal(1, proposal, new)
     assert "   - Adds 'Quiz' (1h, priority 5, difficulty 3) and lets it use sleep below your target" in lines

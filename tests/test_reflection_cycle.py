@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -102,11 +103,11 @@ def _gap_between(items):
     task_items = sorted((i for i in items if i.kind == "task"), key=lambda i: i.start_slot)
     return task_items[1].start_slot - task_items[0].end_slot
 
-def test_prompt_lists_only_allowed_fields():  
+def test_prompt_lists_only_allowed_fields():
     p = build_system_prompt(["buffer_slots"])
     assert "buffer_slots (deltas" in p and "bedtime_penalty (deltas" not in p
 
-def test_user_owned_field_is_not_shown_to_the_model():  
+def test_user_owned_field_is_not_shown_to_the_model():
     conn = connect(":memory:"); sid = get_or_create_student(conn, "Zane")
     change_tier(conn, sid, "buffer_slots", Tier.USER, Actor.USER)
     seen = {}
@@ -115,7 +116,7 @@ def test_user_owned_field_is_not_shown_to_the_model():
         call = SimpleNamespace(function=SimpleNamespace(arguments='{"summary": "", "proposals": []}'))
         return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(tool_calls=[call]))])
     client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
-    reflect_and_record(conn, sid, "felt rushed", client=client)
+    reflect_and_record(conn, sid, "felt rushed", now=datetime(2026, 10, 1, tzinfo=timezone.utc), client=client)
     assert "buffer_slots (deltas" not in seen["system"] and "bedtime_penalty (deltas" in seen["system"]
 
 def test_apply_and_log_skips_fields_the_student_owns(conn, student_id):
@@ -131,9 +132,9 @@ def test_apply_and_log_skips_a_proposal_that_would_make_settings_invalid(conn, s
     import scheduler.reflection_cycle as rc
     bad = make_result(PreferenceChangeProposal(field="buffer_slots", direction="increase",
                                                magnitude="small", reason="a"))
-    def to_invalid(settings, proposal):  # pretend the bucket produced an out-of-range value
-        return settings.model_copy(update={"buffer_slots": -5})
-    monkeypatch.setattr(rc, "apply_proposal", to_invalid)
+    def to_invalid(settings, field, direction, magnitude):  # pretend the bucket produced an out-of-range value
+        return -5
+    monkeypatch.setattr(rc, "stepped_value", to_invalid)
     before = load_settings(conn, student_id)
     assert apply_and_log(conn, student_id, "x", bad, accepted=[True]) == before
 

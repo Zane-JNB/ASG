@@ -5,18 +5,17 @@ import pytest
 from scheduler.db import (
     connect, get_or_create_student, replace_extraction, WEEKLY_PATTERNS, DATED_BLOCKS, EXTRACTED_TASKS,
 )
-from scheduler.import_flow import run_import
+from scheduler import import_flow
 from scheduler.models import WeeklyPattern, DatedBlock, ExtractedTask, ExtractionResult
 
 
-@pytest.fixture(autouse=True)
-def _import_clock_before_the_sample_dates(monkeypatch):
-    """run_import asks about tasks already due; these samples are dated Oct 2026, so pin 'now' before them."""
-    class _Before(datetime):
-        @classmethod
-        def now(cls, tz=None):
-            return datetime(2026, 9, 1, 9, 0)
-    monkeypatch.setattr("scheduler.import_flow.datetime", _Before)
+BEFORE_THE_SAMPLES = datetime(2026, 9, 1, 9, 0)  # the samples are dated Oct 2026
+
+
+def run_import(*args, **kwargs):
+    """import_flow.run_import, run before the sample dates unless a test says when (it asks
+    about tasks already due)."""
+    return import_flow.run_import(*args, **{"now": BEFORE_THE_SAMPLES, **kwargs})
 
 
 def _extraction(title="DS"):
@@ -190,7 +189,7 @@ def test_pdf_uses_the_local_pdf_path_not_the_default_extractor(env, monkeypatch,
     def fake_from_pdf(file_bytes, call_text_llm=None, call_vision=None):
         return _extraction("PDF-DS")
 
-    monkeypatch.setattr("scheduler.import_flow.extract_schedule_from_pdf", fake_from_pdf)
+    monkeypatch.setattr("scheduler.pdf_extraction.extract_schedule_from_pdf", fake_from_pdf)
     ask = Recorder(YES + KEEP_ALL)
     ok = run_import(conn, sid, str(pdf_path), ask=ask, show=lambda _: None, cache_path=cache)
     assert ok and _titles(conn, sid)[0] == ["PDF-DS"]
@@ -288,7 +287,7 @@ def _partial_pdf_import(env, monkeypatch, tmp_path, answers):
     pdf_path.write_bytes(buf.getvalue())
     def partly(file_bytes, call_text_llm=None, call_vision=None):
         raise PartialExtraction(_extraction("Read"), [2, 3], RuntimeError("rate limit"))
-    monkeypatch.setattr("scheduler.import_flow.extract_schedule_from_pdf", partly)
+    monkeypatch.setattr("scheduler.pdf_extraction.extract_schedule_from_pdf", partly)
     ask, shown = Recorder(answers), []
     ok = run_import(conn, sid, str(pdf_path), ask=ask, show=shown.append, cache_path=cache)
     return ok, ask, shown
@@ -321,7 +320,7 @@ def _pdf_reads(monkeypatch, result, failed):
     from scheduler.pdf_extraction import PartialExtraction
     def partly(file_bytes, call_text_llm=None, call_vision=None):
         raise PartialExtraction(result, failed, RuntimeError("rate limit"))
-    monkeypatch.setattr("scheduler.import_flow.extract_schedule_from_pdf", partly)
+    monkeypatch.setattr("scheduler.pdf_extraction.extract_schedule_from_pdf", partly)
 
 def _replay_with(tmp_path, failed_json):
     saved = tmp_path / "saved.json"

@@ -1,6 +1,7 @@
 """Offline tests: synthetic PDFs built in-process with reportlab, fake text/vision callbacks.
 No API calls, no external files."""
 import io
+import json
 import pytest
 
 from reportlab.lib.pagesizes import letter
@@ -10,7 +11,7 @@ from reportlab.pdfgen import canvas
 import pypdfium2 as pdfium
 
 from scheduler.llm_backends import BadModelOutput
-from scheduler.pdf_extraction import PartialExtraction, extract_schedule_from_pdf, extract_text_page, _render_page
+from scheduler.pdf_extraction import PartialExtraction, extract_schedule_from_pdf, extract_text_page, render_page
 from scheduler.models import ExtractionResult
 
 
@@ -110,7 +111,7 @@ def test_extract_text_page_directly():
 def test_render_page_produces_a_real_png():
     doc = pdfium.PdfDocument(_image_only_pdf())
     try:
-        png_bytes = _render_page(doc, 0)
+        png_bytes = render_page(doc, 0)
     finally:
         doc.close()
     assert png_bytes.startswith(b"\x89PNG")
@@ -240,12 +241,12 @@ def test_the_model_error_is_kept_as_the_cause_when_the_renderer_also_fails(monke
 
 @pytest.mark.parametrize("error", [pdfium.PdfiumError("bad page"), OSError("cannot encode")])
 def test_one_page_that_wont_render_is_skipped_not_the_rest(monkeypatch, error):
-    real_render = __import__("scheduler.pdf_extraction", fromlist=["_render_page"])._render_page
+    real_render = render_page
     def render(doc, i):
         if i == 0:
             raise error
         return real_render(doc, i)
-    monkeypatch.setattr("scheduler.pdf_extraction._render_page", render)
+    monkeypatch.setattr("scheduler.pdf_extraction.render_page", render)
     with pytest.raises(PartialExtraction) as e:
         extract_schedule_from_pdf(_multi_page_pdf([None, None]), call_text_llm=_boom, call_vision=_fake_vision("Scan"))
     assert e.value.failed_pages == [1] and len(e.value.result.weekly_patterns) == 1
@@ -259,7 +260,7 @@ def test_a_wrongly_shaped_answer_is_bad_model_output_not_a_crash(answer):
     with pytest.raises(BadModelOutput):
         extraction_from_dict(answer)
 
-@pytest.mark.parametrize("shape", [[_DS], _DS, __import__("json").dumps([_DS])])
+@pytest.mark.parametrize("shape", [[_DS], _DS, json.dumps([_DS])])
 def test_a_list_one_item_or_a_json_string_is_read(shape):
     from scheduler.schedule_extraction import extraction_from_dict
     assert [p.title for p in extraction_from_dict({"weekly_patterns": shape}).weekly_patterns] == ["DS"]
@@ -350,7 +351,7 @@ def test_a_page_whose_text_layer_is_broken_is_read_as_an_image(monkeypatch, erro
 def test_an_object_sent_as_text_inside_a_list_is_read():
     from scheduler.schedule_extraction import extraction_from_dict
     wed = {**_DS, "title": "B", "day": "Wed"}
-    raw = {"weekly_patterns": [_DS, __import__("json").dumps(wed)]}
+    raw = {"weekly_patterns": [_DS, json.dumps(wed)]}
     assert sorted(p.title for p in extraction_from_dict(raw).weekly_patterns) == ["B", "DS"]
 
 def test_an_empty_answer_is_still_just_empty():
@@ -389,3 +390,20 @@ def test_a_task_sent_as_json_text_gets_the_same_due_time_handling():
     as_object = extraction_from_dict({"tasks": [task]}).tasks
     as_text = extraction_from_dict({"tasks": [json.dumps(task)]}).tasks
     assert [(t.title, t.due_time) for t in as_text] == [(t.title, t.due_time) for t in as_object] == [("HW", None)]
+
+
+# ---- one door for any document: images go to the vision path, PDFs page by page ----
+from scheduler import pdf_extraction
+
+
+def test_page_count_reads_the_pdf_once_without_any_call():
+    assert pdf_extraction.page_count(_multi_page_pdf([["one"], ["two"], None])) == 3
+
+
+def test_extract_document_routes_pdfs_to_the_page_reader_and_images_to_vision(monkeypatch):
+    seen = []
+    monkeypatch.setattr(pdf_extraction, "extract_schedule_from_pdf", lambda b: seen.append(("pdf", b)) or ExtractionResult())
+    monkeypatch.setattr(pdf_extraction, "extract_schedule", lambda b, m: seen.append((m, b)) or ExtractionResult())
+    pdf_extraction.extract_document(b"%PDF", "application/pdf")
+    pdf_extraction.extract_document(b"png", "image/png")
+    assert seen == [("pdf", b"%PDF"), ("image/png", b"png")]

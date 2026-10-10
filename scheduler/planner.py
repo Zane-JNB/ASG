@@ -1,36 +1,42 @@
-from datetime import datetime, timedelta
-from scheduler.fit_check import build_fit_inputs
+"""A plan from the student's saved rows, and how it is printed."""
+from datetime import datetime
+from typing import NamedTuple
+
 from scheduler.db import has_saved_items
-from scheduler.models import PlanAnchor
+from scheduler.fit_check import build_fit_inputs
+from scheduler.models import FixedBlock, PlanAnchor, ScheduledItem, ScheduleWarning
+from scheduler.solver import SOLVE_SECONDS, sleep_warnings, task_warnings
 from scheduler.units import clock_range
-from scheduler.solver import sleep_warnings, task_warnings
 
 
-def plan_from_saved(conn, student_id: int, num_days: int | None = None,
-                    time_limit_seconds: float = 30.0, now: datetime | None = None):
-    """A continuous plan from `now` to the last deadline in play; num_days is only a minimum.
-    Returns (anchor, fixed blocks, scheduled items, warnings)."""
+class Plan(NamedTuple):
+    anchor: PlanAnchor
+    fixed: list[FixedBlock]  # what the solver planned around, incl. this morning's sleep
+    items: list[ScheduledItem]  # everything placed, the fixed blocks included
+    warnings: list[ScheduleWarning]
+
+
+def plan_from_saved(conn, student_id: int, min_days: int = 1, time_limit_seconds: float = SOLVE_SECONDS,
+                    *, now: datetime) -> Plan:
+    """A continuous plan from `now` to the last deadline in play, at least min_days long."""
     if not has_saved_items(conn, student_id):
         raise ValueError("no saved schedule items -- run import_schedule.py first")
 
-    fit = build_fit_inputs(conn, student_id, now or datetime.now(), min_days=num_days or 1)
+    fit = build_fit_inputs(conn, student_id, now, min_days=min_days)
     items, unscheduled = fit.frame.solve(fit.tasks, time_limit_seconds)
     warnings = sleep_warnings(fit.sleep_rules, items) + task_warnings(unscheduled) + fit.warnings
-    return fit.anchor, fit.fixed, items, warnings
+    return Plan(fit.anchor, fit.fixed, items, warnings)
 
-def format_plan(anchor: PlanAnchor, fixed, items, warnings) -> list[str]:
-    """Plain-text lines: fixed blocks and solved items merged by real date and time."""
-    rows = [(b.day, b.start_slot, b.end_slot, "fixed", b.title) for b in fixed]
-    rows += [(i.day, i.start_slot, i.end_slot, i.kind, i.title) for i in items if i.kind != "fixed"]
-    rows.sort()
+
+def format_plan(plan: Plan) -> list[str]:
+    """Plain-text lines: every item under its real date, by time, then the warnings."""
     lines, last_day = [], None
-    for day, start, end, kind, title in rows:
-        if day != last_day:
-            d = anchor.start_date + timedelta(days=day)
-            lines.append(f"{d:%a %d %b %Y}")
-            last_day = day
-        lines.append(f"  {clock_range(start, end)}  [{kind}]  {title}")
-    if warnings:
+    for item in sorted(plan.items, key=lambda i: (i.day, i.start_slot, i.end_slot, i.kind, i.title)):
+        if item.day != last_day:
+            lines.append(f"{plan.anchor.date_of(item.day):%a %d %b %Y}")
+            last_day = item.day
+        lines.append(f"  {clock_range(item.start_slot, item.end_slot)}  [{item.kind}]  {item.title}")
+    if plan.warnings:
         lines.append("Warnings:")
-        lines += [f"  [{w.severity}] {w.kind}: {w.message}" for w in warnings]
+        lines += [f"  [{w.severity}] {w.kind}: {w.message}" for w in plan.warnings]
     return lines

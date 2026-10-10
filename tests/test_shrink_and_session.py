@@ -8,7 +8,7 @@ from scheduler.db import (
     save_settings,
 )
 from scheduler.make_room import describe_proposal
-from scheduler.dropping import _options, _shrink_amounts, propose_drops
+from scheduler.dropping import cut_options, shrink_amounts, propose_drops
 from scheduler.fit_check import build_fit_inputs
 from scheduler.import_flow import run_import
 from scheduler.models import (
@@ -67,16 +67,16 @@ def _tight_day(conn, sid):
 # ---------- shortening a one-block task ----------
 def test_shrink_amounts_never_reach_a_full_drop():
     s = ProfileSettings()
-    assert _shrink_amounts(4, s) == [1, 2, 3]
-    assert _shrink_amounts(2, s) == [1]
-    assert _shrink_amounts(1, s) == []
+    assert shrink_amounts(4, s) == [1, 2, 3]
+    assert shrink_amounts(2, s) == [1]
+    assert shrink_amounts(1, s) == []
 
 
 def test_only_one_block_tasks_can_be_shortened():
     s = ProfileSettings()
     one = DynamicTask(title="Lab", duration_slots=20, priority=3, difficulty=3, splittable=False)
     many = DynamicTask(title="Project", duration_slots=40, priority=3, difficulty=3, max_session_slots=8)
-    opts = _options([one, many], s)
+    opts = cut_options([one, many], s)
     assert any(a.shrink for a in opts[0]) and not any(a.shrink for a in opts[1])
     assert all(not a.shrink for a in opts[1])
 
@@ -98,7 +98,7 @@ def test_a_one_block_new_task_can_be_offered_shortened(conn, sid):
     essay = _tight_day(conn, sid)
     fit = build_fit_inputs(conn, sid, NOW, essay)
     report = propose_drops(fit.frame, fit.tasks, fit.new_task)
-    assert any(p.new_task_added and p.new_task_slots_cut > 0 for p in report.proposals)
+    assert any(p.added is not None and p.added.slots_cut > 0 for p in report.proposals)
 
 
 def test_a_multi_session_new_task_is_not_offered_shortened(conn, sid):
@@ -106,33 +106,33 @@ def test_a_multi_session_new_task_is_not_offered_shortened(conn, sid):
     big = ExtractedTask(title="Project", date=D.isoformat(), duration_slots=24, priority=5, difficulty=3)
     fit = build_fit_inputs(conn, sid, NOW, big)  # 6h, splittable: several sessions
     report = propose_drops(fit.frame, fit.tasks, fit.new_task)
-    assert all(p.new_task_slots_cut == 0 for p in report.proposals)
+    assert all(p.added is None or p.added.slots_cut == 0 for p in report.proposals)
 
 
 def test_shortening_the_new_task_keeps_full_hours_saved_and_records_a_plan_cut(conn, sid):
     essay = _tight_day(conn, sid)
     fit = build_fit_inputs(conn, sid, NOW, essay)
     report = propose_drops(fit.frame, fit.tasks, fit.new_task)
-    choice = next(p for p in report.proposals if p.new_task_slots_cut)
+    choice = next(p for p in report.proposals if p.added is not None and p.added.slots_cut)
     summary = apply_drop_choice(conn, sid, choice, fit.planned, essay)
     saved = {t.title: t.duration_slots for _, t in EXTRACTED_TASKS.get(conn, sid)}
     assert saved["Essay"] == 16  # saved at full hours
-    assert get_plan_cuts(conn, sid)[summary["new_task_id"]] == choice.new_task_slots_cut
+    assert get_plan_cuts(conn, sid)[summary.new_task_id] == choice.added.slots_cut
     planned = {t.title: t.duration_slots for _, t in _planned(conn, sid, D)}
-    assert planned["Essay"] == 16 - choice.new_task_slots_cut
+    assert planned["Essay"] == 16 - choice.added.slots_cut
 
 
 def test_screen_and_summary_say_shorten_and_still_one_block(conn, sid):
     essay = _tight_day(conn, sid)
     shown = []
-    answers = iter(["s", "1"])   
+    answers = iter(["s", "1"])
     add_task_with_fit(conn, sid, essay, NOW, ask=lambda _p: next(answers), show=shown.append)
     text = "\n".join(shown)
     assert "Shorten 'Lab' by" in text and "still one block" in text
     assert "shortened to" in text
     fit = build_fit_inputs(conn, sid, NOW, essay)
     report = propose_drops(fit.frame, fit.tasks, fit.new_task)
-    lines = "\n".join(describe_proposal(1, next(p for p in report.proposals if p.new_task_slots_cut), fit.new_task))
+    lines = "\n".join(describe_proposal(1, next(p for p in report.proposals if p.added is not None and p.added.slots_cut), fit.new_task))
     assert "shortened to" in lines
 
 
@@ -148,10 +148,10 @@ def test_the_students_session_length_reaches_the_solver_tasks(conn, sid):
 
 def test_prompt_asks_about_splitting_using_the_students_session_length():
     ask, shown = scripted(["Quiz", "2026-10-05", "2", "", "", "n"])
-    task = prompt_new_task(ask, shown.append, today=date(2026, 9, 28), session_cap=4)  # 2h > a 1h session
+    task = prompt_new_task(ask, shown.append, now=datetime(2026, 9, 28), session_cap=4)  # 2h > a 1h session
     assert task.splittable is False
     ask, shown = scripted(["Quiz", "2026-10-05", "2", "", ""])
-    assert prompt_new_task(ask, shown.append, today=date(2026, 9, 28)).splittable is True  # default 2h cap: no ask
+    assert prompt_new_task(ask, shown.append, now=datetime(2026, 9, 28), session_cap=8).splittable is True  # 2h cap: no ask
 
 
 def test_menu_session_time_saves_and_takes_effect_immediately(conn, sid):
@@ -211,7 +211,8 @@ def test_import_flow_uses_the_students_session_length(tmp_path, conn, sid):
     img.write_bytes(b"fake-image-bytes")
     ask, shown = scripted(["y", ""])  # confirm the Groq call, then accept everything
     run_import(conn, sid, str(img), ask=ask, show=shown.append,
-               extractor=lambda *a, **k: _long_task(), cache_path=str(tmp_path / "c.json"))
+               extractor=lambda *a, **k: _long_task(), cache_path=str(tmp_path / "c.json"),
+               now=datetime(2026, 9, 1, 9, 0))
     assert any("can be split" in l for l in shown)
 
 

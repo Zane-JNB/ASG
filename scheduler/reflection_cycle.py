@@ -1,10 +1,12 @@
 """The reflection flow: the LLM proposes, preferences decide. apply_and_log is the demo's
 legacy path (the student's y/N is the consent, so no evidence threshold)."""
 import sqlite3
+from datetime import datetime
 
 from scheduler.db import load_settings, log_reflection, save_settings, transaction
-from scheduler.preferences import PreferenceError, learnable_fields, process_reflection, validated_settings
-from scheduler.reflection import ReflectionResult, apply_proposal, propose_preference_changes
+from scheduler.preferences import (PreferenceError, ReflectionOutcome, learnable_fields, process_reflection,
+                                   stepped_value, validated_settings)
+from scheduler.reflection import ReflectionResult, propose_preference_changes
 
 
 def apply_and_log(conn: sqlite3.Connection, student_id: int, reflection_text: str,
@@ -29,9 +31,9 @@ def apply_and_log(conn: sqlite3.Connection, student_id: int, reflection_text: st
     before = load_settings(conn, student_id)
     allowed = learnable_fields(conn, student_id)
     after = before
-    for proposal in (p for p, ok in zip(result.proposals, accepted) if ok and p.field in allowed):
+    for p in (p for p, ok in zip(result.proposals, accepted) if ok and p.field in allowed):
         try:
-            after = validated_settings(after, {proposal.field: getattr(apply_proposal(after, proposal), proposal.field)})
+            after = validated_settings(after, {p.field: stepped_value(after, p.field, p.direction, p.magnitude)})
         except PreferenceError:
             continue  # this one would make the settings invalid: skip it, keep the rest
 
@@ -43,9 +45,10 @@ def apply_and_log(conn: sqlite3.Connection, student_id: int, reflection_text: st
 
     return after
 
-def reflect_and_record(conn, student_id, reflection_text, client=None):
+def reflect_and_record(conn: sqlite3.Connection, student_id: int, reflection_text: str, *, now: datetime,
+                       client=None) -> tuple[ReflectionOutcome, str]:
     """One reflection end to end: ask the LLM for proposals about the fields it may move, then
     count them as evidence. Returns (ReflectionOutcome, the LLM's summary)."""
     allowed = learnable_fields(conn, student_id)  # prompt filter only; process_reflection re-checks
     result = propose_preference_changes(reflection_text, client=client, allowed_fields=allowed)
-    return process_reflection(conn, student_id, reflection_text, result), result.summary
+    return process_reflection(conn, student_id, reflection_text, result, now=now), result.summary
