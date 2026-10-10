@@ -330,3 +330,15 @@ def test_menu_reads_the_time_again_for_each_action(conn, sid):
     run_menu(conn, sid, ask, shown.append, clock=lambda: next(times))
     done = dict(get_extracted_tasks(conn, sid))[tid].completed_at
     assert done == (NINE + timedelta(hours=6)).isoformat(timespec="minutes")  # not the time the menu opened
+
+
+def test_finishing_a_task_is_all_or_nothing(conn, sid, monkeypatch):
+    tid = add_extracted_task(conn, sid, _task("Essay", hours=4))
+    add_plan_cut(conn, sid, tid, 8)
+    def broken(*_a):
+        raise RuntimeError("disk full")
+    monkeypatch.setattr("scheduler.completion.clear_task_sessions", broken)
+    with pytest.raises(RuntimeError):
+        finish_task(conn, sid, tid, NINE, ask=lambda _p: "", show=lambda _l: None)
+    assert dict(get_extracted_tasks(conn, sid))[tid].completed_at is None  # not half-closed
+    assert get_plan_cuts(conn, sid) == {tid: 8}

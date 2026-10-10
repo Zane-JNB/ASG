@@ -238,3 +238,58 @@ def test_migration_stamps_null_evidence_times_even_when_the_column_exists(tmp_pa
     half.execute("INSERT INTO preference_evidence VALUES (1, 'buffer_slots', 2, 'small', NULL)")
     half.commit(); half.close()
     assert connect(path).execute("SELECT updated_at FROM preference_evidence").fetchone()[0] is not None
+
+
+# --- one commit rule: every write runs inside db.transaction ---
+
+from scheduler.db import add_plan_cut, reduce_plan_cut, save_evidence, set_tier, transaction
+from scheduler.preference_policy import Tier
+
+
+def test_every_write_is_saved_without_an_explicit_commit(tmp_path):
+    path = str(tmp_path / "asg.db")
+    c1 = connect(path)
+    sid = get_or_create_student(c1, "Zane")
+    save_settings(c1, sid, ProfileSettings(buffer_slots=4))
+    set_tier(c1, sid, "buffer_slots", Tier.USER)
+    save_evidence(c1, sid, "bedtime_penalty", 2, "small")
+    tid = c1.execute("INSERT INTO extracted_tasks (student_id, data_json, created_at) "
+                     "VALUES (?, '{}', '')", (sid,)).lastrowid
+    c1.commit()
+    add_plan_cut(c1, sid, tid, 8)
+    reduce_plan_cut(c1, sid, tid, 3)
+    c1.close()  # no commit: anything left uncommitted is lost here
+
+    c2 = connect(path)
+    assert load_settings(c2, sid).buffer_slots == 4
+    assert c2.execute("SELECT tier FROM preference_tiers WHERE student_id = ? AND field = 'buffer_slots'",
+                      (sid,)).fetchone() == ("user",)
+    assert c2.execute("SELECT score FROM preference_evidence WHERE student_id = ?", (sid,)).fetchone() == (2,)
+    assert c2.execute("SELECT slots_cut FROM plan_cuts WHERE task_id = ?", (tid,)).fetchone() == (5,)
+    c2.close()
+
+
+def test_nested_transactions_commit_only_when_the_outer_one_ends(tmp_path):
+    path = str(tmp_path / "asg.db")
+    writer, reader = connect(path), connect(path)
+    sid = get_or_create_student(writer, "Zane")
+    st = load_settings(writer, sid)
+    with transaction(writer):
+        log_reflection(writer, sid, "inner write", before=st, after=st, applied=False)  # its own transaction, nested
+        assert get_reflections(reader, sid) == []  # joined the outer one: not committed yet
+    assert len(get_reflections(reader, sid)) == 1
+    writer.close(); reader.close()
+
+
+def test_an_inner_error_the_caller_handles_undoes_only_the_inner_block(conn):
+    sid = get_or_create_student(conn, "Zane")
+    st = load_settings(conn, sid)
+    with transaction(conn):
+        log_reflection(conn, sid, "kept", before=st, after=st, applied=False)
+        try:
+            with transaction(conn):
+                log_reflection(conn, sid, "undone", before=st, after=st, applied=False)
+                raise RuntimeError("boom")
+        except RuntimeError:
+            pass
+    assert [r["reflection_text"] for r in get_reflections(conn, sid)] == ["kept"]

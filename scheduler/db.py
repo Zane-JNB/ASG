@@ -1,5 +1,7 @@
 import json
 import sqlite3
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import date, datetime, timezone
 
 from pydantic import BaseModel, ValidationError
@@ -120,17 +122,16 @@ CREATE TABLE IF NOT EXISTS preference_settings (
 # accepts a sqlite3 connection, then stores the name of each column in the reflections table into a set called 'cols'.
 # If the column "outcome" is not present in the set, it adds the column to the reflections table and commits the change.
 def _migrate(conn: sqlite3.Connection) -> None:
-    cols = {row[1] for row in conn.execute("PRAGMA table_info(reflections)")}
-    if "outcome" not in cols:
-        conn.execute("ALTER TABLE reflections ADD COLUMN outcome TEXT")
-        conn.commit()
-    ev_cols = {row[1] for row in conn.execute("PRAGMA table_info(preference_evidence)")}  
-    if "updated_at" not in ev_cols:                                                       
-        conn.execute("ALTER TABLE preference_evidence ADD COLUMN updated_at TEXT")
-    # Any row still without a time (pre-column data, or a DB whose column was added without a
-    # backfill) gets "now" once, so it can expire. A NULL time would never expire (preferences.py).
-    conn.execute("UPDATE preference_evidence SET updated_at = ? WHERE updated_at IS NULL", (_now(),))
-    conn.commit()
+    with transaction(conn):
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(reflections)")}
+        if "outcome" not in cols:
+            conn.execute("ALTER TABLE reflections ADD COLUMN outcome TEXT")
+        ev_cols = {row[1] for row in conn.execute("PRAGMA table_info(preference_evidence)")}
+        if "updated_at" not in ev_cols:
+            conn.execute("ALTER TABLE preference_evidence ADD COLUMN updated_at TEXT")
+        # Any row still without a time (pre-column data, or a DB whose column was added without a
+        # backfill) gets "now" once, so it can expire. A NULL time would never expire (preferences.py).
+        conn.execute("UPDATE preference_evidence SET updated_at = ? WHERE updated_at IS NULL", (_now(),))
 
 # Accepts a filepath as a string, which is then connected to sqlite and stored in the 'conn' variable.
 def connect(path: str) -> sqlite3.Connection: 
@@ -144,6 +145,19 @@ def connect(path: str) -> sqlite3.Connection:
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
+@contextmanager
+def transaction(conn: sqlite3.Connection) -> Iterator[None]:
+    """The one commit rule: every write runs inside this. All-or-nothing: an error undoes every
+    write in the block. A nested block joins the outer one, so only the outermost block commits."""
+    conn.execute("SAVEPOINT tx")
+    try:
+        yield
+    except BaseException:
+        conn.execute("ROLLBACK TO tx")
+        conn.execute("RELEASE tx")
+        raise
+    conn.execute("RELEASE tx")
+
 # accepts a user's unique username, gets their id, if they exist and returns the id
 # #if the username is not in the database, then the user is prompted to create a username and is then added to the database 
 def get_or_create_student(conn: sqlite3.Connection, name: str) -> int:
@@ -152,12 +166,11 @@ def get_or_create_student(conn: sqlite3.Connection, name: str) -> int:
     if row is not None:
         return row[0]
 
-    curr = conn.execute(
-        "INSERT INTO students (name, created_at) VALUES (?, ?)", (name, _now())
-    )
-    student_id = curr.lastrowid
-    save_settings(conn, student_id, ProfileSettings())
-    conn.commit()
+    with transaction(conn):
+        student_id = conn.execute(
+            "INSERT INTO students (name, created_at) VALUES (?, ?)", (name, _now())
+        ).lastrowid
+        save_settings(conn, student_id, ProfileSettings())
     return student_id
 
 # Uses he student_id to search the database for a valid student then returns their current setings as a json
@@ -170,104 +183,97 @@ def load_settings(conn: sqlite3.Connection, student_id: int) -> ProfileSettings:
         raise ValueError(f"no settings found for student_id={student_id}")
     return ProfileSettings.model_validate_json(row[0])
 
-# Search for a student using their id, accepts the adjustments to be made to the settings, then overwrites or saves the settings
-def save_settings(conn: sqlite3.Connection, student_id: int, settings: ProfileSettings, commit: bool = True) -> None:
+def save_settings(conn: sqlite3.Connection, student_id: int, settings: ProfileSettings) -> None:
     """Insert or overwrite a student's settings."""
-    conn.execute(
-        """
-        INSERT INTO profile_settings (student_id, settings_json, updated_at)
-        VALUES (?, ?, ?)
-        ON CONFLICT(student_id) DO UPDATE SET
-            settings_json = excluded.settings_json,
-            updated_at = excluded.updated_at
-        """,
-        (student_id, settings.model_dump_json(), _now()),
-    )
-    if commit:
-        conn.commit()
+    with transaction(conn):
+        conn.execute(
+            """
+            INSERT INTO profile_settings (student_id, settings_json, updated_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(student_id) DO UPDATE SET
+                settings_json = excluded.settings_json,
+                updated_at = excluded.updated_at
+            """,
+            (student_id, settings.model_dump_json(), _now()),
+        )
 
-# Executes SQL command for each field for that student, 
-# First inserting the tier/setting for a student's field But only if there is no existing setting for that field
-# Then reads each field in that table, returning a dictionary of "tier:field"
-def load_tiers(conn, student_id) -> dict[str, Tier]:  
-    conn.executemany(  # lazy backfill: INSERT OR IGNORE never overwrites a user's choice
-        "INSERT OR IGNORE INTO preference_tiers (student_id, field, tier) VALUES (?, ?, ?)",
-        [(student_id, name, p.default_tier.value) for name, p in POLICY.items()],
-    )
-    conn.commit()
+def load_tiers(conn: sqlite3.Connection, student_id: int) -> dict[str, Tier]:
+    """{field: tier} for every POLICY field. Missing rows are filled from each field's default tier
+    first (INSERT OR IGNORE, so a student's own choice is never overwritten)."""
+    with transaction(conn):
+        conn.executemany(
+            "INSERT OR IGNORE INTO preference_tiers (student_id, field, tier) VALUES (?, ?, ?)",
+            [(student_id, name, p.default_tier.value) for name, p in POLICY.items()],
+        )
     rows = conn.execute("SELECT field, tier FROM preference_tiers WHERE student_id = ?",
                         (student_id,)).fetchall()
     return {f: Tier(t) for f, t in rows if f in POLICY}
 
-#Inserts the user's preference into the preference_tiers table
-#Howwever, if there is a conflicton with  the field name (student_id, field) then an overwrite occurs with the new user preference
-#It upserts, updates the conflicts and inserts them into the the preference_tiers
-def set_tier(conn, student_id, field, tier: Tier, commit=True) -> None:  
-    conn.execute("""INSERT INTO preference_tiers (student_id, field, tier) VALUES (?, ?, ?)
-                    ON CONFLICT(student_id, field) DO UPDATE SET tier = excluded.tier""",
-                 (student_id, field, tier.value))
-    if commit: conn.commit()
+def set_tier(conn: sqlite3.Connection, student_id: int, field: str, tier: Tier) -> None:
+    """Insert or overwrite who owns one setting."""
+    with transaction(conn):
+        conn.execute("""INSERT INTO preference_tiers (student_id, field, tier) VALUES (?, ?, ?)
+                        ON CONFLICT(student_id, field) DO UPDATE SET tier = excluded.tier""",
+                     (student_id, field, tier.value))
 
-#Selects field, score(net tally for voting funtion) and magnitude for a student.
-#Returns a dict with format {fieldName:(score, magnitude)}
-def load_evidence(conn, student_id) -> dict[str, tuple[int, str]]:  
+def load_evidence(conn: sqlite3.Connection, student_id: int) -> dict[str, tuple[int, str]]:
+    """{field: (score, magnitude)}: the net vote of past reflections for each setting."""
     rows = conn.execute("SELECT field, score, magnitude FROM preference_evidence "
                         "WHERE student_id = ?", (student_id,)).fetchall()
     return {f: (score, mag) for f, score, mag in rows}
 
-#Does an upsert on the evidence stored for a change to be made, overriting existing data if there is a conflict.
-def save_evidence(conn, student_id, field, score, magnitude, commit=True, at=None) -> None:   
-    conn.execute("""INSERT INTO preference_evidence (student_id, field, score, magnitude, updated_at)
-                    VALUES (?, ?, ?, ?, ?) ON CONFLICT(student_id, field) DO UPDATE SET
-                    score = excluded.score, magnitude = excluded.magnitude,
-                    updated_at = excluded.updated_at""",
-                 (student_id, field, score, magnitude, at or _now()))
-    if commit: conn.commit()
+def save_evidence(conn: sqlite3.Connection, student_id: int, field: str, score: int, magnitude: str,
+                  at: str | None = None) -> None:
+    """Insert or overwrite one setting's evidence, stamped `at` (default: now)."""
+    with transaction(conn):
+        conn.execute("""INSERT INTO preference_evidence (student_id, field, score, magnitude, updated_at)
+                        VALUES (?, ?, ?, ?, ?) ON CONFLICT(student_id, field) DO UPDATE SET
+                        score = excluded.score, magnitude = excluded.magnitude,
+                        updated_at = excluded.updated_at""",
+                     (student_id, field, score, magnitude, at or _now()))
 
-#Selects the field and shows the time it was last updated, returning both as a dict
-def load_evidence_times(conn, student_id) -> dict[str, str | None]:  
+def load_evidence_times(conn: sqlite3.Connection, student_id: int) -> dict[str, str | None]:
+    """{field: when its evidence last changed}."""
     rows = conn.execute("SELECT field, updated_at FROM preference_evidence WHERE student_id = ?",
                         (student_id,)).fetchall()
     return {f: t for f, t in rows}
 
-#Selects the method of a proposal approval, returning the method if the row exists, and auto if it does not.
-def load_approval_mode(conn, student_id) -> str:  
+def load_approval_mode(conn: sqlite3.Connection, student_id: int) -> str:
+    """How learned changes are approved: 'auto' (the default) or 'ask'."""
     row = conn.execute("SELECT approval_mode FROM preference_settings WHERE student_id = ?",
                        (student_id,)).fetchone()
     return row[0] if row else "auto"
 
-#Upserts a new approval method, checking for conflict on student_id and overwriting if there is one.
-def save_approval_mode(conn, student_id, mode, commit=True) -> None:  
-    conn.execute("""INSERT INTO preference_settings (student_id, approval_mode) VALUES (?, ?)
-                    ON CONFLICT(student_id) DO UPDATE SET approval_mode = excluded.approval_mode""",
-                 (student_id, mode))
-    if commit: conn.commit()
+def save_approval_mode(conn: sqlite3.Connection, student_id: int, mode: str) -> None:
+    """Insert or overwrite the approval mode."""
+    with transaction(conn):
+        conn.execute("""INSERT INTO preference_settings (student_id, approval_mode) VALUES (?, ?)
+                        ON CONFLICT(student_id) DO UPDATE SET approval_mode = excluded.approval_mode""",
+                     (student_id, mode))
 
-#Clears the evidence collected for a proposed change for a student
-def clear_evidence(conn, student_id, field=None, commit=True) -> None:   
-    if field is None:
-        conn.execute("DELETE FROM preference_evidence WHERE student_id = ?", (student_id,))
-    else:
-        conn.execute("DELETE FROM preference_evidence WHERE student_id = ? AND field = ?",
-                     (student_id, field))
-    if commit: conn.commit()
+def clear_evidence(conn: sqlite3.Connection, student_id: int, field: str | None = None) -> None:
+    """Forget one setting's evidence, or every setting's when field is None."""
+    with transaction(conn):
+        if field is None:
+            conn.execute("DELETE FROM preference_evidence WHERE student_id = ?", (student_id,))
+        else:
+            conn.execute("DELETE FROM preference_evidence WHERE student_id = ? AND field = ?",
+                         (student_id, field))
 
 def log_reflection(conn: sqlite3.Connection, student_id: int, reflection_text: str,
                    before: ProfileSettings, after: ProfileSettings, applied: bool,
-                   outcome: str | None = None, commit: bool = True) -> int:  
+                   outcome: str | None = None) -> int:
     """Record a reflection and the settings snapshot before/after it. Returns the new row's id."""
-    cur = conn.execute(
-        """
-        INSERT INTO reflections
-            (student_id, created_at, reflection_text, settings_before_json, settings_after_json, applied, outcome)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-        """,   
-        (student_id, _now(), reflection_text,
-         before.model_dump_json(), after.model_dump_json(), int(applied), outcome)
-    )
-    if commit:  
-        conn.commit()
-    return cur.lastrowid
+    with transaction(conn):
+        return conn.execute(
+            """
+            INSERT INTO reflections
+                (student_id, created_at, reflection_text, settings_before_json, settings_after_json, applied, outcome)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (student_id, _now(), reflection_text,
+             before.model_dump_json(), after.model_dump_json(), int(applied), outcome)
+        ).lastrowid
 
 def get_reflections(conn: sqlite3.Connection, student_id: int) -> list[dict]:
     """Return this student's reflection history, oldest first."""
@@ -293,12 +299,11 @@ def get_reflections(conn: sqlite3.Connection, student_id: int) -> list[dict]:
 
 def _add_item(conn: sqlite3.Connection, table: str, student_id: int, item: BaseModel) -> int:
     """Insert one item (a FixedBlock, DynamicTask, or Exam) for a student. Returns its new id."""
-    cur = conn.execute(
-        f"INSERT INTO {table} (student_id, data_json, created_at) VALUES (?, ?, ?)",
-        (student_id, item.model_dump_json(), _now()),
-    )
-    conn.commit()
-    return cur.lastrowid
+    with transaction(conn):
+        return conn.execute(
+            f"INSERT INTO {table} (student_id, data_json, created_at) VALUES (?, ?, ?)",
+            (student_id, item.model_dump_json(), _now()),
+        ).lastrowid
 
 def _read_items(conn: sqlite3.Connection, table: str, student_id: int, model_cls: type, strict: bool = False):
     """(readable, unreadable) for one table, oldest first. readable: (id, model_instance);
@@ -360,17 +365,15 @@ def delete_unreadable_item(conn: sqlite3.Connection, student_id: int, label: str
 
 def _delete_item(conn: sqlite3.Connection, table: str, student_id: int, item_id: int) -> bool:
     """Delete one item by id, scoped to this student (so one student can't delete another's row)."""
-    cur = conn.execute(
-        f"DELETE FROM {table} WHERE id = ? AND student_id = ?", (item_id, student_id)
-    )
-    conn.commit()
-    return cur.rowcount > 0
+    with transaction(conn):
+        return conn.execute(
+            f"DELETE FROM {table} WHERE id = ? AND student_id = ?", (item_id, student_id)
+        ).rowcount > 0
 
 def _clear_items(conn: sqlite3.Connection, table: str, student_id: int) -> int:
     """Delete every item of this type for a student. Returns how many rows were removed."""
-    cur = conn.execute(f"DELETE FROM {table} WHERE student_id = ?", (student_id,))
-    conn.commit()
-    return cur.rowcount
+    with transaction(conn):
+        return conn.execute(f"DELETE FROM {table} WHERE student_id = ?", (student_id,)).rowcount
 
 def add_fixed_block(conn: sqlite3.Connection, student_id: int, block: FixedBlock) -> int:
     return _add_item(conn, "fixed_blocks", student_id, block)
@@ -428,10 +431,9 @@ def get_extracted_tasks(conn, student_id: int) -> list[tuple[int, ExtractedTask]
     return _get_items(conn, "extracted_tasks", student_id, ExtractedTask)
 
 def update_extracted_task(conn, student_id: int, item_id: int, item: ExtractedTask) -> bool:   
-    cur = conn.execute("UPDATE extracted_tasks SET data_json = ? WHERE id = ? AND student_id = ?",
-                       (item.model_dump_json(), item_id, student_id))
-    conn.commit()
-    return cur.rowcount > 0
+    with transaction(conn):
+        return conn.execute("UPDATE extracted_tasks SET data_json = ? WHERE id = ? AND student_id = ?",
+                            (item.model_dump_json(), item_id, student_id)).rowcount > 0
 
 def delete_extracted_task(conn, student_id: int, item_id: int) -> bool:   
     return _delete_item(conn, "extracted_tasks", student_id, item_id)
@@ -446,10 +448,9 @@ def get_commutes(conn, student_id: int) -> list[tuple[int, Commute]]:
     return _get_items(conn, "commutes", student_id, Commute)
 
 def update_commute(conn, student_id: int, item_id: int, item: Commute) -> bool:   
-    cur = conn.execute("UPDATE commutes SET data_json = ? WHERE id = ? AND student_id = ?",
-                       (item.model_dump_json(), item_id, student_id))
-    conn.commit()
-    return cur.rowcount > 0
+    with transaction(conn):
+        return conn.execute("UPDATE commutes SET data_json = ? WHERE id = ? AND student_id = ?",
+                            (item.model_dump_json(), item_id, student_id)).rowcount > 0
 
 def delete_commute(conn, student_id: int, item_id: int) -> bool:   
     return _delete_item(conn, "commutes", student_id, item_id)
@@ -482,7 +483,7 @@ def replace_extraction(conn, student_id: int, result: ExtractionResult) -> dict:
         )
 
     summary = {"weekly": 0, "dated": 0, "tasks_added": 0, "tasks_skipped": 0}
-    try:
+    with transaction(conn):  # all-or-nothing
         for table, key, items in (("weekly_patterns", "weekly", result.weekly_patterns),
                                   ("dated_blocks", "dated", result.dated_blocks)):
             if items:  #   -- an import with none of this type leaves the old ones alone
@@ -504,98 +505,80 @@ def replace_extraction(conn, student_id: int, result: ExtractionResult) -> dict:
             seen.add(key)
             insert("extracted_tasks", task)
             summary["tasks_added"] += 1
-        conn.commit()  # the only commit, so it's all-or-nothing
-    except Exception:
-        conn.rollback()
-        raise
     return summary
 
-def _own_task(conn, student_id: int, task_id: int) -> bool:   
-    return conn.execute("SELECT 1 FROM extracted_tasks WHERE id = ? AND student_id = ?",
-                        (task_id, student_id)).fetchone() is not None
-
-def _upsert_cut(conn, student_id: int, task_id: int, slots: int) -> None:   
+def add_plan_cut(conn: sqlite3.Connection, student_id: int, task_id: int, slots: int) -> None:
+    """Cut `slots` more from this task's plan. Cuts add up and never shrink the saved task."""
     if slots < 1:
         raise ValueError("a cut must be at least one slot")
-    if not _own_task(conn, student_id, task_id):
-        raise ValueError(f"task {task_id} does not belong to this student")
-    conn.execute(
-        """INSERT INTO plan_cuts (task_id, student_id, slots_cut, updated_at) VALUES (?, ?, ?, ?)
-           ON CONFLICT(task_id) DO UPDATE SET slots_cut = slots_cut + excluded.slots_cut,
-                                              updated_at = excluded.updated_at""",
-        (task_id, student_id, slots, _now()))
+    with transaction(conn):
+        if conn.execute("SELECT 1 FROM extracted_tasks WHERE id = ? AND student_id = ?",
+                        (task_id, student_id)).fetchone() is None:
+            raise ValueError(f"task {task_id} does not belong to this student")
+        conn.execute(
+            """INSERT INTO plan_cuts (task_id, student_id, slots_cut, updated_at) VALUES (?, ?, ?, ?)
+               ON CONFLICT(task_id) DO UPDATE SET slots_cut = slots_cut + excluded.slots_cut,
+                                                  updated_at = excluded.updated_at""",
+            (task_id, student_id, slots, _now()))
 
-def add_plan_cut(conn, student_id: int, task_id: int, slots: int) -> None:   
-    try:
-        _upsert_cut(conn, student_id, task_id, slots)
-        conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
-
-def get_plan_cuts(conn, student_id: int) -> dict[int, int]:   
+def get_plan_cuts(conn: sqlite3.Connection, student_id: int) -> dict[int, int]:
+    """{task id: slots cut from its plan}."""
     rows = conn.execute("SELECT task_id, slots_cut FROM plan_cuts WHERE student_id = ?",
                         (student_id,)).fetchall()
     return {r[0]: r[1] for r in rows}
 
-def clear_plan_cut(conn, student_id: int, task_id: int) -> bool:  #   -- gives the time back
-    cur = conn.execute("DELETE FROM plan_cuts WHERE task_id = ? AND student_id = ?", (task_id, student_id))
-    conn.commit()
-    return cur.rowcount > 0
+def clear_plan_cut(conn: sqlite3.Connection, student_id: int, task_id: int) -> bool:
+    """Give a task its whole cut back."""
+    with transaction(conn):
+        return conn.execute("DELETE FROM plan_cuts WHERE task_id = ? AND student_id = ?",
+                            (task_id, student_id)).rowcount > 0
 
-def clear_plan_cuts(conn, student_id: int) -> int:   
-    cur = conn.execute("DELETE FROM plan_cuts WHERE student_id = ?", (student_id,))
-    conn.commit()
-    return cur.rowcount
+def reduce_plan_cut(conn: sqlite3.Connection, student_id: int, task_id: int, slots: int) -> None:
+    """Give `slots` of a task's cut back (all of it if the cut is that small)."""
+    with transaction(conn):
+        # delete first when the whole cut is given back: the table forbids a cut of 0
+        conn.execute("DELETE FROM plan_cuts WHERE task_id = ? AND student_id = ? AND slots_cut <= ?",
+                     (task_id, student_id, slots))
+        conn.execute("UPDATE plan_cuts SET slots_cut = slots_cut - ?, updated_at = ? "
+                     "WHERE task_id = ? AND student_id = ?", (slots, _now(), task_id, student_id))
 
-def apply_plan_changes(conn, student_id: int, cuts: dict[int, int],
-                       new_task: ExtractedTask | None = None, new_task_cut: int = 0) -> int | None:  
+def apply_plan_changes(conn: sqlite3.Connection, student_id: int, cuts: dict[int, int],
+                       new_task: ExtractedTask | None = None, new_task_cut: int = 0) -> int | None:
     """Save a chosen drop proposal all-or-nothing: the cuts plus (optionally) the new task.
     Returns the new task's id, or None if no task was added."""
-    try:
+    with transaction(conn):
         for task_id, slots in cuts.items():
-            _upsert_cut(conn, student_id, task_id, slots)
-        new_id = None
-        if new_task is not None:
-            new_id = conn.execute(
-                "INSERT INTO extracted_tasks (student_id, data_json, created_at) VALUES (?, ?, ?)",
-                (student_id, new_task.model_dump_json(), _now())).lastrowid
-            if new_task_cut > 0:  #   -- saved at full hours; the shortening is plan-only, like any cut
-                _upsert_cut(conn, student_id, new_id, new_task_cut)
-        conn.commit()
+            add_plan_cut(conn, student_id, task_id, slots)
+        if new_task is None:
+            return None
+        new_id = _add_item(conn, "extracted_tasks", student_id, new_task)
+        if new_task_cut > 0:  # saved at full hours; the shortening is plan-only, like any cut
+            add_plan_cut(conn, student_id, new_id, new_task_cut)
         return new_id
-    except Exception:
-        conn.rollback()
-        raise
 
-def record_plan_sessions(conn, student_id: int, now_iso: str, sessions: list[tuple[int, str, str]]) -> None:   
-    """Replace the not-yet-finished sessions of the previous plan with the new plan's. Sessions that
-    already ended stay until the student has been asked about them."""
-    conn.execute("DELETE FROM plan_sessions WHERE student_id = ? AND end_at > ?", (student_id, now_iso))
-    conn.executemany(
-        "INSERT INTO plan_sessions (student_id, task_id, start_at, end_at) VALUES (?, ?, ?, ?)",
-        [(student_id, t, s, e) for t, s, e in sessions])
-    conn.commit()
+def record_plan_sessions(conn: sqlite3.Connection, student_id: int, now_iso: str,
+                         sessions: list[tuple[int, str, str]]) -> None:
+    """Replace the not-yet-finished sessions of the previous plan with the new plan's
+    [(task id, start, end)]. Sessions that already ended stay until the student has been asked about them."""
+    with transaction(conn):
+        conn.execute("DELETE FROM plan_sessions WHERE student_id = ? AND end_at > ?", (student_id, now_iso))
+        conn.executemany(
+            "INSERT INTO plan_sessions (student_id, task_id, start_at, end_at) VALUES (?, ?, ?, ?)",
+            [(student_id, t, s, e) for t, s, e in sessions])
 
-def due_sessions(conn, student_id: int, now_iso: str) -> list[tuple[int, str, str]]:   
+def due_sessions(conn: sqlite3.Connection, student_id: int, now_iso: str) -> list[tuple[int, str, str]]:
     """[(task id, start, end)] of sessions that ended and have not been asked about yet."""
     return conn.execute("SELECT task_id, start_at, end_at FROM plan_sessions "
                         "WHERE student_id = ? AND asked = 0 AND end_at <= ? ORDER BY end_at",
                         (student_id, now_iso)).fetchall()
 
-def mark_sessions_asked(conn, student_id: int, task_id: int, now_iso: str) -> None:   
-    conn.execute("UPDATE plan_sessions SET asked = 1 WHERE student_id = ? AND task_id = ? AND end_at <= ?",
-                 (student_id, task_id, now_iso))
-    conn.commit()
+def mark_sessions_asked(conn: sqlite3.Connection, student_id: int, task_id: int, now_iso: str) -> None:
+    """Mark every ended session of this task as asked about."""
+    with transaction(conn):
+        conn.execute("UPDATE plan_sessions SET asked = 1 WHERE student_id = ? AND task_id = ? AND end_at <= ?",
+                     (student_id, task_id, now_iso))
 
-def clear_task_sessions(conn, student_id: int, task_id: int) -> None:   
-    conn.execute("DELETE FROM plan_sessions WHERE student_id = ? AND task_id = ?", (student_id, task_id))
-    conn.commit()
-
-def reduce_plan_cut(conn, student_id: int, task_id: int, slots: int) -> None:  #    -- give time back
-    # delete first when the whole cut is given back: the table forbids a cut of 0
-    conn.execute("DELETE FROM plan_cuts WHERE task_id = ? AND student_id = ? AND slots_cut <= ?",
-                 (task_id, student_id, slots))
-    conn.execute("UPDATE plan_cuts SET slots_cut = slots_cut - ?, updated_at = ? WHERE task_id = ? AND student_id = ?",
-                 (slots, _now(), task_id, student_id))
-    conn.commit()
+def clear_task_sessions(conn: sqlite3.Connection, student_id: int, task_id: int) -> None:
+    """Forget every session of this task (it was closed)."""
+    with transaction(conn):
+        conn.execute("DELETE FROM plan_sessions WHERE student_id = ? AND task_id = ?", (student_id, task_id))

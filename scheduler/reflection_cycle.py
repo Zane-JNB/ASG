@@ -1,6 +1,6 @@
 import sqlite3
 
-from scheduler.db import load_settings, save_settings, log_reflection
+from scheduler.db import load_settings, save_settings, log_reflection, transaction
 from scheduler.reflection import ReflectionResult, apply_proposal, propose_preference_changes
 from scheduler.solver import build_schedule
 from scheduler.models import DynamicTask, FixedBlock, SleepRule
@@ -39,9 +39,10 @@ def apply_and_log(conn: sqlite3.Connection, student_id: int, reflection_text: st
             continue
 
     applied = after != before
-    if applied:
-        save_settings(conn, student_id, after)
-    log_reflection(conn, student_id, reflection_text, before=before, after=after, applied=applied)
+    with transaction(conn):  # settings + audit row, one transaction
+        if applied:
+            save_settings(conn, student_id, after)
+        log_reflection(conn, student_id, reflection_text, before=before, after=after, applied=applied)
 
     return after
 

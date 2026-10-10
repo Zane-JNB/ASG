@@ -5,7 +5,7 @@ import pytest
 from scheduler.calendar_utils import extracted_task_to_dynamic_task
 from scheduler.db import (
     add_dated_block, add_extracted_task, add_plan_cut, apply_plan_changes, clear_plan_cut,
-    clear_plan_cuts, connect, delete_extracted_task, get_extracted_tasks, get_or_create_student,
+    connect, delete_extracted_task, get_extracted_tasks, get_or_create_student,
     get_plan_cuts,
 )
 from scheduler.drop_apply import apply_drop_choice
@@ -57,16 +57,6 @@ def test_deleting_a_task_removes_its_cut(conn, sid):
     add_plan_cut(conn, sid, tid, 8)
     delete_extracted_task(conn, sid, tid)
     assert get_plan_cuts(conn, sid) == {}
-
-
-def test_clear_plan_cuts_only_touches_this_student(conn, sid):
-    other = get_or_create_student(conn, "Other")
-    a = add_extracted_task(conn, sid, _task("A", 4, 2))
-    b = add_extracted_task(conn, other, _task("B", 4, 2))
-    add_plan_cut(conn, sid, a, 4)
-    add_plan_cut(conn, other, b, 4)
-    assert clear_plan_cuts(conn, sid) == 1
-    assert get_plan_cuts(conn, other) == {b: 4}
 
 
 def test_apply_plan_changes_is_all_or_nothing(conn, sid):

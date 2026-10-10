@@ -3,7 +3,7 @@ from datetime import datetime, time, timedelta
 
 from scheduler.db import (
     clear_plan_cut, clear_task_sessions, due_sessions, get_extracted_tasks, load_settings,
-    mark_sessions_asked, record_plan_sessions, reduce_plan_cut, update_extracted_task,
+    mark_sessions_asked, record_plan_sessions, reduce_plan_cut, transaction, update_extracted_task,
 )
 from scheduler.units import MINUTES_PER_SLOT, SLOTS_PER_DAY, format_hours
 from scheduler.models import PlanAnchor
@@ -24,10 +24,11 @@ def finish_task(conn, student_id: int, task_id: int, now: datetime, ask=input, s
     task = dict(get_extracted_tasks(conn, student_id)).get(task_id)
     if task is None or task.completed_at:
         raise ValueError("that task is not an open task")
-    update_extracted_task(conn, student_id, task_id,
-                          task.model_copy(update={"completed_at": _iso(now), "missed": missed}))
-    clear_plan_cut(conn, student_id, task_id)
-    clear_task_sessions(conn, student_id, task_id)
+    with transaction(conn):  # closed together with its cut and sessions, or not at all
+        update_extracted_task(conn, student_id, task_id,
+                              task.model_copy(update={"completed_at": _iso(now), "missed": missed}))
+        clear_plan_cut(conn, student_id, task_id)
+        clear_task_sessions(conn, student_id, task_id)
     show(f"Marked '{task.title}' as {'missed' if missed else 'done'}.")
     try:
         restores = plan_restores(conn, student_id, now, time_limit_seconds)
@@ -41,8 +42,9 @@ def finish_task(conn, student_id: int, task_id: int, now: datetime, ask=input, s
         show(f"  - '{titles[tid]}' +{format_hours(slots)}")
     if not _confirm(ask, "Restore them?", True):
         return {"restored": {}}
-    for tid, slots in restores.items():
-        reduce_plan_cut(conn, student_id, tid, slots)
+    with transaction(conn):
+        for tid, slots in restores.items():
+            reduce_plan_cut(conn, student_id, tid, slots)
     return {"restored": restores}
 
 
