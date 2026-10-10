@@ -5,9 +5,9 @@ import pytest
 from pydantic import ValidationError
 
 from scheduler.models import ProfileSettings
+from scheduler.preference_policy import MODEL_DELTAS
 from scheduler.reflection import (
-    ADJUSTABLE_FIELDS, PreferenceChangeProposal, ReflectionResult,
-    apply_proposal, apply_all, propose_preference_changes,
+    PreferenceChangeProposal, ReflectionResult, apply_proposal, propose_preference_changes,
 )
 
 
@@ -29,7 +29,7 @@ def make_client(summary: str, proposals: list[dict]) -> FakeClient:
 def test_locked_fields_are_rejected():
     locked = {"presence_bonus", "sleep_min_penalty", "default_sleep_min_slots",
               "default_earliest_bed", "default_latest_bed"}
-    assert locked.isdisjoint(ADJUSTABLE_FIELDS)
+    assert locked.isdisjoint(MODEL_DELTAS)
     for field in locked:
         with pytest.raises(ValidationError):
             PreferenceChangeProposal(field=field, direction="decrease", magnitude="large", reason="x")
@@ -52,7 +52,7 @@ def test_apply_proposal_increase():
     p = PreferenceChangeProposal(field="buffer_slots", direction="increase",
                                  magnitude="medium", reason="x")
     s2 = apply_proposal(s, p)
-    assert s2.buffer_slots == s.buffer_slots + ADJUSTABLE_FIELDS["buffer_slots"]["medium"]
+    assert s2.buffer_slots == s.buffer_slots + MODEL_DELTAS["buffer_slots"]["medium"]
 
 
 def test_apply_proposal_decrease():
@@ -60,7 +60,7 @@ def test_apply_proposal_decrease():
     p = PreferenceChangeProposal(field="same_day_penalty", direction="decrease",
                                  magnitude="small", reason="x")
     s2 = apply_proposal(s, p)
-    assert s2.same_day_penalty == 3000 - ADJUSTABLE_FIELDS["same_day_penalty"]["small"]
+    assert s2.same_day_penalty == 3000 - MODEL_DELTAS["same_day_penalty"]["small"]
 
 
 def test_apply_proposal_clamps_at_lower_bound():
@@ -79,20 +79,8 @@ def test_apply_proposal_clamps_gt_zero_field_at_one():
     assert s2.sleep_target_penalty == 1  # gt=0, so 1 is the smallest valid int
 
 
-def test_apply_all_applies_every_proposal_in_order():
-    s = ProfileSettings()
-    proposals = [
-        PreferenceChangeProposal(field="buffer_slots", direction="increase", magnitude="small", reason="a"),
-        PreferenceChangeProposal(field="same_day_penalty", direction="decrease", magnitude="medium", reason="b"),
-    ]
-    s2 = apply_all(s, proposals)
-    assert s2.buffer_slots == s.buffer_slots + 1
-    assert s2.same_day_penalty == s.same_day_penalty - 1000
 
 
-def test_apply_all_with_no_proposals_returns_unchanged_settings():
-    s = ProfileSettings()
-    assert apply_all(s, []) == s
 
 
 def test_propose_preference_changes_parses_valid_response():
