@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from datetime import date, datetime, time
 
 import pytest
 
@@ -9,15 +9,20 @@ from scheduler.db import (
 )
 from scheduler.make_room import describe_proposal
 from scheduler.dropping import _options, _shrink_amounts, propose_drops
-from scheduler.fit_check import build_fit_inputs, planned_tasks
+from scheduler.fit_check import build_fit_inputs
 from scheduler.import_flow import run_import
 from scheduler.models import (
-    DatedBlock, DynamicTask, ExtractedTask, ExtractionResult, FixedBlock, PlanAnchor,
+    DatedBlock, DynamicTask, ExtractedTask, ExtractionResult, FixedBlock,
     ProfileSettings, SleepRule,
 )
 from scheduler.review import _describe, review_extraction
 from scheduler.solver import PlanFrame
 from scheduler.task_manager import prompt_new_task, run_menu
+
+
+def _planned(conn, sid, day):
+    """[(saved task id, task)] as planned from midnight that day, plan cuts applied."""
+    return build_fit_inputs(conn, sid, datetime.combine(day, time())).planned
 
 
 @pytest.fixture(autouse=True)
@@ -112,7 +117,7 @@ def test_shortening_the_new_task_keeps_full_hours_saved_and_records_a_plan_cut(c
     saved = {t.title: t.duration_slots for _, t in EXTRACTED_TASKS.get(conn, sid)}
     assert saved["Essay"] == 16  # saved at full hours
     assert get_plan_cuts(conn, sid)[summary["new_task_id"]] == choice.new_task_slots_cut
-    planned = {t.title: t.duration_slots for _, t in planned_tasks(conn, sid, PlanAnchor(start_date=D, num_days=1))}
+    planned = {t.title: t.duration_slots for _, t in _planned(conn, sid, D)}
     assert planned["Essay"] == 16 - choice.new_task_slots_cut
 
 
@@ -134,7 +139,7 @@ def test_screen_and_summary_say_shorten_and_still_one_block(conn, sid):
 def test_the_students_session_length_reaches_the_solver_tasks(conn, sid):
     save_settings(conn, sid, load_settings(conn, sid).model_copy(update={"default_max_session_slots": 4}))
     EXTRACTED_TASKS.add(conn, sid, ExtractedTask(title="Essay", date=D.isoformat(), duration_slots=12))
-    [(_, t)] = planned_tasks(conn, sid, PlanAnchor(start_date=D, num_days=1))
+    [(_, t)] = _planned(conn, sid, D)
     assert t.max_session_slots == 4
     fit = build_fit_inputs(conn, sid, NOW, ExtractedTask(title="New", date=D.isoformat(), duration_slots=12))
     assert fit.new_task.max_session_slots == 4

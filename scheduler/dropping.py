@@ -10,13 +10,6 @@ from scheduler.units import SLOTS_PER_DAY
 NEW_TASK = -1  # the task index that stands for the new task
 
 
-def cut_task(task, chunks_cut):
-    sizes = chunk_sizes(task)
-    if chunks_cut >= len(sizes):
-        return None  # cutting every session = full drop
-    return task.model_copy(update={"duration_slots": task.duration_slots - sum(sizes[-chunks_cut:])})
-
-
 def loss_cost(task: DynamicTask, lost_slots: int, settings: ProfileSettings) -> int:
     per_slot = (task.priority ** 2 * settings.drop_priority_weight
                 + task.difficulty * settings.drop_difficulty_weight)

@@ -9,11 +9,16 @@ from scheduler.db import (
 )
 from scheduler.add_with_fit import apply_drop_choice
 from scheduler.dropping import dont_add_unverified, propose_drops
-from scheduler.models import DatedBlock, ExtractedTask, PlanAnchor
-from scheduler.fit_check import build_fit_inputs, planned_tasks
+from scheduler.models import DatedBlock, ExtractedTask
+from scheduler.fit_check import build_fit_inputs
 from scheduler.planner import plan_from_saved
 
 START = date(2026, 10, 5)  # a Monday
+
+
+def _planned(conn, sid, day):
+    """[(saved task id, task)] as planned from midnight that day, plan cuts applied."""
+    return build_fit_inputs(conn, sid, datetime.combine(day, time())).planned
 
 
 @pytest.fixture
@@ -68,8 +73,7 @@ def test_apply_plan_changes_is_all_or_nothing(conn, sid):
 def test_planned_tasks_apply_cuts_but_saved_task_is_untouched(conn, sid):
     tid = EXTRACTED_TASKS.add(conn, sid, _task("Big", 10, 2))
     add_plan_cut(conn, sid, tid, 12)
-    anchor = PlanAnchor(start_date=START, num_days=1)
-    [(pid, t)] = planned_tasks(conn, sid, anchor)
+    [(pid, t)] = _planned(conn, sid, START)
     assert pid == tid and t.duration_slots == 40 - 12
     assert EXTRACTED_TASKS.get(conn, sid)[0][1].duration_slots == 40  # full hours still saved
 
@@ -77,7 +81,7 @@ def test_planned_tasks_apply_cuts_but_saved_task_is_untouched(conn, sid):
 def test_fully_cut_task_is_left_out_of_the_plan(conn, sid):
     tid = EXTRACTED_TASKS.add(conn, sid, _task("Big", 10, 2))
     add_plan_cut(conn, sid, tid, 40)
-    assert planned_tasks(conn, sid, PlanAnchor(start_date=START, num_days=1)) == []
+    assert _planned(conn, sid, START) == []
 
 
 def test_fully_cut_task_gets_a_hard_warning_in_the_plan(conn, sid):
@@ -112,7 +116,7 @@ def test_clearing_a_cut_gives_the_time_back(conn, sid):
     tid = EXTRACTED_TASKS.add(conn, sid, _task("Big", 10, 2))
     add_plan_cut(conn, sid, tid, 16)
     clear_plan_cut(conn, sid, tid)
-    [(_, t)] = planned_tasks(conn, sid, PlanAnchor(start_date=START, num_days=1))
+    [(_, t)] = _planned(conn, sid, START)
     assert t.duration_slots == 40
 
 def _busy_student(conn, sid):
@@ -182,6 +186,5 @@ def test_finishing_early_lets_a_cut_task_get_its_time_back(conn, sid):
     apply_drop_choice(conn, sid, report.proposals[0], planned, essay)
     cut_id = next(iter(get_plan_cuts(conn, sid)))
     clear_plan_cut(conn, sid, cut_id)  # e.g. the Essay was finished early
-    anchor = PlanAnchor(start_date=START, num_days=1)
-    restored = dict(planned_tasks(conn, sid, anchor))[cut_id]
+    restored = dict(_planned(conn, sid, START))[cut_id]
     assert restored.duration_slots == dict(planned)[cut_id].duration_slots

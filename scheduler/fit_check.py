@@ -72,15 +72,6 @@ def _planned_and_overdue(saved_tasks: list[tuple[int, ExtractedTask]], cuts: dic
     return planned, warnings
 
 
-def planned_tasks(conn, student_id: int, anchor: PlanAnchor):
-    """[(saved task id, DynamicTask)] with plan cuts applied, as at the start of the anchor's
-    first day. Saved tasks are never changed."""
-    start = datetime.combine(anchor.start_date, datetime.min.time())
-    session = load_settings(conn, student_id).default_max_session_slots
-    return _planned_and_overdue(EXTRACTED_TASKS.get(conn, student_id), get_plan_cuts(conn, student_id),
-                                anchor.start_date, start, session)[0]
-
-
 def unreadable_warnings(unreadable: list[Unreadable]) -> list[ScheduleWarning]:
     """Hard warnings for saved rows that no longer pass their checks; they are left out of the plan."""
     return [ScheduleWarning.hard("saved_row_unreadable", (

@@ -3,10 +3,10 @@ import itertools
 import pytest
 from scheduler import dropping
 from scheduler.dropping import (
-    NEW_TASK, _cut_combos, _options, _shrink_amounts, cut_task, loss_cost, propose_drops, try_cuts,
+    NEW_TASK, _cut_combos, _options, _shrink_amounts, loss_cost, propose_drops, try_cuts,
 )
 from scheduler.models import DynamicTask, FixedBlock, ProfileSettings, SleepRule
-from scheduler.solver import PlanFrame, build_schedule, chunk_sizes
+from scheduler.solver import PlanFrame, chunk_sizes
 
 
 def busy_day():
@@ -67,23 +67,16 @@ def test_cut_combos_price_each_option_once_not_every_combination(monkeypatch):
     assert len(priced) <= options
 
 
-def test_cut_task_removes_whole_sessions():
+def test_a_split_task_is_cut_by_whole_sessions():
     t = DynamicTask(title="X", duration_slots=14, priority=3, difficulty=2, max_session_slots=8)
     assert chunk_sizes(t) == [7, 7]
-    assert cut_task(t, 1).duration_slots == 7
-    assert cut_task(t, 2) is None
-
-
-def test_cut_task_leaves_original_untouched():
-    t = DynamicTask(title="X", duration_slots=14, priority=3, difficulty=2, max_session_slots=8)
-    cut_task(t, 1)
-    assert t.duration_slots == 14
+    assert [(a.chunks_cut, a.slots_kept) for a in _options([t], ProfileSettings())[0]] == [(1, 7), (2, 0)]
 
 
 def test_non_splittable_task_can_only_be_dropped_whole():
     t = DynamicTask(title="X", duration_slots=6, priority=3, difficulty=2, splittable=False)
     assert chunk_sizes(t) == [6]
-    assert cut_task(t, 1) is None
+    assert [a.is_full_drop for a in _options([t], ProfileSettings())[0] if not a.shrink] == [True]
 
 
 def test_deadline_and_priority_raise_the_cost_of_losing_time():
