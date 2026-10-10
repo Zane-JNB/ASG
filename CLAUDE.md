@@ -18,6 +18,7 @@ Auto Schedule Generator: students enter a fixed timetable, tasks (deadline, diff
 - Never commit `.env` files or API keys (the repo is public).
 - Keep deterministic logic (solver, fit check, drop ranking, evidence) out of the LLM's hands.
 - Keep answers short.
+- Always create excellent test cases for your mission or goal then create the functionality to solve those tests to prevent determinism
 - Update CLAUDE.md with progress after a section is complete and notify Zane before making the adjustments.
 - Use the "Explore -> Plan -> Code -> Commit" framework
 
@@ -60,9 +61,11 @@ Every backend uses forced tool-calling with a JSON schema that comes from the py
 ## Invariants/Architecture: do not break these
 
 **Time and data**
-- 15-minute slots, 96/day, one continuous multi-day axis (`day * 96 + slot`). Day 0 = `PlanAnchor.start_date`: rolling, rebuilt every run, never stored. Sleep/bedtime may run past 96 (`end_slot` exclusive, max 192) to cross midnight. Use `time_to_slot` / `slot_to_time`.
-- Two layers: stored calendar-based (`WeeklyPattern`, `DatedBlock`, `ExtractedTask`, `Commute`) vs solver-facing day-indexed (`FixedBlock`, `DynamicTask`, `SleepRule`). Convert only via `calendar_utils.build_plan_inputs` / `commutes.expand_commutes`.
+- 15-minute slots, 96/day, one continuous multi-day axis (`day * 96 + slot`). Day 0 = `PlanAnchor.start_date`: rolling, rebuilt every run, never stored. Sleep/bedtime may run past 96 (`end_slot` exclusive, max 192) to cross midnight. Every slot/time/date/weekday/hours helper lives in `scheduler/units.py` (`time_to_slot`, `slot_to_time`, `parse_time`, `parse_date`, `format_hours`, ...); don't re-parse HH:MM elsewhere.
+- Two layers: stored calendar-based (`WeeklyPattern`, `DatedBlock`, `ExtractedTask`, `Commute`) vs solver-facing day-indexed (`FixedBlock`, `DynamicTask`, `SleepRule`). Convert only via `calendar_utils.expand_fixed_blocks` / `calendar_utils.extracted_task_to_dynamic_task` / `commutes.expand_commutes`.
 - Every DB query is scoped by `student_id`. Schema changes are additive via `SCHEMA` + `_migrate`. Never drop or rewrite student data.
+- All SQL lives in `db.py`. One commit rule: every write runs inside `db.transaction(conn)` (nested blocks join the outer one; only the outermost commits, any error rolls the whole block back). Group related writes in one `with transaction(conn):`; never call `conn.commit()`.
+- Saved planner rows go through the `db.ItemTable` stores (`WEEKLY_PATTERNS`, `DATED_BLOCKS`, `EXTRACTED_TASKS`, `COMMUTES`; `PLANNER_TABLES` = all four): `add`/`read`/`get`/`find`/`update`/`delete`/`clear`.
 - `plan_from_saved` always plans from now, through `build_fit_inputs` (the fit check's window). There is no fixed start-date mode.
 - Saved rows that fail their model checks are skipped, never dropped or rewritten, and get a hard `saved_row_unreadable` warning (`db.get_unreadable_items`); the student deletes them via `[u]` in `manage_tasks.py`.
 
