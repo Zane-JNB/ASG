@@ -90,3 +90,11 @@ def test_review_warns_about_overlapping_items():
 def test_review_has_no_warning_without_overlaps():
     _, shown = _run([""])
     assert not any("overlap" in s for s in shown)
+
+def test_edit_end_time_may_be_midnight_but_a_start_may_not():  # #16
+    result, shown = _run(["1", "e", "", "", "22:00", "24:00"])
+    assert (result.weekly_patterns[0].start_time, result.weekly_patterns[0].end_time) == ("22:00", "24:00")
+    assert not any("Invalid" in s for s in shown)
+    result, shown = _run(["2", "e", "", "", "24:00", "", "", "", "", ""])  # start 24:00 is re-asked
+    assert result.dated_blocks[0].start_time == "10:00"
+    assert any("Invalid" in s for s in shown)

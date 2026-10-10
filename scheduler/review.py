@@ -6,12 +6,16 @@ from scheduler.prompts import confirm, describe_task, parse_due, parse_hours, pa
 from scheduler.units import parse_date, parse_time, parse_weekday, slots_to_hours, time_to_slot
 
 
+def _end_time(s: str) -> str:
+    return parse_time(s, end=True)  # an end may be 24:00 (midnight at the end of the day)
+
+
 #   -- what can be edited per item type: (prompt label, model field, parser)
 _EDIT_FIELDS = {
     WeeklyPattern: [("title", "title", str), ("day", "day", parse_weekday),
-                    ("start HH:MM", "start_time", parse_time), ("end HH:MM", "end_time", parse_time)],
+                    ("start HH:MM", "start_time", parse_time), ("end HH:MM", "end_time", _end_time)],
     DatedBlock: [("title", "title", str), ("date YYYY-MM-DD", "date", parse_date),
-                 ("start HH:MM", "start_time", parse_time), ("end HH:MM", "end_time", parse_time)],
+                 ("start HH:MM", "start_time", parse_time), ("end HH:MM", "end_time", _end_time)],
     ExtractedTask: [("title", "title", str), ("due YYYY-MM-DD [HH:MM]", "date", parse_due),
                     ("hours", "duration_slots", parse_hours), ("priority 1-5", "priority", parse_rating),
                     ("difficulty 1-5", "difficulty", parse_rating)],
