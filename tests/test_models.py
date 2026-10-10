@@ -1,6 +1,6 @@
 import pytest
 from pydantic import ValidationError
-from scheduler.models import DynamicTask, FixedBlock, SleepRule
+from scheduler.models import DynamicTask, FixedBlock, ScheduleWarning, SleepRule
 from scheduler.units import time_to_slot
 
 def test_task_rejects_bad_priority():
@@ -70,3 +70,9 @@ def test_fixed_block_span_and_overlap_use_the_continuous_axis():
     assert late.span == (88, 104) and early.span == (100, 108)
     assert late.overlaps(early) and early.overlaps(late)
     assert not early.overlaps(after)  # back to back is fine
+
+
+def test_schedule_warning_hard_and_soft_constructors():
+    assert ScheduleWarning.hard("sleep_short", "too little") == ScheduleWarning(
+        severity="hard", kind="sleep_short", message="too little")
+    assert ScheduleWarning.soft("task_cut", "shorter").severity == "soft"

@@ -1,5 +1,5 @@
 import pytest
-from scheduler.drop_review import choose_automatic
+from scheduler.make_room import choose_automatic
 from scheduler.models import DropAction, DropProposal, DropReport, DynamicTask
 
 NEW_TASK = DynamicTask(title="Essay", duration_slots=16, priority=4, difficulty=3)

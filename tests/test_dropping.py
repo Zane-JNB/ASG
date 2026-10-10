@@ -1,7 +1,12 @@
+import itertools
+
 import pytest
-from scheduler.dropping import _cheapest_first, chunk_sizes, cut_task, loss_cost, propose_drops
+from scheduler import dropping
+from scheduler.dropping import (
+    NEW_TASK, _cut_combos, _options, _shrink_amounts, loss_cost, propose_drops, try_cuts,
+)
 from scheduler.models import DynamicTask, FixedBlock, ProfileSettings, SleepRule
-from scheduler.solver import build_schedule
+from scheduler.solver import PlanFrame, chunk_sizes
 
 
 def busy_day():
@@ -15,42 +20,63 @@ def busy_day():
     return fixed, tasks, new, [SleepRule(night=0)]
 
 
-@pytest.mark.parametrize("k", [1, 3, 7, 100])
-def test_cheapest_first_matches_a_full_sort_including_ties(k):
-    combos = [(c, f"combo{i}", 0) for i, c in enumerate([5, 1, 3, 1, 9, 3, 0, 5, 1, 2, 7, 3])]
-    assert list(_cheapest_first(lambda: iter(combos), k)) == sorted(combos, key=lambda c: c[0])
+def _full_sort(tasks, new, settings, max_actions, need):
+    """The search order #13 replaced: build every combination, then a stable sort by cost."""
+    opts = _options(tasks, settings)
+    new_cuts = [0] + (_shrink_amounts(new.duration_slots, settings) if len(chunk_sizes(new)) == 1 else [])
+    out = []
+    for n in range(max_actions + 1):
+        for idxs in itertools.combinations(range(len(tasks)), n):
+            for pick in itertools.product(*(opts[i] for i in idxs)):
+                for new_cut in new_cuts:
+                    if (pick or new_cut) and sum(a.slots_lost for a in pick) + new_cut >= need:
+                        cost = (sum(loss_cost(tasks[a.task_index], a.slots_lost, settings) for a in pick)
+                                + loss_cost(new, new_cut, settings))
+                        out.append((cost, pick, new_cut))
+    return sorted(out, key=lambda c: c[0])
 
 
-def test_cheapest_first_stops_early_when_the_caller_stops():
-    made = []
-    def combos():
-        made.append(1)
-        yield from [(c, c, 0) for c in range(100)]
-    first_two = []
-    for c in _cheapest_first(combos, 4):
-        first_two.append(c[0])
-        if len(first_two) == 2:
-            break
-    assert first_two == [0, 1] and len(made) == 1  # one pass, no extra batches
+def _mixed_tasks():
+    same = dict(duration_slots=8, priority=3, difficulty=2)  # identical tasks: many cost ties
+    return [DynamicTask(title="A", **same), DynamicTask(title="B", **same),
+            DynamicTask(title="Long", duration_slots=20, priority=2, difficulty=4, max_session_slots=8),
+            DynamicTask(title="Due", duration_slots=6, priority=4, difficulty=1, deadline_day=0),
+            DynamicTask(title="One block", duration_slots=12, priority=1, difficulty=5, splittable=False)]
 
 
-def test_cut_task_removes_whole_sessions():
+@pytest.mark.parametrize("max_actions", [0, 1, 2, 3])
+@pytest.mark.parametrize("need", [0, 10, 30])
+@pytest.mark.parametrize("new", [DynamicTask(title="New", duration_slots=8, priority=4),
+                                 DynamicTask(title="New split", duration_slots=24, priority=2, max_session_slots=8)])
+def test_cut_combos_come_cheapest_first_exactly_like_a_full_sort(max_actions, need, new):
+    s, tasks = ProfileSettings(), _mixed_tasks()
+    assert list(_cut_combos(tasks, new, s, max_actions, need)) == _full_sort(tasks, new, s, max_actions, need)
+
+
+def test_cut_combos_price_each_option_once_not_every_combination(monkeypatch):
+    # #13: the old search rebuilt and priced every combination (C(40, 3) x options^3) on each batch
+    s = ProfileSettings()
+    tasks = [DynamicTask(title=f"T{i}", duration_slots=4 + i % 9, priority=1 + i % 5, difficulty=1 + i % 3,
+                         max_session_slots=4) for i in range(40)]
+    new = DynamicTask(title="New", duration_slots=6, priority=3)
+    priced = []
+    monkeypatch.setattr(dropping, "loss_cost", lambda *a: (priced.append(1), loss_cost(*a))[1])
+    first = list(itertools.islice(_cut_combos(tasks, new, s, 3, 0), 20))
+    assert len(first) == 20
+    options = sum(len(v) for v in _options(tasks, s).values()) + 1 + len(_shrink_amounts(6, s))
+    assert len(priced) <= options
+
+
+def test_a_split_task_is_cut_by_whole_sessions():
     t = DynamicTask(title="X", duration_slots=14, priority=3, difficulty=2, max_session_slots=8)
     assert chunk_sizes(t) == [7, 7]
-    assert cut_task(t, 1).duration_slots == 7
-    assert cut_task(t, 2) is None
-
-
-def test_cut_task_leaves_original_untouched():
-    t = DynamicTask(title="X", duration_slots=14, priority=3, difficulty=2, max_session_slots=8)
-    cut_task(t, 1)
-    assert t.duration_slots == 14
+    assert [(a.chunks_cut, a.slots_kept) for a in _options([t], ProfileSettings())[0]] == [(1, 7), (2, 0)]
 
 
 def test_non_splittable_task_can_only_be_dropped_whole():
     t = DynamicTask(title="X", duration_slots=6, priority=3, difficulty=2, splittable=False)
     assert chunk_sizes(t) == [6]
-    assert cut_task(t, 1) is None
+    assert [a.is_full_drop for a in _options([t], ProfileSettings())[0] if not a.shrink] == [True]
 
 
 def test_deadline_and_priority_raise_the_cost_of_losing_time():
@@ -64,13 +90,13 @@ def test_deadline_and_priority_raise_the_cost_of_losing_time():
 
 def test_reports_when_everything_already_fits():
     new = DynamicTask(title="Tiny", duration_slots=2, priority=3, difficulty=1)
-    report = propose_drops([], [], new, num_days=1)
+    report = propose_drops(PlanFrame([]), [], new)
     assert report.fits_already and report.proposals == []
 
 
 def test_every_proposal_really_fits():
     fixed, tasks, new, rules = busy_day()
-    report = propose_drops(fixed, tasks, new, 1, rules)
+    report = propose_drops(PlanFrame(fixed, 1, rules), tasks, new)
     assert report.proposals
     for p in report.proposals:
         titles = {i.title.split(" (")[0] for i in p.schedule if i.kind == "task"}
@@ -82,7 +108,7 @@ def test_every_proposal_really_fits():
 
 def test_proposals_are_ranked_best_first_and_numbered():
     fixed, tasks, new, rules = busy_day()
-    report = propose_drops(fixed, tasks, new, 1, rules)
+    report = propose_drops(PlanFrame(fixed, 1, rules), tasks, new)
     scores = [p.score for p in report.proposals]
     assert scores == sorted(scores)
     assert [p.rank for p in report.proposals] == list(range(1, len(scores) + 1))
@@ -91,15 +117,15 @@ def test_proposals_are_ranked_best_first_and_numbered():
 
 def test_partial_cut_of_a_split_task_is_offered():
     fixed, tasks, new, rules = busy_day()
-    report = propose_drops(fixed, tasks, new, 1, rules)
+    report = propose_drops(PlanFrame(fixed, 1, rules), tasks, new)
     partial = [a for p in report.proposals for a in p.actions if not a.is_full_drop]
     assert partial and partial[0].title == "Big project"
 
 
 def test_no_proposal_is_a_wasteful_superset_of_another():
     fixed, tasks, new, rules = busy_day()
-    report = propose_drops(fixed, tasks, new, 1, rules)
-    cuts = [{**{a.task_index: a.slots_lost for a in p.actions}, **({-1: p.new_task_slots_cut} if p.new_task_slots_cut else {})}
+    report = propose_drops(PlanFrame(fixed, 1, rules), tasks, new)
+    cuts = [{**{a.task_index: a.slots_lost for a in p.actions}, **({NEW_TASK: p.new_task_slots_cut} if p.new_task_slots_cut else {})}
             for p in report.proposals if p.new_task_added]
     for a in cuts:
         for b in cuts:
@@ -118,7 +144,7 @@ def overloaded_by_a_cheap_new_task():
 def test_not_adding_can_be_the_best_option():
     fixed, tasks, rules = overloaded_by_a_cheap_new_task()
     new = DynamicTask(title="Optional reading", duration_slots=20, priority=1, difficulty=1)
-    report = propose_drops(fixed, tasks, new, 1, rules)
+    report = propose_drops(PlanFrame(fixed, 1, rules), tasks, new)
     assert not report.fits_already
     assert report.proposals[0].new_task_added is False
     assert report.proposals[0].actions == []
@@ -127,14 +153,14 @@ def test_not_adding_can_be_the_best_option():
 def test_must_add_removes_the_not_adding_option():
     fixed, tasks, rules = overloaded_by_a_cheap_new_task()
     new = DynamicTask(title="Optional reading", duration_slots=20, priority=1, difficulty=1)
-    report = propose_drops(fixed, tasks, new, 1, rules, must_add=True)
+    report = propose_drops(PlanFrame(fixed, 1, rules), tasks, new, must_add=True)
     assert all(p.new_task_added for p in report.proposals)
 
 
 def test_urgent_new_task_beats_not_adding():
     fixed, tasks, rules = overloaded_by_a_cheap_new_task()
     new = DynamicTask(title="Exam prep", duration_slots=20, priority=5, difficulty=4, deadline_day=0)
-    report = propose_drops(fixed, tasks, new, 1, rules)
+    report = propose_drops(PlanFrame(fixed, 1, rules), tasks, new)
     not_adding = [p for p in report.proposals if not p.new_task_added]
     assert report.proposals[0].new_task_added
     assert all(p.flags for p in not_adding)
@@ -144,14 +170,14 @@ def test_dropping_a_deadline_task_is_flagged_hard():
     fixed = [FixedBlock(title="Class", start_slot=32, end_slot=48)]
     tasks = [DynamicTask(title="Quiz", duration_slots=48, priority=2, difficulty=2, deadline_day=0, splittable=False)]
     new = DynamicTask(title="Essay", duration_slots=24, priority=5, difficulty=3, splittable=False)
-    report = propose_drops(fixed, tasks, new, 1, [SleepRule(night=0)], must_add=True)
+    report = propose_drops(PlanFrame(fixed, 1, [SleepRule(night=0)]), tasks, new, must_add=True)
     for p in report.proposals:
         assert any("Quiz" in f for f in p.flags)
 
 
 def test_search_stops_at_the_check_limit():
     fixed, tasks, new, rules = busy_day()
-    report = propose_drops(fixed, tasks, new, 1, rules, max_checks=2)
+    report = propose_drops(PlanFrame(fixed, 1, rules), tasks, new, max_checks=2)
     assert report.checks_used <= 2
     assert report.search_exhausted is False
 
@@ -161,6 +187,15 @@ def test_shortening_the_new_task_is_found_when_it_fits():
     fixed = [FixedBlock(title="Busy", start_slot=0, end_slot=85)]
     b = DynamicTask(title="B", duration_slots=2, priority=5, difficulty=2, splittable=False)
     n = DynamicTask(title="N", duration_slots=10, priority=3, difficulty=2, splittable=False)
-    report = propose_drops(fixed, [b], n, settings=ProfileSettings(buffer_slots=0), must_add=True)
+    report = propose_drops(PlanFrame(fixed, settings=ProfileSettings(buffer_slots=0)), [b], n, must_add=True)
     best = report.proposals[0]
     assert best.actions == [] and best.new_task_slots_cut == 2
+
+
+def test_try_cuts_scores_a_verified_plan_or_returns_none():
+    fixed, tasks, new, rules = busy_day()
+    frame = PlanFrame(fixed, 1, rules)
+    best = next(p for p in propose_drops(frame, tasks, new).proposals if p.new_task_added)
+    again = try_cuts(frame, tasks, new, best.actions, best.new_task_slots_cut)
+    assert (again.score, again.flags, again.slots_freed) == (best.score, best.flags, best.slots_freed)
+    assert try_cuts(frame, tasks, new, [], 0) is None  # the plan that already failed

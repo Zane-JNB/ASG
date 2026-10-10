@@ -1,7 +1,7 @@
 from types import SimpleNamespace
 
-from scheduler.manual_cuts import NEW, CutState
-from scheduler.manual_review import ask_mode, run_manual_edit
+from scheduler.dropping import NEW_TASK as NEW
+from scheduler.make_room import CutState, ask_mode, run_manual_edit
 
 
 def even_chunks(i, remaining, cap=8):  # stand-in for chunk_sizes()

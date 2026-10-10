@@ -1,23 +1,28 @@
-from datetime import date, datetime
+from datetime import date, datetime, time
 
 import pytest
 
-from scheduler.add_with_fit import add_task_with_fit
+from scheduler.add_with_fit import add_task_with_fit, apply_drop_choice
 from scheduler.db import (
     DATED_BLOCKS, EXTRACTED_TASKS, connect, get_or_create_student, get_plan_cuts, load_settings,
     save_settings,
 )
-from scheduler.drop_apply import apply_drop_choice
-from scheduler.drop_review import describe_proposal
+from scheduler.make_room import describe_proposal
 from scheduler.dropping import _options, _shrink_amounts, propose_drops
-from scheduler.fit_check import build_fit_inputs, planned_tasks
+from scheduler.fit_check import build_fit_inputs
 from scheduler.import_flow import run_import
 from scheduler.models import (
-    DatedBlock, DynamicTask, ExtractedTask, ExtractionResult, FixedBlock, PlanAnchor,
+    DatedBlock, DynamicTask, ExtractedTask, ExtractionResult, FixedBlock,
     ProfileSettings, SleepRule,
 )
 from scheduler.review import _describe, review_extraction
+from scheduler.solver import PlanFrame
 from scheduler.task_manager import prompt_new_task, run_menu
+
+
+def _planned(conn, sid, day):
+    """[(saved task id, task)] as planned from midnight that day, plan cuts applied."""
+    return build_fit_inputs(conn, sid, datetime.combine(day, time())).planned
 
 
 @pytest.fixture(autouse=True)
@@ -80,7 +85,7 @@ def test_a_shortened_task_is_still_one_block_in_the_verified_schedule():
     lab = DynamicTask(title="Lab", duration_slots=30, priority=5, difficulty=3, splittable=False, deadline_day=0)
     other = DynamicTask(title="Report", duration_slots=30, priority=5, difficulty=3, splittable=False, deadline_day=0)
     new = DynamicTask(title="Essay", duration_slots=20, priority=5, difficulty=3, splittable=False, deadline_day=0)
-    report = propose_drops(fixed, [lab, other], new, 1, [SleepRule(night=0)], must_add=True)
+    report = propose_drops(PlanFrame(fixed, 1, [SleepRule(night=0)]), [lab, other], new, must_add=True)
     shortened = [(p, a) for p in report.proposals for a in p.actions if a.shrink]
     assert shortened
     p, a = shortened[0]
@@ -91,8 +96,7 @@ def test_a_shortened_task_is_still_one_block_in_the_verified_schedule():
 def test_a_one_block_new_task_can_be_offered_shortened(conn, sid):
     essay = _tight_day(conn, sid)
     fit = build_fit_inputs(conn, sid, NOW, essay)
-    report = propose_drops(fit.fixed, [t for _, t in fit.planned], fit.new_task, fit.anchor.num_days,
-                           fit.sleep_rules, settings=fit.settings)
+    report = propose_drops(fit.frame, fit.tasks, fit.new_task)
     assert any(p.new_task_added and p.new_task_slots_cut > 0 for p in report.proposals)
 
 
@@ -100,22 +104,20 @@ def test_a_multi_session_new_task_is_not_offered_shortened(conn, sid):
     _tight_day(conn, sid)
     big = ExtractedTask(title="Project", date=D.isoformat(), duration_slots=24, priority=5, difficulty=3)
     fit = build_fit_inputs(conn, sid, NOW, big)  # 6h, splittable: several sessions
-    report = propose_drops(fit.fixed, [t for _, t in fit.planned], fit.new_task, fit.anchor.num_days,
-                           fit.sleep_rules, settings=fit.settings)
+    report = propose_drops(fit.frame, fit.tasks, fit.new_task)
     assert all(p.new_task_slots_cut == 0 for p in report.proposals)
 
 
 def test_shortening_the_new_task_keeps_full_hours_saved_and_records_a_plan_cut(conn, sid):
     essay = _tight_day(conn, sid)
     fit = build_fit_inputs(conn, sid, NOW, essay)
-    report = propose_drops(fit.fixed, [t for _, t in fit.planned], fit.new_task, fit.anchor.num_days,
-                           fit.sleep_rules, settings=fit.settings)
+    report = propose_drops(fit.frame, fit.tasks, fit.new_task)
     choice = next(p for p in report.proposals if p.new_task_slots_cut)
     summary = apply_drop_choice(conn, sid, choice, fit.planned, essay)
     saved = {t.title: t.duration_slots for _, t in EXTRACTED_TASKS.get(conn, sid)}
     assert saved["Essay"] == 16  # saved at full hours
     assert get_plan_cuts(conn, sid)[summary["new_task_id"]] == choice.new_task_slots_cut
-    planned = {t.title: t.duration_slots for _, t in planned_tasks(conn, sid, PlanAnchor(start_date=D, num_days=1))}
+    planned = {t.title: t.duration_slots for _, t in _planned(conn, sid, D)}
     assert planned["Essay"] == 16 - choice.new_task_slots_cut
 
 
@@ -128,8 +130,7 @@ def test_screen_and_summary_say_shorten_and_still_one_block(conn, sid):
     assert "Shorten 'Lab' by" in text and "still one block" in text
     assert "shortened to" in text
     fit = build_fit_inputs(conn, sid, NOW, essay)
-    report = propose_drops(fit.fixed, [t for _, t in fit.planned], fit.new_task, fit.anchor.num_days,
-                           fit.sleep_rules, settings=fit.settings)
+    report = propose_drops(fit.frame, fit.tasks, fit.new_task)
     lines = "\n".join(describe_proposal(1, next(p for p in report.proposals if p.new_task_slots_cut), fit.new_task))
     assert "shortened to" in lines
 
@@ -138,7 +139,7 @@ def test_screen_and_summary_say_shorten_and_still_one_block(conn, sid):
 def test_the_students_session_length_reaches_the_solver_tasks(conn, sid):
     save_settings(conn, sid, load_settings(conn, sid).model_copy(update={"default_max_session_slots": 4}))
     EXTRACTED_TASKS.add(conn, sid, ExtractedTask(title="Essay", date=D.isoformat(), duration_slots=12))
-    [(_, t)] = planned_tasks(conn, sid, PlanAnchor(start_date=D, num_days=1))
+    [(_, t)] = _planned(conn, sid, D)
     assert t.max_session_slots == 4
     fit = build_fit_inputs(conn, sid, NOW, ExtractedTask(title="New", date=D.isoformat(), duration_slots=12))
     assert fit.new_task.max_session_slots == 4

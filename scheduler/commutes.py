@@ -26,11 +26,9 @@ def commute_overlaps(others: list[FixedBlock], commute_blocks: list[FixedBlock])
 
 def overlap_warnings(pairs: list[tuple[FixedBlock, FixedBlock]], anchor: PlanAnchor) -> list[ScheduleWarning]:
     return [
-        ScheduleWarning(
-            severity="soft", kind="commute_overlap",
-            message=(f"{anchor.start_date + timedelta(days=c.day):%a %d %b}: "
-                     f"{c.title} {clock_range(c.start_slot, c.end_slot)} "
-                     f"overlaps {o.title} {clock_range(o.start_slot, o.end_slot)} (both kept; tasks avoid both)"),
-        )
+        ScheduleWarning.soft("commute_overlap", (
+            f"{anchor.start_date + timedelta(days=c.day):%a %d %b}: "
+            f"{c.title} {clock_range(c.start_slot, c.end_slot)} "
+            f"overlaps {o.title} {clock_range(o.start_slot, o.end_slot)} (both kept; tasks avoid both)"))
         for c, o in pairs
     ]

@@ -1,4 +1,4 @@
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 
 import pytest
 
@@ -7,8 +7,8 @@ from scheduler.db import (
     DATED_BLOCKS, EXTRACTED_TASKS, add_plan_cut, connect, get_or_create_student, get_plan_cuts,
     load_settings, reduce_plan_cut, save_settings,
 )
-from scheduler.fit_check import planned_tasks
-from scheduler.models import DatedBlock, DynamicTask, ExtractedTask, PlanAnchor, ProfileSettings
+from scheduler.fit_check import build_fit_inputs
+from scheduler.models import DatedBlock, DynamicTask, ExtractedTask, ProfileSettings
 from scheduler.planner import plan_from_saved
 from scheduler.restore import plan_restores
 from scheduler.task_filter import describe_reminders, task_matters, wants_reminder
@@ -16,6 +16,11 @@ from scheduler.task_manager import run_menu
 
 D = date(2026, 10, 5)  # a Monday
 NINE = datetime(2026, 10, 5, 9, 0)
+
+
+def _planned(conn, sid, day):
+    """[(saved task id, task)] as planned from midnight that day, plan cuts applied."""
+    return build_fit_inputs(conn, sid, datetime.combine(day, time())).planned
 
 
 def scripted(answers):
@@ -79,7 +84,7 @@ def test_done_task_is_kept_as_history_but_never_planned(conn, sid):
     finish_task(conn, sid, tid, NINE, ask=lambda _p: "", show=lambda _l: None)
     saved = dict(EXTRACTED_TASKS.get(conn, sid))[tid]
     assert saved.completed_at == "2026-10-05T09:00"
-    assert planned_tasks(conn, sid, PlanAnchor(start_date=D, num_days=1)) == []
+    assert _planned(conn, sid, D) == []
 
 
 def test_finishing_clears_its_own_cut_and_rejects_bad_ids(conn, sid):
@@ -155,6 +160,22 @@ def test_restore_window_stays_within_the_plan_horizon(conn, sid):
     far = EXTRACTED_TASKS.add(conn, sid, _task("Far", hours=2, due=D + timedelta(days=40)))
     add_plan_cut(conn, sid, far, 8)
     assert plan_restores(conn, sid, NINE) == {far: 8}  # fits inside the capped 3-day window
+
+
+def test_a_task_that_cannot_fit_anyway_does_not_block_restores(conn, sid):
+    # #18: 'Lab' (8h, due in an hour) never fits, so every restore check used to fail
+    EXTRACTED_TASKS.add(conn, sid, ExtractedTask(title="Lab", date=D.isoformat(), due_time="10:00",
+                                                 duration_slots=32, priority=3))
+    far = EXTRACTED_TASKS.add(conn, sid, _task("Far", hours=2, due=D + timedelta(days=7)))
+    add_plan_cut(conn, sid, far, 8)
+    assert plan_restores(conn, sid, NINE) == {far: 8}
+
+
+def test_a_cut_task_that_cannot_fit_anyway_gets_no_time_back(conn, sid):
+    lab = EXTRACTED_TASKS.add(conn, sid, ExtractedTask(title="Lab", date=D.isoformat(), due_time="10:00",
+                                                       duration_slots=32, priority=3))
+    add_plan_cut(conn, sid, lab, 4)  # still 7h, due in an hour: even a little more can't be planned
+    assert plan_restores(conn, sid, NINE) == {}
 
 
 def test_higher_priority_cut_task_is_restored_first(conn, sid):

@@ -1,9 +1,9 @@
-from datetime import date
+from datetime import date, datetime
 
 import pytest
 
 from scheduler.units import (
-    WEEKDAYS, clock_range, format_hours, parse_date, parse_due_time, parse_time, parse_weekday,
+    WEEKDAYS, clock_range, format_hours, next_slot, parse_date, parse_due_time, parse_time, parse_weekday,
     slot_to_time, slots_to_hours, time_to_minutes, time_to_slot, weekday_name,
 )
 
@@ -63,3 +63,9 @@ def test_clock_range_wraps_past_midnight():
 def test_hours():
     assert slots_to_hours(6) == 1.5
     assert [format_hours(s) for s in (7, 4, 2, 0)] == ["1h 45m", "1h", "30m", "0m"]
+
+
+def test_next_slot_is_the_first_slot_not_yet_started():
+    assert next_slot(datetime(2026, 10, 5, 9, 0)) == 36
+    assert next_slot(datetime(2026, 10, 5, 9, 1)) == 37
+    assert next_slot(datetime(2026, 10, 5, 23, 50)) == 96  # rolls into tomorrow

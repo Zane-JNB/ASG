@@ -7,14 +7,18 @@ from scheduler.db import (
     DATED_BLOCKS, EXTRACTED_TASKS, add_plan_cut, apply_plan_changes, clear_plan_cut, connect,
     get_or_create_student, get_plan_cuts,
 )
-from scheduler.drop_apply import apply_drop_choice
-from scheduler.drop_review import _dont_add_fallback
-from scheduler.dropping import propose_drops
-from scheduler.models import DatedBlock, ExtractedTask, PlanAnchor
-from scheduler.fit_check import build_fit_inputs, planned_tasks
+from scheduler.add_with_fit import apply_drop_choice
+from scheduler.dropping import dont_add_unverified, propose_drops
+from scheduler.models import DatedBlock, ExtractedTask
+from scheduler.fit_check import build_fit_inputs
 from scheduler.planner import plan_from_saved
 
 START = date(2026, 10, 5)  # a Monday
+
+
+def _planned(conn, sid, day):
+    """[(saved task id, task)] as planned from midnight that day, plan cuts applied."""
+    return build_fit_inputs(conn, sid, datetime.combine(day, time())).planned
 
 
 @pytest.fixture
@@ -69,8 +73,7 @@ def test_apply_plan_changes_is_all_or_nothing(conn, sid):
 def test_planned_tasks_apply_cuts_but_saved_task_is_untouched(conn, sid):
     tid = EXTRACTED_TASKS.add(conn, sid, _task("Big", 10, 2))
     add_plan_cut(conn, sid, tid, 12)
-    anchor = PlanAnchor(start_date=START, num_days=1)
-    [(pid, t)] = planned_tasks(conn, sid, anchor)
+    [(pid, t)] = _planned(conn, sid, START)
     assert pid == tid and t.duration_slots == 40 - 12
     assert EXTRACTED_TASKS.get(conn, sid)[0][1].duration_slots == 40  # full hours still saved
 
@@ -78,7 +81,7 @@ def test_planned_tasks_apply_cuts_but_saved_task_is_untouched(conn, sid):
 def test_fully_cut_task_is_left_out_of_the_plan(conn, sid):
     tid = EXTRACTED_TASKS.add(conn, sid, _task("Big", 10, 2))
     add_plan_cut(conn, sid, tid, 40)
-    assert planned_tasks(conn, sid, PlanAnchor(start_date=START, num_days=1)) == []
+    assert _planned(conn, sid, START) == []
 
 
 def test_fully_cut_task_gets_a_hard_warning_in_the_plan(conn, sid):
@@ -113,7 +116,7 @@ def test_clearing_a_cut_gives_the_time_back(conn, sid):
     tid = EXTRACTED_TASKS.add(conn, sid, _task("Big", 10, 2))
     add_plan_cut(conn, sid, tid, 16)
     clear_plan_cut(conn, sid, tid)
-    [(_, t)] = planned_tasks(conn, sid, PlanAnchor(start_date=START, num_days=1))
+    [(_, t)] = _planned(conn, sid, START)
     assert t.duration_slots == 40
 
 def _busy_student(conn, sid):
@@ -129,8 +132,7 @@ def _busy_student(conn, sid):
 def _propose(conn, sid, essay, must_add=True):
     """The same inputs the add flow and plan_from_saved use (incl. the night-before sleep)."""
     fit = build_fit_inputs(conn, sid, datetime.combine(START, time(0, 0)), essay)
-    report = propose_drops(fit.fixed, [t for _, t in fit.planned], fit.new_task, fit.anchor.num_days,
-                           fit.sleep_rules, settings=fit.settings, must_add=must_add)
+    report = propose_drops(fit.frame, fit.tasks, fit.new_task, must_add=must_add)
     return fit.planned, report
 
 
@@ -162,7 +164,7 @@ def test_not_adding_saves_nothing(conn, sid):
     essay = _task("Essay", 4, 4)
     planned, report = _propose(conn, sid, essay, must_add=False)
     choice = next((p for p in report.proposals if not p.new_task_added),
-                  _dont_add_fallback(extracted_task_to_dynamic_task(essay, START, 8), 9))
+                  dont_add_unverified(extracted_task_to_dynamic_task(essay, START, 8), 9))
     summary = apply_drop_choice(conn, sid, choice, planned, essay)
     assert summary == {"cuts": {}, "new_task_id": None}
     assert get_plan_cuts(conn, sid) == {}
@@ -184,6 +186,5 @@ def test_finishing_early_lets_a_cut_task_get_its_time_back(conn, sid):
     apply_drop_choice(conn, sid, report.proposals[0], planned, essay)
     cut_id = next(iter(get_plan_cuts(conn, sid)))
     clear_plan_cut(conn, sid, cut_id)  # e.g. the Essay was finished early
-    anchor = PlanAnchor(start_date=START, num_days=1)
-    restored = dict(planned_tasks(conn, sid, anchor))[cut_id]
+    restored = dict(_planned(conn, sid, START))[cut_id]
     assert restored.duration_slots == dict(planned)[cut_id].duration_slots

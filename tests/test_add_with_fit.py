@@ -4,10 +4,11 @@ from scheduler.add_with_fit import add_task_with_fit
 from scheduler.db import (
     DATED_BLOCKS, EXTRACTED_TASKS, WEEKLY_PATTERNS, connect, get_or_create_student, get_plan_cuts,
 )
-from scheduler.fit_check import build_fit_inputs, next_slot
+from scheduler.fit_check import build_fit_inputs
+from scheduler.units import next_slot
 from scheduler.models import DatedBlock, ExtractedTask, WeeklyPattern
 from scheduler.planner import plan_from_saved
-from scheduler.solver import build_schedule
+from scheduler.solver import PlanFrame, build_schedule
 
 D = date(2026, 10, 5)  # a Monday
 NINE_AM = datetime(2026, 10, 5, 9, 0)
@@ -36,12 +37,6 @@ def _run(conn, sid, new, answers, now=NINE_AM, **kw):
     return result, shown
 
 
-def test_next_slot_rounds_up_to_the_next_quarter_hour():
-    assert next_slot(datetime(2026, 10, 5, 9, 0)) == 36
-    assert next_slot(datetime(2026, 10, 5, 9, 1)) == 37
-    assert next_slot(datetime(2026, 10, 5, 23, 50)) == 96  # rolls into tomorrow
-
-
 def test_window_reaches_the_latest_deadline_not_just_the_new_tasks(conn, sid):
     EXTRACTED_TASKS.add(conn, sid, _task("Report", 6, 3, D + timedelta(days=3)))
     fit = build_fit_inputs(conn, sid, NINE_AM, _task("Quiz prep", 2, 5, D))
@@ -57,6 +52,17 @@ def test_weekly_classes_are_expanded_across_the_whole_window(conn, sid):
     WEEKLY_PATTERNS.add(conn, sid, WeeklyPattern(title="DS", day="Mon", start_time="09:00", end_time="11:00"))
     fit = build_fit_inputs(conn, sid, NINE_AM, _task("Thesis", 5, 3, D + timedelta(days=20)))
     assert sorted(b.day for b in fit.fixed if b.title == "DS") == [0, 7, 14]
+
+
+def test_fit_inputs_hand_the_solver_one_frame_and_its_tasks(conn, sid):
+    _class_all_day(conn, sid)
+    report = EXTRACTED_TASKS.add(conn, sid, _task("Report", 2, 3, D + timedelta(days=1)))
+    lab = EXTRACTED_TASKS.add(conn, sid, _task("Lab", 1, 4, D + timedelta(days=1)))
+    fit = build_fit_inputs(conn, sid, NINE_AM, _task("Quiz prep", 1, 5, D + timedelta(days=1)))
+    assert fit.frame == PlanFrame(fit.fixed, fit.anchor.num_days, fit.sleep_rules, fit.settings)
+    assert [t.saved_id for t in fit.tasks] == [report, lab]
+    assert [i for i, _ in fit.without([0]).planned] == [lab]
+    assert len(fit.planned) == 2  # without() makes a copy
 
 
 def test_nothing_is_planned_before_now(conn, sid):
@@ -197,9 +203,9 @@ def test_the_ranked_search_runs_once_across_mode_switches(conn, sid, monkeypatch
     from scheduler.dropping import propose_drops
     calls = []
     monkeypatch.setattr("scheduler.add_with_fit.propose_drops",
-                        lambda *a, **k: (calls.append(k.get("search", True)), propose_drops(*a, **k))[1])
+                        lambda *a, **k: (calls.append(1), propose_drops(*a, **k))[1])
     _run(conn, sid, _tight_day(conn, sid), ["a", "n", "s", "1"])
-    assert calls == [False, True]  # one cheap fit check, then exactly one full search
+    assert len(calls) == 1  # the cheap fit check is not a search; exactly one full search
 
 
 def _long_day_then_early_class(conn, sid):
@@ -221,11 +227,8 @@ def test_easy_fit_shows_no_sleep_warning(conn, sid):
 
 
 def test_a_failed_full_search_returns_to_the_mode_prompt(conn, sid, monkeypatch):
-    from scheduler.dropping import propose_drops
     def fail_the_full_search(*a, **k):
-        if k.get("search", True):
-            raise RuntimeError("No schedule found within 5.0s")
-        return propose_drops(*a, **k)
+        raise RuntimeError("No schedule found within 5.0s")
     monkeypatch.setattr("scheduler.add_with_fit.propose_drops", fail_the_full_search)
     result, shown = _run(conn, sid, _tight_day(conn, sid), ["s", ""])
     assert "Could not search for ways to make room: No schedule found within 5.0s" in shown
