@@ -480,10 +480,11 @@ def apply_plan_changes(conn: sqlite3.Connection, student_id: int, cuts: dict[int
 
 def record_plan_sessions(conn: sqlite3.Connection, student_id: int, now_iso: str,
                          sessions: list[tuple[int, str, str]]) -> None:
-    """Replace the not-yet-finished sessions of the previous plan with the new plan's
-    [(task id, start, end)]. Sessions that already ended stay until the student has been asked about them."""
+    """Replace the not-yet-started sessions of the previous plan with the new plan's
+    [(task id, start, end)]. Sessions that already started (in progress or ended) stay until the
+    student has been asked about them."""
     with transaction(conn):
-        conn.execute("DELETE FROM plan_sessions WHERE student_id = ? AND end_at > ?", (student_id, now_iso))
+        conn.execute("DELETE FROM plan_sessions WHERE student_id = ? AND start_at > ?", (student_id, now_iso))
         conn.executemany(
             "INSERT INTO plan_sessions (student_id, task_id, start_at, end_at) VALUES (?, ?, ?, ?)",
             [(student_id, t, s, e) for t, s, e in sessions])

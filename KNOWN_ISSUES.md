@@ -24,7 +24,6 @@ Zane will review and correct each. Referenced from `CLAUDE.md`.
     - Old reminder sessions with reminders turned off are never marked as asked (`completion.py`), so they pile up.
 17. A due time inside the current 15-minute slot (e.g. due 10:15 at 10:05) passes `prompt_new_task`, but plans start at the next slot, so it can never be placed and the drop menu opens for nothing. Reject `due_slot <= next_slot(now)` on the same day.
 18. `restore.plan_restores` only gives time back if every planned task fits (`_solve_all_fit`), so one task that can't fit anyway (due too soon) blocks all restores. Leave such tasks out with `already_unplaced`, like `add_task_with_fit`.
-19. `db.record_plan_sessions` deletes sessions that haven't ended yet, including the one in progress. Re-planning mid-session means that session is never checked in on.
 20. `reflect.py` treats every `ValueError` (including our own `PreferenceError`) as a backend failure and offers another Groq call. Narrow it to real backend errors.
 21. Duplicate helpers: `task_manager._ask_field` ~ `menu_input.ask_until`; `task_manager._rating` ~ `settings_menu._rating`; `commute_menu._clock` and `settings_menu._clock` re-parse HH:MM instead of using `models._check_time` (see 15).
 22. `fit_check.unreadable_warnings` re-reads and re-parses all four planner tables on every `build_fit_inputs`, after `_get_items` already parsed them. Collect unreadable rows in the same pass.

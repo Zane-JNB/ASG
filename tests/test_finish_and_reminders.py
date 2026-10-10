@@ -342,3 +342,12 @@ def test_finishing_a_task_is_all_or_nothing(conn, sid, monkeypatch):
         finish_task(conn, sid, tid, NINE, ask=lambda _p: "", show=lambda _l: None)
     assert dict(EXTRACTED_TASKS.get(conn, sid))[tid].completed_at is None  # not half-closed
     assert get_plan_cuts(conn, sid) == {tid: 8}
+
+
+def test_replanning_mid_session_keeps_the_session_in_progress(conn, sid):
+    from scheduler.db import due_sessions, record_plan_sessions
+    tid = EXTRACTED_TASKS.add(conn, sid, _task("Essay"))
+    in_progress, later = (tid, "2026-10-05T08:30", "2026-10-05T09:30"), (tid, "2026-10-05T14:00", "2026-10-05T15:00")
+    record_plan_sessions(conn, sid, "2026-10-05T08:00", [in_progress, later])
+    record_plan_sessions(conn, sid, "2026-10-05T09:00", [])  # re-plan at 09:00, mid-session
+    assert due_sessions(conn, sid, "2026-10-06T00:00") == [in_progress]  # still checked in on; 14:00 replaced
