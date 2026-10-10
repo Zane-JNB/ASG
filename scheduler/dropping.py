@@ -1,7 +1,6 @@
 """Making room for a new task: ways to cut existing tasks (and shorten the new one), tried
 cheapest first, each verified by the solver and scored for the student to choose from."""
 import heapq
-import itertools
 from scheduler.models import (
     DropAction, DropProposal, DropReport, DynamicTask, ProfileSettings, ScheduledItem, ScheduleWarning,
 )
@@ -70,16 +69,53 @@ def _dominated(cuts, feasible):
     return any(all(cuts.get(i, 0) >= k for i, k in f.items()) for f in feasible)
 
 
-def _cheapest_first(make_combos, k):
-    """Yield make_combos() cheapest first (ties keep their order), like a full sort, but only ever
-    holding the k cheapest in memory. If all k get used, the next batch is found by doubling k."""
-    done = 0
-    while True:
-        batch = heapq.nsmallest(k, make_combos(), key=lambda c: c[0])  # same as sorted(...)[:k]
-        yield from batch[done:]
-        if len(batch) < k:
-            return
-        done, k = k, 2 * k
+def _cut_combos(tasks: list[DynamicTask], new_task: DynamicTask, settings: ProfileSettings,
+                max_actions: int, need: int):
+    """Every way to cut up to max_actions existing tasks (one option each) and/or shorten the new
+    task that frees at least `need` slots, as (cost, actions, new_cut), cheapest first. Equal costs
+    keep a fixed order: fewest tasks cut, then by task index, option, and new-task cut.
+
+    A lazy best-first walk, so only the combinations actually tried are ever built. The options
+    are sorted by cost; a combination is a rising tuple of option positions plus a new-task cut,
+    and each one comes from exactly one parent that costs no more: the same options with the
+    previous new-task cut, or (with the new task uncut) one option fewer or its last option one
+    step cheaper. Combinations that cut one task twice are walked through but never yielded."""
+    options = sorted(((loss_cost(tasks[i], a.slots_lost, settings), i, k, a)
+                      for i, acts in _options(tasks, settings).items() for k, a in enumerate(acts)),
+                     key=lambda o: o[0])
+    new_cuts = [0] + (_shrink_amounts(new_task.duration_slots, settings)  # a one-block new task can be shortened
+                      if len(chunk_sizes(new_task)) == 1 else [])
+    new_costs = [loss_cost(new_task, x, settings) for x in new_cuts]  # rising, like new_cuts
+
+    def node(chosen: tuple[int, ...], cut: int):
+        return sum(options[p][0] for p in chosen) + new_costs[cut], chosen, cut
+
+    def children(chosen: tuple[int, ...], cut: int):
+        if cut + 1 < len(new_cuts):
+            yield chosen, cut + 1
+        nxt = chosen[-1] + 1 if chosen else 0
+        if cut == 0 and nxt < len(options):
+            if len(chosen) < max_actions:
+                yield chosen + (nxt,), 0
+            if chosen:
+                yield chosen[:-1] + (nxt,), 0
+
+    heap, group, group_cost = [node((), 0)], [], 0
+    while heap:
+        cost, chosen, cut = heapq.heappop(heap)
+        if cost != group_cost:  # every combination of the last cost has been found: release them in order
+            yield from (combo for _, combo in sorted(group, key=lambda g: g[0]))
+            group, group_cost = [], cost
+        for child in children(chosen, cut):
+            heapq.heappush(heap, node(*child))
+        pick = sorted((options[p] for p in chosen), key=lambda o: o[1])
+        if not (chosen or cut) or len({o[1] for o in pick}) < len(pick):
+            continue  # the plan that already failed, or one task cut twice
+        if sum(o[3].slots_lost for o in pick) + new_cuts[cut] < need:
+            continue  # cannot possibly free enough room
+        order = (len(pick), tuple(o[1] for o in pick), tuple(o[2] for o in pick), cut)
+        group.append((order, (cost, tuple(o[3] for o in pick), new_cuts[cut])))
+    yield from (combo for _, combo in sorted(group, key=lambda g: g[0]))
 
 
 def _free_slots(frame: PlanFrame, tasks: list[DynamicTask]) -> int:
@@ -164,28 +200,10 @@ def propose_drops(frame: PlanFrame, tasks: list[DynamicTask], new_task: DynamicT
         if solved:
             found.append(_proposal(frame, tasks, new_task, (), 0, solved, new_added=False))
 
-    # options: cut existing tasks and/or shorten the new one, cheapest-looking first
-    opts = _options(tasks, frame.settings)
-    new_cuts = [0] + (_shrink_amounts(new_task.duration_slots, frame.settings)  # a one-block new task can be shortened
-                      if len(chunk_sizes(new_task)) == 1 else [])
     # the least that must be freed: all task time minus every free slot (an over-count of the room)
     need = sum(t.duration_slots for t in tasks + [new_task]) - _free_slots(frame, tasks + [new_task])
-
-    def combos():
-        for n in range(0, max_actions + 1):  # 0 = only shorten the new task
-            for idxs in itertools.combinations(range(len(tasks)), n):
-                for pick in itertools.product(*(opts[i] for i in idxs)):
-                    for new_cut in new_cuts:
-                        if not pick and not new_cut:
-                            continue  # that is the plan that already failed
-                        if sum(a.slots_lost for a in pick) + new_cut < need:
-                            continue  # cannot possibly free enough room
-                        cost = (sum(loss_cost(tasks[a.task_index], a.slots_lost, frame.settings) for a in pick)
-                                + loss_cost(new_task, new_cut, frame.settings))
-                        yield cost, pick, new_cut
-
     feasible_cuts, exhausted = [], True
-    for _, pick, new_cut in _cheapest_first(combos, 4 * max_checks):
+    for _, pick, new_cut in _cut_combos(tasks, new_task, frame.settings, max_actions, need):
         cuts = {a.task_index: a.slots_lost for a in pick}
         if new_cut:
             cuts[NEW_TASK] = new_cut

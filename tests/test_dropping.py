@@ -1,5 +1,10 @@
+import itertools
+
 import pytest
-from scheduler.dropping import NEW_TASK, _cheapest_first, cut_task, loss_cost, propose_drops, try_cuts
+from scheduler import dropping
+from scheduler.dropping import (
+    NEW_TASK, _cut_combos, _options, _shrink_amounts, cut_task, loss_cost, propose_drops, try_cuts,
+)
 from scheduler.models import DynamicTask, FixedBlock, ProfileSettings, SleepRule
 from scheduler.solver import PlanFrame, build_schedule, chunk_sizes
 
@@ -15,23 +20,51 @@ def busy_day():
     return fixed, tasks, new, [SleepRule(night=0)]
 
 
-@pytest.mark.parametrize("k", [1, 3, 7, 100])
-def test_cheapest_first_matches_a_full_sort_including_ties(k):
-    combos = [(c, f"combo{i}", 0) for i, c in enumerate([5, 1, 3, 1, 9, 3, 0, 5, 1, 2, 7, 3])]
-    assert list(_cheapest_first(lambda: iter(combos), k)) == sorted(combos, key=lambda c: c[0])
+def _full_sort(tasks, new, settings, max_actions, need):
+    """The search order #13 replaced: build every combination, then a stable sort by cost."""
+    opts = _options(tasks, settings)
+    new_cuts = [0] + (_shrink_amounts(new.duration_slots, settings) if len(chunk_sizes(new)) == 1 else [])
+    out = []
+    for n in range(max_actions + 1):
+        for idxs in itertools.combinations(range(len(tasks)), n):
+            for pick in itertools.product(*(opts[i] for i in idxs)):
+                for new_cut in new_cuts:
+                    if (pick or new_cut) and sum(a.slots_lost for a in pick) + new_cut >= need:
+                        cost = (sum(loss_cost(tasks[a.task_index], a.slots_lost, settings) for a in pick)
+                                + loss_cost(new, new_cut, settings))
+                        out.append((cost, pick, new_cut))
+    return sorted(out, key=lambda c: c[0])
 
 
-def test_cheapest_first_stops_early_when_the_caller_stops():
-    made = []
-    def combos():
-        made.append(1)
-        yield from [(c, c, 0) for c in range(100)]
-    first_two = []
-    for c in _cheapest_first(combos, 4):
-        first_two.append(c[0])
-        if len(first_two) == 2:
-            break
-    assert first_two == [0, 1] and len(made) == 1  # one pass, no extra batches
+def _mixed_tasks():
+    same = dict(duration_slots=8, priority=3, difficulty=2)  # identical tasks: many cost ties
+    return [DynamicTask(title="A", **same), DynamicTask(title="B", **same),
+            DynamicTask(title="Long", duration_slots=20, priority=2, difficulty=4, max_session_slots=8),
+            DynamicTask(title="Due", duration_slots=6, priority=4, difficulty=1, deadline_day=0),
+            DynamicTask(title="One block", duration_slots=12, priority=1, difficulty=5, splittable=False)]
+
+
+@pytest.mark.parametrize("max_actions", [0, 1, 2, 3])
+@pytest.mark.parametrize("need", [0, 10, 30])
+@pytest.mark.parametrize("new", [DynamicTask(title="New", duration_slots=8, priority=4),
+                                 DynamicTask(title="New split", duration_slots=24, priority=2, max_session_slots=8)])
+def test_cut_combos_come_cheapest_first_exactly_like_a_full_sort(max_actions, need, new):
+    s, tasks = ProfileSettings(), _mixed_tasks()
+    assert list(_cut_combos(tasks, new, s, max_actions, need)) == _full_sort(tasks, new, s, max_actions, need)
+
+
+def test_cut_combos_price_each_option_once_not_every_combination(monkeypatch):
+    # #13: the old search rebuilt and priced every combination (C(40, 3) x options^3) on each batch
+    s = ProfileSettings()
+    tasks = [DynamicTask(title=f"T{i}", duration_slots=4 + i % 9, priority=1 + i % 5, difficulty=1 + i % 3,
+                         max_session_slots=4) for i in range(40)]
+    new = DynamicTask(title="New", duration_slots=6, priority=3)
+    priced = []
+    monkeypatch.setattr(dropping, "loss_cost", lambda *a: (priced.append(1), loss_cost(*a))[1])
+    first = list(itertools.islice(_cut_combos(tasks, new, s, 3, 0), 20))
+    assert len(first) == 20
+    options = sum(len(v) for v in _options(tasks, s).values()) + 1 + len(_shrink_amounts(6, s))
+    assert len(priced) <= options
 
 
 def test_cut_task_removes_whole_sessions():
