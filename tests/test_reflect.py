@@ -92,7 +92,7 @@ def test_reflection_is_logged_with_outcome(monkeypatch, conn):
     feed_inputs(monkeypatch, ["y", "Zane", "felt rushed today, no breaks"])
     reflect.main()
     h = get_reflections(conn, get_or_create_student(conn, "Zane"))
-    assert len(h) == 1 and h[0]["applied"] is False and h[0]["outcome"] == "evidence_recorded"
+    assert len(h) == 1 and h[0].applied is False and h[0].outcome == "evidence_recorded"
 
 def _reflect(monkeypatch, extra=()):
     feed_inputs(monkeypatch, ["y", "Zane", "felt rushed today, no breaks", *extra])

@@ -125,12 +125,10 @@ def test_session_time_goes_through_the_tier_check_and_audit_log():
     assert conn.execute("SELECT COUNT(*) FROM reflections WHERE student_id = ?", (sid,)).fetchone()[0] == 1
 
 def test_session_time_is_refused_when_the_model_owns_the_field():
-    from scheduler.db import load_settings, load_tiers
+    from scheduler.db import set_tier
+    from scheduler.preference_policy import Tier
     conn, sid = _conn()
-    load_tiers(conn, sid)  # backfill the tier rows
-    conn.execute("UPDATE preference_tiers SET tier = 'model_learned' WHERE student_id = ? AND field = ?",
-                 (sid, "default_max_session_slots"))
-    conn.commit()
+    set_tier(conn, sid, "default_max_session_slots", Tier.MODEL_LEARNED)
     ask, shown = scripted(["t", "1", "q"])
     run_menu(conn, sid, ask, shown.append, today=TODAY)
     assert load_settings(conn, sid).default_max_session_slots == 8

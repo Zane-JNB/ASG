@@ -38,7 +38,7 @@ def test_approve_applies_exactly_one_bounded_step_and_clears_evidence(conn, sid)
     assert resolve_pending(conn, sid, "buffer_slots", True).status == Outcome.APPROVED
     assert load_settings(conn, sid).buffer_slots == before + 1
     assert "buffer_slots" not in load_evidence(conn, sid) and pending_approvals(conn, sid) == []
-    assert get_reflections(conn, sid)[-1]["outcome"] == Outcome.APPROVED
+    assert get_reflections(conn, sid)[-1].outcome == Outcome.APPROVED
 
 def test_decline_keeps_value_clears_evidence_and_needs_fresh_evidence(conn, sid):
     ask_mode(conn, sid)
@@ -79,4 +79,4 @@ def test_mode_changes_are_validated_authorized_and_audited(conn, sid):
         set_approval_mode(conn, sid, "sometimes", Actor.USER)
     assert set_approval_mode(conn, sid, APPROVAL_ASK, Actor.USER) is True
     assert set_approval_mode(conn, sid, APPROVAL_ASK, Actor.USER) is False   # no-op: no extra log row
-    assert [r["outcome"] for r in get_reflections(conn, sid)] == [Outcome.APPROVAL_MODE]
+    assert [r.outcome for r in get_reflections(conn, sid)] == [Outcome.APPROVAL_MODE]

@@ -210,10 +210,10 @@ def test_outcomes_are_logged_per_reflection(conn, sid):
     for _ in range(3):
         run(conn, sid, ("buffer_slots", "increase", "small"))
     log = get_reflections(conn, sid)
-    assert [r["outcome"] for r in log] == ["no_proposals", "proposal_ignored",
+    assert [r.outcome for r in log] == ["no_proposals", "proposal_ignored",
                                            "evidence_recorded", "evidence_recorded", "learned_update_applied"]
-    assert [r["applied"] for r in log] == [False] * 4 + [True]
-    assert log[-1]["settings_before"].buffer_slots == 1 and log[-1]["settings_after"].buffer_slots == 2
+    assert [r.applied for r in log] == [False] * 4 + [True]
+    assert log[-1].settings_before.buffer_slots == 1 and log[-1].settings_after.buffer_slots == 2
 
 
 def test_prompt_and_schema_only_show_learnable_fields(conn, sid):

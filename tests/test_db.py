@@ -64,10 +64,10 @@ def test_log_and_get_reflections(conn):
     history = get_reflections(conn, sid)
     assert len(history) == 1
     entry = history[0]
-    assert entry["reflection_text"] == "felt rushed today"
-    assert entry["applied"] is True
-    assert entry["settings_before"].buffer_slots == 1
-    assert entry["settings_after"].buffer_slots == 4
+    assert entry.reflection_text == "felt rushed today"
+    assert entry.applied is True
+    assert entry.settings_before.buffer_slots == 1
+    assert entry.settings_after.buffer_slots == 4
 
 
 def test_reflections_ordered_oldest_first(conn):
@@ -77,7 +77,7 @@ def test_reflections_ordered_oldest_first(conn):
     log_reflection(conn, sid, "second", before=s, after=s, applied=False)
 
     history = get_reflections(conn, sid)
-    assert [h["reflection_text"] for h in history] == ["first", "second"]
+    assert [h.reflection_text for h in history] == ["first", "second"]
 
 
 def test_reflections_scoped_to_student(conn):
@@ -323,4 +323,4 @@ def test_an_inner_error_the_caller_handles_undoes_only_the_inner_block(conn):
                 raise RuntimeError("boom")
         except RuntimeError:
             pass
-    assert [r["reflection_text"] for r in get_reflections(conn, sid)] == ["kept"]
+    assert [r.reflection_text for r in get_reflections(conn, sid)] == ["kept"]

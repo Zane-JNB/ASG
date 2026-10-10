@@ -64,8 +64,8 @@ def test_apply_and_log_logs_reflection_with_applied_true(conn, student_id):
     apply_and_log(conn, student_id, "felt rushed", result, accepted=[True])
     history = get_reflections(conn, student_id)
     assert len(history) == 1
-    assert history[0]["applied"] is True
-    assert history[0]["reflection_text"] == "felt rushed"
+    assert history[0].applied is True
+    assert history[0].reflection_text == "felt rushed"
 
 
 def test_apply_and_log_with_nothing_accepted_does_not_save_but_still_logs(conn, student_id):
@@ -79,7 +79,7 @@ def test_apply_and_log_with_nothing_accepted_does_not_save_but_still_logs(conn, 
     assert after == before
     history = get_reflections(conn, student_id)
     assert len(history) == 1
-    assert history[0]["applied"] is False
+    assert history[0].applied is False
 
 
 def test_apply_and_log_with_zero_proposals(conn, student_id):
@@ -87,7 +87,7 @@ def test_apply_and_log_with_zero_proposals(conn, student_id):
     after = apply_and_log(conn, student_id, "all fine", result, accepted=[])
     before = load_settings(conn, student_id)
     assert after == before
-    assert get_reflections(conn, student_id)[0]["applied"] is False
+    assert get_reflections(conn, student_id)[0].applied is False
 
 
 def test_apply_and_log_rejects_mismatched_accepted_length(conn, student_id):

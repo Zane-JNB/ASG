@@ -15,7 +15,6 @@ Zane will review and correct each. Referenced from `CLAUDE.md`.
 12. Hard-coded search tunables: `propose_drops` (`max_actions`, `max_proposals`, `max_checks`, `time_limit_seconds`) and the `restore.plan_restores` steps should be `ProfileSettings` fields with `POLICY` entries. Do this with the optimal-schedule work.
 14. Unused reminder fields on `ExtractedTask` (`reminders_enabled`, `reminder_min_*`) are sent in the Groq extraction schema. Remove them or mark them `SkipJsonSchema` (see 10).
 
-24. Preference storage in `db.py` (for G7): `load_tiers` writes (backfills default tiers) on every read; `load_evidence` and `load_evidence_times` read the same table in two queries; `get_reflections` returns loose dicts instead of a typed row (only tests read it).
 
 25. Found in the Branch 2 review (for G6/G7): pyflakes reports unused imports in `preferences.py`, `preference_policy.py`, `reflection.py`, `reflection_cycle.py`, `reflect.py` and several tests, and two shadowed duplicate tests (`test_evidence.py` line 85 and `test_preference_policy.py` line 42 redefine an earlier test of the same name, so the first copy never runs).
 26. `propose_drops` re-solves "as things stand" before searching, although `add_task_with_fit` has just done that check (one extra solve per search). Keep it while `propose_drops` is also called directly (tests); drop it if the base check moves out of the engine.

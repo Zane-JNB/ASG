@@ -122,9 +122,9 @@ def test_edits_and_tier_changes_are_audited_and_noops_are_not(conn, sid):
     set_values(conn, sid, {"default_max_session_slots": 6}, Actor.USER)                  # no-op: no new row
     change_tier(conn, sid, "buffer_slots", Tier.USER, Actor.USER)
     log = get_reflections(conn, sid)
-    assert [r["outcome"] for r in log] == ["user_edit", "ownership_change"]
-    assert log[0]["settings_before"].default_max_session_slots == 8 and log[0]["applied"] is True
-    assert log[1]["applied"] is False
+    assert [r.outcome for r in log] == ["user_edit", "ownership_change"]
+    assert log[0].settings_before.default_max_session_slots == 8 and log[0].applied is True
+    assert log[1].applied is False
 
 
 def test_students_are_isolated(conn, sid):

@@ -6,7 +6,7 @@ from enum import Enum, StrEnum
 
 from pydantic import ValidationError
 
-from scheduler.db import (clear_evidence, load_approval_mode, load_evidence, load_evidence_times, load_settings,
+from scheduler.db import (clear_evidence, load_approval_mode, load_evidence, load_settings,
                           load_tiers, log_reflection, save_approval_mode, save_evidence, save_settings, set_tier,
                           transaction)
 from scheduler.models import ProfileSettings
@@ -322,13 +322,6 @@ def resolve_pending(conn, student_id, field, approve: bool, now=None) -> FieldRe
     return FieldResult(field, outcome, msg)
 
 
-def _utc(dt: datetime) -> datetime:
-    """Naive datetimes are read as UTC, so naive and aware values can be compared."""
-    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
-
-
 def live_evidence(conn, student_id, now):
     """Stored evidence minus anything idle for EVIDENCE_TTL_DAYS or longer."""
-    times, limit = load_evidence_times(conn, student_id), timedelta(days=EVIDENCE_TTL_DAYS)
-    return {f: v for f, v in load_evidence(conn, student_id).items()
-            if not times.get(f) or _utc(now) - _utc(datetime.fromisoformat(times[f])) < limit}
+    return load_evidence(conn, student_id, fresh_since=now - timedelta(days=EVIDENCE_TTL_DAYS))

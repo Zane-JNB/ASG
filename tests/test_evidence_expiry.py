@@ -1,7 +1,7 @@
 import sqlite3
 from datetime import datetime, timedelta, timezone
 import pytest
-from scheduler.db import connect, get_or_create_student, load_evidence, load_evidence_times, load_settings
+from scheduler.db import connect, get_or_create_student, load_evidence, load_settings
 from scheduler.preferences import (APPROVAL_ASK, Actor, PreferenceError, pending_approvals, process_reflection,
                                    resolve_pending, set_approval_mode)
 from scheduler.reflection import PreferenceChangeProposal, ReflectionResult
@@ -63,5 +63,5 @@ def test_legacy_evidence_table_gains_updated_at_and_rows_stay_live(tmp_path):
     raw.execute("INSERT INTO preference_evidence VALUES (1, 'buffer_slots', 2, 'small')")
     raw.commit(); raw.close()
     conn = connect(path)
-    assert load_evidence_times(conn, 1)["buffer_slots"] is not None
+    assert conn.execute("SELECT updated_at FROM preference_evidence WHERE field = 'buffer_slots'").fetchone()[0]
     assert load_evidence(conn, 1) == {"buffer_slots": (2, "small")}
