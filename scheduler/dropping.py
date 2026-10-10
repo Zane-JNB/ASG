@@ -49,7 +49,7 @@ def cut_options(tasks: list[DynamicTask], settings: ProfileSettings) -> dict[int
     return out
 
 
-def _apply(tasks: list[DynamicTask], actions) -> list[DynamicTask]:
+def _apply(tasks: list[DynamicTask], actions: list[DropAction] | tuple[DropAction, ...]) -> list[DynamicTask]:
     lost = {a.task_index: a.slots_lost for a in actions}  # by slots, so cuts and shrinks work alike
     result = []
     for i, t in enumerate(tasks):
