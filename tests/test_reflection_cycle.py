@@ -131,9 +131,9 @@ def test_apply_and_log_skips_a_proposal_that_would_make_settings_invalid(conn, s
     import scheduler.reflection_cycle as rc
     bad = make_result(PreferenceChangeProposal(field="buffer_slots", direction="increase",
                                                magnitude="small", reason="a"))
-    def to_invalid(settings, proposal):  # pretend the bucket produced an out-of-range value
-        return settings.model_copy(update={"buffer_slots": -5})
-    monkeypatch.setattr(rc, "apply_proposal", to_invalid)
+    def to_invalid(settings, field, direction, magnitude):  # pretend the bucket produced an out-of-range value
+        return -5
+    monkeypatch.setattr(rc, "stepped_value", to_invalid)
     before = load_settings(conn, student_id)
     assert apply_and_log(conn, student_id, "x", bad, accepted=[True]) == before
 

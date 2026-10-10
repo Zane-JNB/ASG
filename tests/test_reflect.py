@@ -4,8 +4,8 @@ import reflect
 from scheduler.reflection_cycle import reflect_and_record
 from scheduler.db import connect, get_or_create_student, get_reflections
 from scheduler.db import load_evidence, load_settings
-from scheduler.preferences import APPROVAL_ASK, Actor, Outcome, change_tier, set_approval_mode
-from scheduler.preference_policy import Tier
+from scheduler.preferences import Actor, Outcome, change_tier, set_approval_mode
+from scheduler.preference_policy import ApprovalMode, Tier
 
 @pytest.fixture
 def conn():
@@ -100,7 +100,7 @@ def _reflect(monkeypatch, extra=()):
 
 def test_ask_mode_prompts_only_at_threshold_and_yes_applies(monkeypatch, capsys, conn):
     sid = get_or_create_student(conn, "Zane")
-    set_approval_mode(conn, sid, APPROVAL_ASK, Actor.USER)
+    set_approval_mode(conn, sid, ApprovalMode.ASK, Actor.USER)
     _reflect(monkeypatch); _reflect(monkeypatch)                 # no 3rd input: no prompt yet
     assert load_settings(conn, sid).buffer_slots == 1
     _reflect(monkeypatch, ["y"])
@@ -110,7 +110,7 @@ def test_ask_mode_prompts_only_at_threshold_and_yes_applies(monkeypatch, capsys,
 
 def test_ask_mode_no_leaves_value_unchanged(monkeypatch, conn):
     sid = get_or_create_student(conn, "Zane")
-    set_approval_mode(conn, sid, APPROVAL_ASK, Actor.USER)
+    set_approval_mode(conn, sid, ApprovalMode.ASK, Actor.USER)
     _reflect(monkeypatch); _reflect(monkeypatch); _reflect(monkeypatch, ["n"])
     assert load_settings(conn, sid).buffer_slots == 1 and load_evidence(conn, sid) == {}
 

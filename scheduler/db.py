@@ -9,7 +9,7 @@ from typing import NamedTuple
 from pydantic import BaseModel, ValidationError
 
 from scheduler.models import Commute, DatedBlock, ExtractedTask, ExtractionResult, ProfileSettings, WeeklyPattern
-from scheduler.preference_policy import POLICY, Tier
+from scheduler.preference_policy import POLICY, ApprovalMode, Tier
 from scheduler.units import parse_date
 
 SCHEMA = """
@@ -234,13 +234,13 @@ def save_evidence(conn: sqlite3.Connection, student_id: int, field: str, score: 
                         updated_at = excluded.updated_at""",
                      (student_id, field, score, magnitude, at or _now()))
 
-def load_approval_mode(conn: sqlite3.Connection, student_id: int) -> str:
-    """How learned changes are approved: 'auto' (the default) or 'ask'."""
+def load_approval_mode(conn: sqlite3.Connection, student_id: int) -> ApprovalMode:
+    """How learned changes are approved (auto unless the student chose ask)."""
     row = conn.execute("SELECT approval_mode FROM preference_settings WHERE student_id = ?",
                        (student_id,)).fetchone()
-    return row[0] if row else "auto"
+    return ApprovalMode(row[0]) if row else ApprovalMode.AUTO
 
-def save_approval_mode(conn: sqlite3.Connection, student_id: int, mode: str) -> None:
+def save_approval_mode(conn: sqlite3.Connection, student_id: int, mode: ApprovalMode) -> None:
     """Insert or overwrite the approval mode."""
     with transaction(conn):
         conn.execute("""INSERT INTO preference_settings (student_id, approval_mode) VALUES (?, ?)

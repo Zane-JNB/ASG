@@ -5,9 +5,10 @@ import pytest
 from pydantic import ValidationError
 
 from scheduler.models import ProfileSettings
+from scheduler.preferences import stepped_value
 from scheduler.preference_policy import MODEL_DELTAS
 from scheduler.reflection import (
-    PreferenceChangeProposal, ReflectionResult, apply_proposal, propose_preference_changes,
+    PreferenceChangeProposal, ReflectionResult, propose_preference_changes,
 )
 
 
@@ -47,36 +48,30 @@ def test_reason_cannot_be_empty():
                                  magnitude="small", reason="")
 
 
-def test_apply_proposal_increase():
+def test_stepped_value_increase():
     s = ProfileSettings()
-    p = PreferenceChangeProposal(field="buffer_slots", direction="increase",
-                                 magnitude="medium", reason="x")
-    s2 = apply_proposal(s, p)
-    assert s2.buffer_slots == s.buffer_slots + MODEL_DELTAS["buffer_slots"]["medium"]
+    assert stepped_value(s, "buffer_slots", "increase", "medium") == s.buffer_slots + MODEL_DELTAS["buffer_slots"]["medium"]
 
 
-def test_apply_proposal_decrease():
+def test_stepped_value_decrease():
     s = ProfileSettings(same_day_penalty=3000)
-    p = PreferenceChangeProposal(field="same_day_penalty", direction="decrease",
-                                 magnitude="small", reason="x")
-    s2 = apply_proposal(s, p)
-    assert s2.same_day_penalty == 3000 - MODEL_DELTAS["same_day_penalty"]["small"]
+    assert stepped_value(s, "same_day_penalty", "decrease", "small") == 3000 - MODEL_DELTAS["same_day_penalty"]["small"]
 
 
-def test_apply_proposal_clamps_at_lower_bound():
-    s = ProfileSettings(buffer_slots=1)
-    p = PreferenceChangeProposal(field="buffer_slots", direction="decrease",
-                                 magnitude="large", reason="x")  # delta of 4, would go negative
-    s2 = apply_proposal(s, p)
-    assert s2.buffer_slots == 0  # buffer_slots allows 0 (ge=0), clamped there not negative
+def test_stepped_value_clamps_at_lower_bound():
+    s = ProfileSettings(buffer_slots=1)  # delta of 4, would go negative
+    assert stepped_value(s, "buffer_slots", "decrease", "large") == 0  # ge=0: clamped there, not negative
 
 
-def test_apply_proposal_clamps_gt_zero_field_at_one():
-    s = ProfileSettings(sleep_target_penalty=100)
-    p = PreferenceChangeProposal(field="sleep_target_penalty", direction="decrease",
-                                 magnitude="large", reason="x")  # would go to -2400
-    s2 = apply_proposal(s, p)
-    assert s2.sleep_target_penalty == 1  # gt=0, so 1 is the smallest valid int
+def test_stepped_value_clamps_gt_zero_field_at_one():
+    s = ProfileSettings(sleep_target_penalty=100)  # would go to -2400
+    assert stepped_value(s, "sleep_target_penalty", "decrease", "large") == 1  # gt=0: 1 is the smallest valid int
+
+
+def test_the_reflection_module_holds_no_settings_arithmetic():
+    """The LLM only proposes (direction + magnitude); the numbers are preferences' job."""
+    import scheduler.reflection as reflection
+    assert not hasattr(reflection, "apply_proposal") and not hasattr(reflection, "_bounds")
 
 
 

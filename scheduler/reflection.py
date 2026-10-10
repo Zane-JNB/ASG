@@ -1,17 +1,15 @@
-from typing import Literal
-
-import annotated_types
+"""The LLM's side of a reflection: it proposes a direction and a magnitude per setting, never a
+value. Turning a proposal into a number is preferences' job."""
 from pydantic import BaseModel, Field, ValidationError, model_validator
 
 from scheduler.llm_backends import as_items, call_llm
-from scheduler.models import ProfileSettings
-from scheduler.preference_policy import MODEL_DELTAS
+from scheduler.preference_policy import MODEL_DELTAS, Direction, Magnitude
 
 
 class PreferenceChangeProposal(BaseModel):
     field: str
-    direction: Literal["increase", "decrease"]
-    magnitude: Literal["small", "medium", "large"]
+    direction: Direction
+    magnitude: Magnitude
     reason: str = Field(min_length=1)
 
     @model_validator(mode="after")
@@ -27,32 +25,6 @@ class PreferenceChangeProposal(BaseModel):
 class ReflectionResult(BaseModel):
     summary: str
     proposals: list[PreferenceChangeProposal] = Field(default_factory=list)
-
-
-def _bounds(field_name: str) -> tuple[int, int | None]:
-    """(lowest, highest or None) that ProfileSettings' own Field(...) constraints allow."""
-    lo, hi = 0, None
-    for c in ProfileSettings.model_fields[field_name].metadata:
-        if isinstance(c, annotated_types.Gt):
-            lo = c.gt + 1
-        elif isinstance(c, annotated_types.Ge):
-            lo = c.ge
-        elif isinstance(c, annotated_types.Lt):
-            hi = c.lt - 1
-        elif isinstance(c, annotated_types.Le):
-            hi = c.le
-    return lo, hi
-
-
-def apply_proposal(settings: ProfileSettings, proposal: PreferenceChangeProposal) -> ProfileSettings:
-    """Apply one proposal's bounded delta, clamped to this field's valid range."""
-    delta = MODEL_DELTAS[proposal.field][proposal.magnitude]
-    current = getattr(settings, proposal.field)
-    lo, hi = _bounds(proposal.field)
-    new_value = max(current + delta if proposal.direction == "increase" else current - delta, lo)
-    if hi is not None:
-        new_value = min(new_value, hi)
-    return ProfileSettings(**{**settings.model_dump(), proposal.field: new_value})
 
 
 def build_system_prompt(fields: list[str] | None = None) -> str:

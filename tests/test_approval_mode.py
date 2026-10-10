@@ -1,7 +1,7 @@
 import pytest
 from scheduler.db import connect, get_or_create_student, load_approval_mode, get_reflections, load_evidence, load_settings
-from scheduler.preference_policy import Tier
-from scheduler.preferences import (APPROVAL_ASK, EVIDENCE_THRESHOLD, Actor, Outcome, PreferenceError,
+from scheduler.preference_policy import ApprovalMode, Tier
+from scheduler.preferences import (EVIDENCE_THRESHOLD, Actor, Outcome, PreferenceError,
                                    change_tier, pending_approvals, process_reflection,
                                    resolve_pending, set_approval_mode)
 from scheduler.reflection import PreferenceChangeProposal, ReflectionResult
@@ -16,7 +16,7 @@ def vote(conn, sid, direction="increase"):
     p = PreferenceChangeProposal(field="buffer_slots", direction=direction, magnitude="small", reason="t")
     return process_reflection(conn, sid, "t", ReflectionResult(summary="", proposals=[p]))
 
-def ask_mode(conn, sid): set_approval_mode(conn, sid, APPROVAL_ASK, Actor.USER)
+def ask_mode(conn, sid): set_approval_mode(conn, sid, ApprovalMode.ASK, Actor.USER)
 
 def reach_pending(conn, sid, n=EVIDENCE_THRESHOLD):
     for _ in range(n): out = vote(conn, sid)
@@ -60,7 +60,7 @@ def test_pending_survives_closing_and_reopening_the_database(tmp_path):
     ask_mode(c, s); reach_pending(c, s); c.close()
     c2 = connect(path)
     assert [p.field for p in pending_approvals(c2, s)] == ["buffer_slots"]
-    assert load_approval_mode(c2, s) == APPROVAL_ASK
+    assert load_approval_mode(c2, s) == ApprovalMode.ASK
 
 def test_resolve_without_pending_is_rejected(conn, sid):
     ask_mode(conn, sid)
@@ -74,9 +74,9 @@ def test_claiming_the_field_clears_its_pending_change(conn, sid):
 
 def test_mode_changes_are_validated_authorized_and_audited(conn, sid):
     with pytest.raises(PreferenceError):
-        set_approval_mode(conn, sid, APPROVAL_ASK, Actor.MODEL)
+        set_approval_mode(conn, sid, ApprovalMode.ASK, Actor.MODEL)
     with pytest.raises(PreferenceError, match="Unknown"):
         set_approval_mode(conn, sid, "sometimes", Actor.USER)
-    assert set_approval_mode(conn, sid, APPROVAL_ASK, Actor.USER) is True
-    assert set_approval_mode(conn, sid, APPROVAL_ASK, Actor.USER) is False   # no-op: no extra log row
+    assert set_approval_mode(conn, sid, ApprovalMode.ASK, Actor.USER) is True
+    assert set_approval_mode(conn, sid, ApprovalMode.ASK, Actor.USER) is False   # no-op: no extra log row
     assert [r.outcome for r in get_reflections(conn, sid)] == [Outcome.APPROVAL_MODE]

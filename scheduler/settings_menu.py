@@ -2,15 +2,14 @@ from collections.abc import Callable
 from typing import Any, NamedTuple
 
 from scheduler.db import load_approval_mode, load_settings, load_tiers
-from scheduler.preference_policy import POLICY, Tier
-from scheduler.preferences import (APPROVAL_ASK, APPROVAL_AUTO, Actor, PreferenceError, change_tier, check_may_edit,
-                                   set_approval_mode, set_values)
+from scheduler.preference_policy import POLICY, ApprovalMode, Tier
+from scheduler.preferences import Actor, PreferenceError, change_tier, check_may_edit, set_approval_mode, set_values
 from scheduler.prompts import ask_until, parse_hours, parse_rating, parse_whole, pick
 from scheduler.units import MINUTES_PER_SLOT, SLOTS_PER_DAY, parse_time, slot_to_time, slots_to_hours, time_to_slot
 
 _CANCEL = object()  # Enter = cancel; separate sentinel because "none" is a legal value (None)
 _TIER_WORDS = {Tier.USER: "set by you", Tier.MODEL_LEARNED: "learned automatically", Tier.LOCKED: "protected"}
-_MODE_WORDS = {APPROVAL_ASK: "ask for your approval first", APPROVAL_AUTO: "be applied automatically"}
+_MODE_WORDS = {ApprovalMode.ASK: "ask for your approval first", ApprovalMode.AUTO: "be applied automatically"}
 
 
 # ---------- how each editable setting is typed and shown ----------
@@ -81,7 +80,7 @@ def _approval(conn, student_id, ask, show) -> None:
     raw = ask("Switch to: ask (approve each change) / auto (apply after repeated evidence); Enter to keep: ").strip().lower()
     if not raw:
         return
-    if raw not in (APPROVAL_ASK, APPROVAL_AUTO):
+    if raw not in tuple(ApprovalMode):
         show("Type ask or auto.")
         return
     changed = set_approval_mode(conn, student_id, raw, Actor.USER)
