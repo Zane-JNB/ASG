@@ -138,7 +138,7 @@ def test_a_plan_names_its_parts_and_its_items_hold_every_fixed_block():
     assert shown == {(b.day, b.start_slot, b.end_slot, b.title) for b in plan.fixed}
 
 
-def test_commutes_alone_are_enough_to_plan():  # #28
+def test_commutes_alone_are_enough_to_plan():
     from scheduler.db import COMMUTES
     from scheduler.models import Commute
     conn = connect(":memory:")

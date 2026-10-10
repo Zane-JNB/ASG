@@ -153,7 +153,7 @@ def test_menu_m_opens_the_commute_menu():
     run_menu(conn, sid, ask, shown.append, today=TODAY)
     assert "No commutes saved." in shown
 
-def test_session_time_inf_is_rejected_not_a_crash():  # #16
+def test_session_time_inf_is_rejected_not_a_crash():
     conn, sid = _conn()
     ask, shown = scripted(["t", "inf", "q"])
     run_menu(conn, sid, ask, shown.append, today=TODAY)

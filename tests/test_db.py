@@ -238,7 +238,7 @@ def test_get_unreadable_items_covers_every_planner_table_in_order(conn):
     assert [u.table.label for u in get_unreadable_items(conn, sid)] == ["class", "commute"]
 
 
-def test_has_saved_items_counts_commutes_and_unreadable_rows(conn):  # #28
+def test_has_saved_items_counts_commutes_and_unreadable_rows(conn):
     sid = get_or_create_student(conn, "Zane")
     assert has_saved_items(conn, sid) is False
     COMMUTES.add(conn, sid, ONE_OF_EACH[3][1])

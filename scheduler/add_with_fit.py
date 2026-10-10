@@ -42,7 +42,7 @@ def add_task_with_fit(conn, student_id: int, new_task: ExtractedTask, now: datet
         if w.kind == "saved_row_unreadable":
             show(f"Warning: {w.message}")
 
-    if fits is not None:  # later-deadline tasks were shuffled if needed; target sleep never is (#11)
+    if fits is not None:  # later-deadline tasks were shuffled if needed; target sleep never is
         new_id = EXTRACTED_TASKS.add(conn, student_id, new_task)
         show("Added.")
         return AddOutcome({}, new_id)

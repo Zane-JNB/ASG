@@ -93,7 +93,7 @@ def test_delete_removes_the_chosen_commute_and_list_is_ordered():
     assert [c.weekday for c in _saved(conn, sid)] == ["Wed"]
     assert shown.index("1. Commute: every Mon 08:00, 30 min") < shown.index("2. Commute: every Wed 09:00, 30 min")
 
-# ---------- #15: a new commute that overlaps something saved is shown and asked about ----------
+# ---------- a new commute that overlaps something saved is shown and asked about ----------
 
 MON_CLASS = WeeklyPattern(title="Maths", day="Mon", start_time="08:00", end_time="10:00")
 

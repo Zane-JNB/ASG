@@ -215,7 +215,7 @@ def _long_day_then_early_class(conn, sid):
 
 
 def test_a_task_that_only_fits_by_cutting_target_sleep_is_never_added_silently(conn, sid):
-    # #11: it used to be added with a warning after "Added."; now the student is asked first
+    # it used to be added with a warning after "Added."; now the student is asked first
     _long_day_then_early_class(conn, sid)
     result, shown = _run(conn, sid, _task("Essay", 1.5, 3, D), [""])
     assert result is None and "Added." not in shown and EXTRACTED_TASKS.get(conn, sid) == []

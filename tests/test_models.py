@@ -111,7 +111,7 @@ def test_a_plan_anchor_lists_its_dates_and_names_the_date_of_a_day():
     assert anchor.date_of(2) == _date(2026, 11, 1)
 
 
-def test_a_task_carries_no_reminder_fields_and_old_rows_with_them_still_load():  # #14
+def test_a_task_carries_no_reminder_fields_and_old_rows_with_them_still_load():
     """Reminders are profile settings; the per-task copies were never read but were sent to Groq."""
     from scheduler.models import ExtractionResult
     schema = str(ExtractionResult.model_json_schema())

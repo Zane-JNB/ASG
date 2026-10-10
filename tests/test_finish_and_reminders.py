@@ -163,7 +163,7 @@ def test_restore_window_stays_within_the_plan_horizon(conn, sid):
 
 
 def test_a_task_that_cannot_fit_anyway_does_not_block_restores(conn, sid):
-    # #18: 'Lab' (8h, due in an hour) never fits, so every restore check used to fail
+    # 'Lab' (8h, due in an hour) never fits, so every restore check used to fail
     EXTRACTED_TASKS.add(conn, sid, ExtractedTask(title="Lab", date=D.isoformat(), due_time="10:00",
                                                  duration_slots=32, priority=3))
     far = EXTRACTED_TASKS.add(conn, sid, _task("Far", hours=2, due=D + timedelta(days=7)))
@@ -374,7 +374,7 @@ def test_replanning_mid_session_keeps_the_session_in_progress(conn, sid):
     assert due_sessions(conn, sid, "2026-10-06T00:00") == [in_progress]  # still checked in on; 14:00 replaced
 
 
-def test_sessions_passed_while_reminders_are_off_do_not_pile_up(conn, sid):  # #16
+def test_sessions_passed_while_reminders_are_off_do_not_pile_up(conn, sid):
     tid = EXTRACTED_TASKS.add(conn, sid, _task("Alpha"))
     anchor, _, items, _ = plan_from_saved(conn, sid, now=NINE, time_limit_seconds=10)
     record_plan(conn, sid, anchor, items, NINE)

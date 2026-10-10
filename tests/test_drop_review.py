@@ -124,7 +124,7 @@ def _manual_line(task, slots_cut):
     (16, "Drop 'Essay' entirely (-4h)"),
 ])
 def test_a_manual_cut_of_a_split_task_says_how_many_sessions_are_left(slots_cut, expected):
-    # #16: a manual cut always read "still one block", even for a task planned in two sessions
+    # a manual cut always read "still one block", even for a task planned in two sessions
     essay = DynamicTask(title="Essay", duration_slots=16, priority=3, max_session_slots=8)
     assert _manual_line(essay, slots_cut).startswith(f"   - {expected} [")
 

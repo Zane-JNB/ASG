@@ -387,7 +387,7 @@ def test_bedtime_window_fully_blocked_is_a_hard_warning_not_a_crash(blocks):
 
 
 def test_sleep_warning_hours_are_exact():
-    # 7h45m of sleep used to show as "7.8h" (#16)
+    # 7h45m of sleep used to show as "7.8h"
     rule = SleepRule(length_slots=32, min_slots=24)
     items = [ScheduledItem(title="Sleep", start_slot=92, end_slot=92 + 31, kind="sleep", day=0)]
     [w] = sleep_warnings([rule], items)
@@ -422,7 +422,7 @@ def test_buffer_after_a_block_with_touching_blocks():
 
 
 def _model_size(blocks, tasks, num_days):
-    """Number of variables in the CP-SAT model build_schedule makes (#13)."""
+    """Number of variables in the CP-SAT model build_schedule makes."""
     seen = {}
     real_solve = cp_model.CpSolver.Solve
 
@@ -436,7 +436,7 @@ def _model_size(blocks, tasks, num_days):
 
 
 def test_buffer_after_blocks_adds_no_variable_per_block_and_chunk():
-    # #13: one bool per (block x chunk) made the model grow with blocks * chunks
+    # one bool per (block x chunk) made the model grow with blocks * chunks
     tasks = [DynamicTask(title=f"T{i}", duration_slots=8, priority=3, max_session_slots=2) for i in range(5)]
     few = [FixedBlock(title="Class", day=0, start_slot=40, end_slot=44)]
     many = [FixedBlock(title="Class", day=d, start_slot=s, end_slot=s + 4)
@@ -463,7 +463,7 @@ def test_plan_frame_trial_counts_running_out_of_time_as_not_fitting():
     assert frame.trial(tasks, time_limit_seconds=0.001) is None  # one trial of many: just "no"
 
 
-# ---------- #11: sleep target vs task fit ----------
+# ---------- sleep target vs task fit ----------
 
 def _evening(latest_wake=116):
     """Busy until 21:00; sleep may start at 21:00 and must end by 05:00, so the full 8h target

@@ -136,7 +136,7 @@ def test_add_task_rejects_a_time_that_already_passed():
     (datetime(2026, 10, 5, 10, 0), "2026-10-05 10:00", "2026-10-05 10:15"),
     (datetime(2026, 10, 5, 23, 55), "2026-10-06 00:00", "2026-10-06 00:15"),  # plans start tomorrow 00:00
 ])
-def test_add_task_rejects_a_due_time_before_the_plan_can_start(now, too_soon, fine):  # #17
+def test_add_task_rejects_a_due_time_before_the_plan_can_start(now, too_soon, fine):
     ask, shown = _scripted(["Quiz prep", too_soon, fine, "0.25", "", ""])
     t = prompt_new_task(ask, shown.append, session_cap=8, now=now)
     assert (t.date + " " + t.due_time) == fine
@@ -291,7 +291,7 @@ def test_extraction_leaves_classes_without_a_due_time_key():
     raw = {"weekly_patterns": [{"title": "Lab", "day": "Mon", "start_time": "09:00", "end_time": "10:00"}]}
     assert len(extraction_from_dict(raw).weekly_patterns) == 1
 
-def test_only_commutes_still_gives_a_plan(conn, sid):  # #28
+def test_only_commutes_still_gives_a_plan(conn, sid):
     from scheduler.db import COMMUTES
     from scheduler.models import Commute
     COMMUTES.add(conn, sid, Commute(start_time="08:00", length_minutes=30, date="2026-10-06"))

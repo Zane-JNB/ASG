@@ -164,7 +164,7 @@ def test_model_answering_in_the_wrong_format_offers_a_retry_and_logs_nothing(mon
     assert get_reflections(conn, get_or_create_student(conn, "Zane")) == []
 
 
-def test_a_preference_error_is_our_bug_not_a_backend_failure(monkeypatch, conn):  # #20
+def test_a_preference_error_is_our_bug_not_a_backend_failure(monkeypatch, conn):
     from scheduler.llm_backends import is_backend_failure
     from scheduler.preferences import PreferenceError
     assert not is_backend_failure(PreferenceError("'Break time' is protected and can't be changed."))

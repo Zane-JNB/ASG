@@ -94,7 +94,7 @@ def test_describe_task_notes_one_block_split_and_sleep_leave():
 
 
 @pytest.mark.parametrize("text", ["inf", "-inf", "nan", "1e999"])
-def test_parse_hours_rejects_non_finite_numbers(text):  # #16
+def test_parse_hours_rejects_non_finite_numbers(text):
     with pytest.raises(ValueError):
         parse_hours(text)
 

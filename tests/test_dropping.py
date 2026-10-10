@@ -21,7 +21,7 @@ def busy_day():
 
 
 def _full_sort(tasks, new, settings, max_actions, need):
-    """The search order #13 replaced: build every combination, then a stable sort by cost."""
+    """The search order the cost-ordered walk replaced: build every combination, then a stable sort by cost."""
     opts = cut_options(tasks, settings)
     new_cuts = [0] + (shrink_amounts(new.duration_slots, settings) if len(chunk_sizes(new)) == 1 else [])
     out = []
@@ -54,7 +54,7 @@ def test_cut_combos_come_cheapest_first_exactly_like_a_full_sort(max_actions, ne
 
 
 def test_cut_combos_price_each_option_once_not_every_combination(monkeypatch):
-    # #13: the old search rebuilt and priced every combination (C(40, 3) x options^3) on each batch
+    # the old search rebuilt and priced every combination (C(40, 3) x options^3) on each batch
     s = ProfileSettings()
     tasks = [DynamicTask(title=f"T{i}", duration_slots=4 + i % 9, priority=1 + i % 5, difficulty=1 + i % 3,
                          max_session_slots=4) for i in range(40)]
@@ -224,7 +224,7 @@ def test_sleep_below_target_is_not_offered_when_it_would_reach_below_minimum():
 
 
 def test_a_proposal_says_how_the_new_task_is_added_in_one_place():
-    """'Don't add' carries no cut or sleep leave; an added task carries both (#27)."""
+    """'Don't add' carries no cut or sleep leave; an added task carries both."""
     from scheduler.dropping import dont_add_unverified
     from scheduler.models import AddedTask
     new = DynamicTask(title="New", duration_slots=4, priority=3, deadline_day=0)

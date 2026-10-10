@@ -118,7 +118,7 @@ def test_a_failed_transaction_rolls_back_everything_together(conn):
     assert load_evidence(conn, sid) == {} and get_reflections(conn, sid) == []
 
 
-# ---------- #24: reads don't write, evidence is one read, reflection rows are typed ----------
+# ---------- reads don't write, evidence is one read, reflection rows are typed ----------
 
 def test_reading_tiers_writes_nothing(conn):
     sid = get_or_create_student(conn, "Zane")

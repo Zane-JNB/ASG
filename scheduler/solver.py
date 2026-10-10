@@ -207,7 +207,7 @@ def _add_night(plan: _Plan, rule: SleepRule) -> _Night:
 
 
 def _guard_sleep_target(plan: _Plan, nights: list[_Night], placed: list[_Task]) -> None:
-    """Target sleep is never traded for a task the student hasn't let use it (#11). Sleep below
+    """Target sleep is never traded for a task the student hasn't let use it. Sleep below
     what the nights allow costs sleep_target_penalty (_add_night). The part of it beyond the time of
     the planned tasks that may use it (each session plus a break on either side) also costs more
     per slot than any task can gain from that slot, so sleep below target never adds up to more

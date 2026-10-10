@@ -78,7 +78,7 @@ def test_invalid_commutes_rejected(kw):
     with pytest.raises((ValidationError, ValueError)):
         Commute(**{**dict(start_time="07:00", length_minutes=30), **kw})
 def test_commute_dates_and_times_use_the_shared_checks():
-    # "20261005" used to pass unchecked and never match a plan day (#15)
+    # "20261005" used to pass unchecked and never match a plan day
     c = Commute(start_time="7:05", length_minutes=30, date="20261005")
     assert (c.start_time, c.date) == ("07:05", "2026-10-05")
     assert [b.day for b in expand_commutes([c], anchor())] == [0]
