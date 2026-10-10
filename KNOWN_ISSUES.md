@@ -46,3 +46,25 @@ fixes are in `git log`); the list is renumbered when that happens.
 13. Deferred from the G8 review: `task_manager.run_menu` takes three ways to set the time (`today`,
     `now`, `clock`). One injectable `clock` would do, but about 35 test calls pass `today=`/`now=`;
     change them together.
+
+## From the full-workspace review (2026-10-10)
+
+14. `db.record_plan_sessions` deletes only sessions with `start_at > now` (minute text). A plan made
+    at exactly a slot boundary (e.g. 10:00:00) keeps the old 10:00 session and can insert a new one
+    at the same slot: a duplicate, or a stale session that later triggers a wrong check-in.
+15. `TimeRange` checks `end > start` on rounded-down slots, so a real block inside one 15-minute slot
+    (10:05-10:10) is rejected, and `extraction_from_dict` drops it without a word. Tied to how block
+    ends are rounded (the end-slot fix may resolve it).
+16. `fit_check.build_fit_inputs`: the "start range must fit" line runs after the
+    `plan_horizon_max_days` cap, so one very long task (e.g. 1000 hours) stretches the window past
+    the maximum and can make the solver time out.
+17. `preferences._threshold_change` only tries the full voted step. If that step makes the settings
+    invalid (e.g. sleep target below the minimum) the evidence is consumed as AT_LIMIT, even when a
+    smaller valid move (up to the limit) exists.
+18. `import_flow._close_past_tasks` asks done/missed before the incomplete-PDF and clash prompts and
+    before duplicate skipping, so the answers can be thrown away (e.g. re-importing the same syllabus).
+19. `dropping.cut_combos` prunes by `need` only after building each combination; when no
+    combination frees enough room, the whole space (~288k combos for 120 options, 3 actions) is
+    walked in Python without spending a check, so `max_checks` never stops it.
+20. `db.has_saved_items` fetches every row (with `data_json`) of all four planner tables just to
+    test existence, and `build_fit_inputs` reads them all again. Use `SELECT 1 ... LIMIT 1`.
