@@ -7,11 +7,10 @@ from datetime import date, datetime
 from scheduler.add_with_fit import add_task_with_fit
 from scheduler.db import add_dated_block, add_extracted_task, connect, get_or_create_student, get_plan_cuts, load_settings
 from scheduler.llm_backends import is_backend_failure
-from scheduler.models import (
-    DatedBlock, Exam, ExtractedTask, FixedBlock, SleepRule, StudyPlanRule, slot_to_time, time_to_slot,
-)
+from scheduler.models import DatedBlock, DynamicTask, ExtractedTask, FixedBlock
+from scheduler.units import clock_range, time_to_slot
 from scheduler.reflection_cycle import apply_and_log, get_proposals, rerun_schedule
-from scheduler.solver import build_schedule, generate_study_tasks, sleep_warnings, task_warnings
+from scheduler.solver import build_schedule, sleep_warnings, task_warnings
 from scheduler.planner import format_plan, plan_from_saved
 
 DB_PATH = ":memory:"
@@ -20,9 +19,7 @@ NUM_DAYS = 5  # today through the exam
 
 def print_schedule(items):
     for item in items:
-        start = slot_to_time(item.start_slot)
-        end = slot_to_time(item.end_slot % (24 * 4))  # wrap midnight-crossing back to a clock time
-        print(f"  Day {item.day}  {start}-{end}  [{item.kind}]  {item.title}")
+        print(f"  Day {item.day}  {clock_range(item.start_slot, item.end_slot)}  [{item.kind}]  {item.title}")
 
 
 def print_warnings(warnings):
@@ -48,12 +45,12 @@ def demo_reflection():
                   start_slot=time_to_slot("14:00"), end_slot=time_to_slot("18:00"), day=2),
     ]
 
-    exams = [
-        Exam(title="Systems Analysis Midterm", day=4, slot=time_to_slot("09:00"),
-             difficulty=4, priority=4),
-    ]
     settings = load_settings(conn, student_id)
-    tasks = generate_study_tasks(exams, rule=StudyPlanRule(), settings=settings)
+    tasks = [
+        DynamicTask(title="Study: Systems Analysis Midterm", duration_slots=24, priority=4, difficulty=4,
+                    max_session_slots=settings.default_max_session_slots,
+                    deadline_day=4, deadline_slot=time_to_slot("09:00")),
+    ]
 
     sleep_rules = [settings.default_sleep_rule(night=n) for n in range(NUM_DAYS)]
 

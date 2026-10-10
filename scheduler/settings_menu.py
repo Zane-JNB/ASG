@@ -1,5 +1,5 @@
 from scheduler.menu_input import ask_until, pick                      
-from scheduler.models import MINUTES_PER_SLOT, SLOTS_PER_DAY, slot_to_time, time_to_slot
+from scheduler.units import MINUTES_PER_SLOT, SLOTS_PER_DAY, slot_to_time, slots_to_hours, time_to_slot
 from scheduler.preference_policy import POLICY, Tier
 from scheduler.preferences import (APPROVAL_ASK, APPROVAL_AUTO, Actor, PreferenceError, _check_may_edit,  
                                    change_tier, get_approval_mode, get_effective, get_ownership,
@@ -60,7 +60,7 @@ def _rating(s):
     if not 1 <= n <= 5: raise ValueError("enter 1-5, or 'none'")
     return n
 
-def _fmt_hours(v): return f"{v * MINUTES_PER_SLOT / 60:g} h"
+def _fmt_hours(v): return f"{slots_to_hours(v):g} h"
 def _fmt_minutes(v): return f"{v * MINUTES_PER_SLOT} min"
 def _fmt_clock(v): return slot_to_time(v % SLOTS_PER_DAY) + (" (after midnight)" if v >= SLOTS_PER_DAY else "")
 def _fmt_bool(v): return "on" if v else "off"

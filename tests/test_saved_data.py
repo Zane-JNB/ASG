@@ -9,7 +9,8 @@ from scheduler.db import (
     get_weekly_patterns,
 )
 from scheduler.fit_check import build_fit_inputs
-from scheduler.models import ExtractedTask, SLOTS_PER_DAY
+from scheduler.models import ExtractedTask
+from scheduler.units import SLOTS_PER_DAY
 from scheduler.planner import plan_from_saved
 from scheduler.review import review_extraction
 from scheduler.task_manager import prompt_new_task, run_menu

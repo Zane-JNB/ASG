@@ -2,15 +2,15 @@ import math
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from scheduler.commutes import commute_overlaps, expand_commutes, overlap_warnings
-from scheduler.calendar_utils import build_plan_inputs, extracted_task_to_dynamic_task, find_overlaps
+from scheduler.calendar_utils import expand_fixed_blocks, extracted_task_to_dynamic_task, find_overlaps
 from scheduler.db import (
     get_commutes, get_dated_blocks, get_extracted_tasks, get_plan_cuts, get_unreadable_items, get_weekly_patterns,
     load_settings,
 )
-from scheduler.drop_review import _h
+from scheduler.units import MINUTES_PER_SLOT, SLOTS_PER_DAY, clock_range, format_hours, slot_to_time
 from scheduler.models import (
-    DynamicTask, ExtractedTask, FixedBlock, MINUTES_PER_SLOT, PlanAnchor, ProfileSettings,
-    SLOTS_PER_DAY, ScheduleWarning, SleepRule, slot_to_time,)
+    DynamicTask, ExtractedTask, FixedBlock, PlanAnchor, ProfileSettings, ScheduleWarning, SleepRule,
+)
 
 def _planned_and_overdue(conn, student_id: int, anchor: PlanAnchor, now: datetime, session: int):
     """One pass over the saved open tasks: ([(saved task id, DynamicTask)] with plan cuts
@@ -38,7 +38,7 @@ def _planned_and_overdue(conn, student_id: int, anchor: PlanAnchor, now: datetim
         if remaining < task.duration_slots:
             warnings.append(ScheduleWarning(
                 severity="soft", kind="task_cut",
-                message=f"'{saved.title}' is planned at {_h(remaining)} of its {_h(task.duration_slots)} "
+                message=f"'{saved.title}' is planned at {format_hours(remaining)} of its {format_hours(task.duration_slots)} "
                         "(cut to make room for another task)."))
         planned.append((task_id, task.model_copy(update={"duration_slots": remaining, "saved_id": task_id})))
     return planned, warnings
@@ -124,9 +124,8 @@ def overlap_lines(start_date, overlaps) -> list[str]:
     lines = []
     for a, b in overlaps[:MAX_OVERLAPS_SHOWN]:
         d = start_date + timedelta(days=a.day)
-        lines.append(f"{d:%a %d %b}: '{a.title}' {slot_to_time(a.start_slot)}-"
-                     f"{slot_to_time(a.end_slot % SLOTS_PER_DAY)} overlaps '{b.title}' "
-                     f"{slot_to_time(b.start_slot)}-{slot_to_time(b.end_slot % SLOTS_PER_DAY)}")
+        lines.append(f"{d:%a %d %b}: '{a.title}' {clock_range(a.start_slot, a.end_slot)} "
+                     f"overlaps '{b.title}' {clock_range(b.start_slot, b.end_slot)}")
     if len(overlaps) > MAX_OVERLAPS_SHOWN:
         lines.append(f"...and {len(overlaps) - MAX_OVERLAPS_SHOWN} more overlap(s)")
     return lines
@@ -194,7 +193,7 @@ def build_fit_inputs(conn, student_id: int, now: datetime,
     dated = [b for _, b in get_dated_blocks(conn, student_id)]
     commutes = [c for _, c in get_commutes(conn, student_id)]
     look = PlanAnchor(start_date=today, num_days=num_days + 1)
-    classes, _ = build_plan_inputs(patterns, dated, [], look)
+    classes = expand_fixed_blocks(patterns, dated, look)
     commute_blocks = expand_commutes(commutes, look)
     morning_after = [b for b in classes + commute_blocks if b.day == num_days]
     fixed = [b for b in classes if b.day < num_days]

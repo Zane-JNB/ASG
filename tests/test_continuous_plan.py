@@ -5,7 +5,8 @@ import pytest
 from scheduler.db import (
     add_dated_block, add_extracted_task, add_weekly_pattern, connect, get_or_create_student, add_commute
 )
-from scheduler.models import DatedBlock, ExtractedTask, WeeklyPattern, Commute, time_to_slot
+from scheduler.models import DatedBlock, ExtractedTask, WeeklyPattern, Commute
+from scheduler.units import time_to_slot
 from scheduler.planner import plan_from_saved
 
 D = date(2026, 10, 5)  # a Monday

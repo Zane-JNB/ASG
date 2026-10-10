@@ -8,8 +8,9 @@ from scheduler.db import add_commute, add_dated_block, connect, get_or_create_st
 from scheduler.dropping import _sleep_sacrificed
 from scheduler.fit_check import build_fit_inputs
 from scheduler.models import (
-    Commute, DatedBlock, DynamicTask, FixedBlock, ProfileSettings, ScheduledItem, SLOTS_PER_DAY, SleepRule,
+    Commute, DatedBlock, DynamicTask, FixedBlock, ProfileSettings, ScheduledItem, SleepRule,
 )
+from scheduler.units import SLOTS_PER_DAY
 from scheduler.solver import build_schedule, reachable_sleep, sleep_warnings
 
 RULE = dict(earliest_bed=88, preferred_bed=88, latest_bed=88, length_slots=32, min_slots=24)  # bed 22:00

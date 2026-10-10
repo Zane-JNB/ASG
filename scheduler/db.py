@@ -4,7 +4,7 @@ from datetime import date, datetime, timezone
 
 from pydantic import BaseModel, ValidationError
 from scheduler.preference_policy import POLICY, Tier
-from scheduler.models import ProfileSettings, FixedBlock, DynamicTask, Exam, WeeklyPattern, DatedBlock, ExtractedTask, ExtractionResult,Commute
+from scheduler.models import ProfileSettings, FixedBlock, DynamicTask, WeeklyPattern, DatedBlock, ExtractedTask, ExtractionResult,Commute
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS students (
@@ -394,18 +394,6 @@ def delete_task(conn: sqlite3.Connection, student_id: int, task_id: int) -> bool
 
 def clear_tasks(conn: sqlite3.Connection, student_id: int) -> int:
     return _clear_items(conn, "tasks", student_id)
-
-def add_exam(conn: sqlite3.Connection, student_id: int, exam: Exam) -> int:
-    return _add_item(conn, "exams", student_id, exam)
-
-def get_exams(conn: sqlite3.Connection, student_id: int) -> list[tuple[int, Exam]]:
-    return _get_items(conn, "exams", student_id, Exam)
-
-def delete_exam(conn: sqlite3.Connection, student_id: int, exam_id: int) -> bool:
-    return _delete_item(conn, "exams", student_id, exam_id)
-
-def clear_exams(conn: sqlite3.Connection, student_id: int) -> int:
-    return _clear_items(conn, "exams", student_id)
 
 def add_weekly_pattern(conn, student_id: int, item: WeeklyPattern) -> int:   
     return _add_item(conn, "weekly_patterns", student_id, item)

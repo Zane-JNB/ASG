@@ -5,8 +5,8 @@ from scheduler.db import (
     clear_plan_cut, clear_task_sessions, due_sessions, get_extracted_tasks, load_settings,
     mark_sessions_asked, record_plan_sessions, reduce_plan_cut, update_extracted_task,
 )
-from scheduler.drop_review import _h
-from scheduler.models import MINUTES_PER_SLOT, PlanAnchor, SLOTS_PER_DAY
+from scheduler.units import MINUTES_PER_SLOT, SLOTS_PER_DAY, format_hours
+from scheduler.models import PlanAnchor
 from scheduler.restore import plan_restores
 from scheduler.review import _confirm
 from scheduler.task_filter import wants_reminder
@@ -38,7 +38,7 @@ def finish_task(conn, student_id: int, task_id: int, now: datetime, ask=input, s
     titles = {i: t.title for i, t in get_extracted_tasks(conn, student_id)}
     show("That frees up time. These tasks can get hours back:")
     for tid, slots in restores.items():
-        show(f"  - '{titles[tid]}' +{_h(slots)}")
+        show(f"  - '{titles[tid]}' +{format_hours(slots)}")
     if not _confirm(ask, "Restore them?", True):
         return {"restored": {}}
     for tid, slots in restores.items():

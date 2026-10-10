@@ -1,7 +1,8 @@
 from datetime import datetime, timedelta
 from scheduler.fit_check import build_fit_inputs
 from scheduler.db import has_saved_items
-from scheduler.models import PlanAnchor, SLOTS_PER_DAY, slot_to_time
+from scheduler.models import PlanAnchor
+from scheduler.units import clock_range
 from scheduler.solver import build_schedule, sleep_warnings, task_warnings
 
 
@@ -31,7 +32,7 @@ def format_plan(anchor: PlanAnchor, fixed, items, warnings) -> list[str]:
             d = anchor.start_date + timedelta(days=day)
             lines.append(f"{d:%a %d %b %Y}")
             last_day = day
-        lines.append(f"  {slot_to_time(start)}-{slot_to_time(end % SLOTS_PER_DAY)}  [{kind}]  {title}")
+        lines.append(f"  {clock_range(start, end)}  [{kind}]  {title}")
     if warnings:
         lines.append("Warnings:")
         lines += [f"  [{w.severity}] {w.kind}: {w.message}" for w in warnings]

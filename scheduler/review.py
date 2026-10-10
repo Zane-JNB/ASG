@@ -1,9 +1,8 @@
 import math
 from datetime import date, datetime 
 from pydantic import ValidationError  
-from scheduler.models import (
-    ExtractedTask, ExtractionResult, WeeklyPattern, DatedBlock, MINUTES_PER_SLOT, _check_due_time, time_to_slot,
-) 
+from scheduler.models import ExtractedTask, ExtractionResult, WeeklyPattern, DatedBlock
+from scheduler.units import MINUTES_PER_SLOT, parse_due_time, parse_weekday, slots_to_hours, time_to_slot
 
 
 def hours_to_slots(hours: float) -> int:   
@@ -46,9 +45,6 @@ def _missed(ask, show, prompt: str) -> bool:
             return raw == "m"
         show("Type d or m.")
 
-_DAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
-
-
 def _time(s: str) -> str:  #   -- "9:00" -> "09:00"; ValueError if not a real time
     return datetime.strptime(s, "%H:%M").strftime("%H:%M")
 
@@ -59,18 +55,11 @@ def _due(s: str) -> tuple[str, str | None]:  #   -- "2026-10-02" or "2026-10-02 
     clock = clock.strip()
     if not clock:
         return _date(day), None
-    return _date(day), _check_due_time(clock)
+    return _date(day), parse_due_time(clock)
 
 
 def _date(s: str) -> str:  #   -- the models store dates as plain strings, so check them here
     return date.fromisoformat(s).isoformat()
-
-
-def _day(s: str) -> str:  #   -- "monday" -> "Mon"
-    d = s.strip().capitalize()[:3]
-    if d not in _DAYS:
-        raise ValueError(f"day must be one of {', '.join(_DAYS)}")
-    return d
 
 
 def _hours(s: str) -> int:  #   -- typed as hours, stored as slots
@@ -79,7 +68,7 @@ def _hours(s: str) -> int:  #   -- typed as hours, stored as slots
 
 #   -- what can be edited per item type: (prompt label, model field, parser)
 _EDIT_FIELDS = {
-    WeeklyPattern: [("title", "title", str), ("day", "day", _day),
+    WeeklyPattern: [("title", "title", str), ("day", "day", parse_weekday),
                     ("start HH:MM", "start_time", _time), ("end HH:MM", "end_time", _time)],
     DatedBlock: [("title", "title", str), ("date YYYY-MM-DD", "date", _date),
                  ("start HH:MM", "start_time", _time), ("end HH:MM", "end_time", _time)],
@@ -93,12 +82,12 @@ def _current(item, key: str):
     value = getattr(item, key)
     if key == "date" and isinstance(item, ExtractedTask):
         return item.due_label()
-    return f"{value * MINUTES_PER_SLOT / 60:g}" if key == "duration_slots" else value
+    return f"{slots_to_hours(value):g}" if key == "duration_slots" else value
 
 
 def _describe(kind: str, item, session_cap: int | None = None) -> str:   
     if kind == "Task":
-        hours = item.duration_slots * MINUTES_PER_SLOT / 60
+        hours = slots_to_hours(item.duration_slots)
         if not item.splittable:   
             note = ", one block"
         elif session_cap and item.duration_slots > session_cap:
@@ -125,7 +114,7 @@ def _edit_item(item, ask, show, session_cap: int | None):
                     changes[key] = parse(raw)
             if isinstance(item, ExtractedTask) and session_cap:  #   -- only long tasks can be split
                 if changes.get("duration_slots", item.duration_slots) > session_cap:
-                    cap_h = session_cap * MINUTES_PER_SLOT / 60
+                    cap_h = slots_to_hours(session_cap)
                     changes["splittable"] = _confirm(
                         ask, f"  Can it be split into sessions of up to {cap_h:g}h? (n = one block)", item.splittable)
             return type(item).model_validate({**item.model_dump(), **changes})
@@ -174,7 +163,7 @@ def review_extraction(result: ExtractionResult, ask=input, show=print, session_c
     if result.tasks:
         show("Task hours/priority/difficulty are placeholder guesses -- fix any that are off.")
         if session_cap and any(t.duration_slots > session_cap for t in result.tasks):   
-            cap_h = session_cap * MINUTES_PER_SLOT / 60
+            cap_h = slots_to_hours(session_cap)
             show(f"Tasks longer than {cap_h:g}h are marked 'can be split' into sessions -- "
                  "pick one and edit it to make it a single block instead.")
 

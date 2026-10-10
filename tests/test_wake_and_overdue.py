@@ -8,7 +8,8 @@ from scheduler.db import (
     get_or_create_student,
 )
 from scheduler.fit_check import build_fit_inputs
-from scheduler.models import Commute, DatedBlock, ExtractedTask, SLOTS_PER_DAY
+from scheduler.models import Commute, DatedBlock, ExtractedTask
+from scheduler.units import SLOTS_PER_DAY
 from scheduler.planner import plan_from_saved
 
 D = date(2026, 10, 5)  # a Monday

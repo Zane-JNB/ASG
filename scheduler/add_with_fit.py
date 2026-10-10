@@ -2,7 +2,8 @@ from dataclasses import replace
 from datetime import datetime
 from scheduler.db import add_extracted_task
 from scheduler.drop_apply import apply_drop_choice
-from scheduler.drop_review import _h, choose_drop_proposal, choose_automatic
+from scheduler.drop_review import choose_drop_proposal, choose_automatic
+from scheduler.units import format_hours
 from scheduler.dropping import already_unplaced, propose_drops
 from scheduler.fit_check import build_fit_inputs
 from scheduler.models import ExtractedTask
@@ -74,9 +75,9 @@ def add_task_with_fit(conn, student_id: int, new_task: ExtractedTask, now: datet
     else:
         show(f"Added '{new_task.title}'.")
         for a in choice.actions:
-            show(f"  For this plan only: '{a.title}' -{_h(a.slots_lost)} (its saved hours are unchanged)")
+            show(f"  For this plan only: '{a.title}' -{format_hours(a.slots_lost)} (its saved hours are unchanged)")
         if choice.new_task_slots_cut:   
             full_slots = new_task.duration_slots
-            show(f"  For this plan only: '{new_task.title}' is planned at {_h(full_slots - choice.new_task_slots_cut)} "
-                 f"(saved as {_h(full_slots)})")
+            show(f"  For this plan only: '{new_task.title}' is planned at {format_hours(full_slots - choice.new_task_slots_cut)} "
+                 f"(saved as {format_hours(full_slots)})")
     return summary

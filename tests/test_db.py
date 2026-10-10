@@ -111,9 +111,8 @@ def test_connect_is_idempotent():
 from scheduler.db import (  
     add_fixed_block, get_fixed_blocks, delete_fixed_block, clear_fixed_blocks,  
     add_task, get_tasks, delete_task, clear_tasks,  
-    add_exam, get_exams, delete_exam, clear_exams,  
 )  
-from scheduler.models import FixedBlock, DynamicTask, Exam   
+from scheduler.models import FixedBlock, DynamicTask
 
 
 def test_add_and_get_fixed_blocks(conn):  
@@ -134,15 +133,6 @@ def test_add_and_get_tasks(conn):
     assert len(tasks) == 1  
     assert tasks[0][1].title == "Essay"   
     assert tasks[0][1].duration_slots == 8  
-
-
-def test_add_and_get_exams(conn):   
-    sid = get_or_create_student(conn, "Zane")  
-    add_exam(conn, sid, Exam(title="Midterm", day=5, difficulty=4))   
-
-    exams = get_exams(conn, sid)   
-    assert len(exams) == 1   
-    assert exams[0][1].title == "Midterm"  
 
 
 def test_items_returned_oldest_first(conn):   
@@ -193,24 +183,18 @@ def test_items_isolated_between_students(conn):
     sid2 = get_or_create_student(conn, "Priya")  
     add_fixed_block(conn, sid1, FixedBlock(title="Zane's class", start_slot=0, end_slot=10))  
     add_task(conn, sid1, DynamicTask(title="Zane's task", duration_slots=4, priority=1, difficulty=1))  
-    add_exam(conn, sid1, Exam(title="Zane's exam", day=1, difficulty=1))  
 
     assert get_fixed_blocks(conn, sid2) == []  
     assert get_tasks(conn, sid2) == []  
-    assert get_exams(conn, sid2) == []  
 
 
 def test_tasks_and_exams_support_delete_and_clear_too(conn):  
     sid = get_or_create_student(conn, "Zane")  
     tid = add_task(conn, sid, DynamicTask(title="A", duration_slots=4, priority=1, difficulty=1))  
     add_task(conn, sid, DynamicTask(title="B", duration_slots=4, priority=1, difficulty=1))  
-    eid = add_exam(conn, sid, Exam(title="X", day=1, difficulty=1))  
 
     assert delete_task(conn, sid, tid) is True  
     assert len(get_tasks(conn, sid)) == 1  
-
-    assert clear_exams(conn, sid) == 1  
-    assert get_exams(conn, sid) == []  
 
     assert clear_tasks(conn, sid) == 1  
     assert get_tasks(conn, sid) == []  
@@ -230,10 +214,6 @@ def test_round_trip_preserves_all_fields(conn):
     _, reloaded_task = get_tasks(conn, sid)[0]  
     assert reloaded_task == task  
 
-    exam = Exam(title="Complex exam", day=7, slot=40, difficulty=5, priority=5)  
-    add_exam(conn, sid, exam)  
-    _, reloaded_exam = get_exams(conn, sid)[0]  
-    assert reloaded_exam == exam  
 
 def test_migration_backfills_old_evidence_rows_once(tmp_path):
     import sqlite3

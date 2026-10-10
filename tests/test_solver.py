@@ -1,6 +1,13 @@
 import pytest
-from scheduler.models import DynamicTask, FixedBlock, SLOTS_PER_DAY, SleepRule
-from scheduler.solver import Exam, generate_study_tasks, build_schedule, ProfileSettings, merge_fixed_spans,sleep_warnings,split_sizes, StudyPlanRule, task_warnings
+from scheduler.models import DynamicTask, FixedBlock, SleepRule
+from scheduler.units import SLOTS_PER_DAY
+from scheduler.solver import build_schedule, ProfileSettings, merge_fixed_spans,sleep_warnings,split_sizes, task_warnings
+
+def _study(title, duration, difficulty, earliest, deadline, deadline_slot=SLOTS_PER_DAY):
+    """A multi-day study task, capped at 4h a day in 2h sessions."""
+    return DynamicTask(title=f"Study: {title}", duration_slots=duration, priority=4, difficulty=difficulty,
+                       max_session_slots=8, max_daily_slots=16, earliest_start_day=earliest,
+                       deadline_day=deadline, deadline_slot=deadline_slot)
 
 def test_solver_never_overlaps():
     blocks = [FixedBlock(title="Class", start_slot=8, end_slot=16)]
@@ -201,23 +208,8 @@ def test_missed_deadline_gives_hard_warning():
     _, unscheduled = build_schedule([block], [task], num_days=2)  
     assert [(w.severity, w.kind) for w in task_warnings(unscheduled)] == [("hard", "task_unscheduled")]  
 
-def test_generate_study_tasks_sizes_by_band():  
-    exams = [Exam(title="Hard test", day=9, difficulty=5)]
-    tasks = generate_study_tasks(exams)
-    band = StudyPlanRule().hard
-    assert tasks[0].duration_slots == round(band.min_hours_per_day * band.days_before * 4)
-    assert tasks[0].max_session_slots == 8  # 2h default, independent of band.max_hours_per_day
-    assert tasks[0].deadline_day == 9
-    assert tasks[0].earliest_start_day == 9 - band.days_before
-
-def test_generate_study_tasks_session_cap_can_be_overridden():  
-    exams = [Exam(title="Test", day=9, difficulty=5)]
-    tasks = generate_study_tasks(exams, max_session_slots=16)  # explicit 4h override
-    assert tasks[0].max_session_slots == 16
-
 def test_consecutive_study_sessions_prefer_different_days():  
-    exams = [Exam(title="Hard test", day=8, difficulty=5)]  # 7-day window, plenty of room to spread
-    tasks = generate_study_tasks(exams)
+    tasks = [_study("Hard test", 56, 5, earliest=1, deadline=8)]  # 7-day window, plenty of room to spread
     items, unscheduled = build_schedule([], tasks, num_days=9)
     assert unscheduled == []
     days_used = sorted({i.day for i in items if i.kind == "task"})
@@ -225,8 +217,7 @@ def test_consecutive_study_sessions_prefer_different_days():
 
 def test_same_day_sessions_allowed_when_window_is_tight():
     # only 1 day of room -- both 2h sessions must double up, but 4h stays within the 4h/day cap
-    exams = [Exam(title="Rushed", day=0, difficulty=1)]  # easy band, window collapses to day 0
-    tasks = generate_study_tasks(exams)
+    tasks = [_study("Rushed", 16, 1, earliest=0, deadline=0)]  # window collapses to day 0
     items, unscheduled = build_schedule([], tasks, num_days=1)
     assert unscheduled == []
     study_items = [i for i in items if i.kind == "task"]
@@ -247,30 +238,22 @@ def test_daily_cap_ignored_when_not_set():
     items, unscheduled = build_schedule([], [task], num_days=1)
     assert unscheduled == []
 
-def test_generate_study_tasks_clamps_earliest_day_to_zero():  
-    exams = [Exam(title="Soon", day=1, difficulty=5)]  # hard band wants 7 days before, but day 1 - 7 < 0
-    tasks = generate_study_tasks(exams)
-    assert tasks[0].earliest_start_day == 0
-
 def test_study_task_does_not_start_before_its_window():  
-    exams = [Exam(title="Test", day=6, difficulty=3)]  # medium: 5 days before -> earliest day 1
-    tasks = generate_study_tasks(exams)
+    tasks = [_study("Test", 40, 3, earliest=1, deadline=6)]
     items, unscheduled = build_schedule([], tasks, num_days=7)
     assert unscheduled == []
     for item in items:
         assert item.day >= 1
 
 def test_study_task_finishes_before_the_exam():  
-    exams = [Exam(title="Test", day=3, difficulty=1, slot=32)]  # easy, deadline day 3 slot 32
-    tasks = generate_study_tasks(exams)
+    tasks = [_study("Test", 16, 1, earliest=1, deadline=3, deadline_slot=32)]
     items, unscheduled = build_schedule([], tasks, num_days=4)
     assert unscheduled == []
     for item in items:
         assert item.day * SLOTS_PER_DAY + item.end_slot <= 3 * SLOTS_PER_DAY + 32
 
 def test_two_exams_generate_two_independent_study_tasks():  
-    exams = [Exam(title="A", day=5, difficulty=1), Exam(title="B", day=10, difficulty=5)]
-    tasks = generate_study_tasks(exams)
+    tasks = [_study("A", 16, 1, earliest=3, deadline=5), _study("B", 56, 5, earliest=3, deadline=10)]
     items, unscheduled = build_schedule([], tasks, num_days=11)
     assert unscheduled == []
     titles = {i.title.split(" (")[0] for i in items}
@@ -288,10 +271,9 @@ def test_time_limit_too_short_raises_clear_error():
     for day in range(14):
         fixed_blocks.append(FixedBlock(title="Course A", start_slot=32, end_slot=44, day=day))
         fixed_blocks.append(FixedBlock(title="Lab", start_slot=56, end_slot=64, day=day))
-    exams = [Exam(title="Quiz 1", day=4, difficulty=1),
-             Exam(title="Midterm A", day=9, difficulty=4),
-             Exam(title="Midterm B", day=12, difficulty=5)]
-    tasks = generate_study_tasks(exams) + [
+    tasks = [_study("Quiz 1", 16, 1, earliest=2, deadline=4),
+             _study("Midterm A", 56, 4, earliest=2, deadline=9),
+             _study("Midterm B", 56, 5, earliest=5, deadline=12)] + [
         DynamicTask(title=f"Assignment {n}", duration_slots=8 + (n % 3) * 4,
                    priority=(n % 5) + 1, difficulty=(n % 5) + 1,
                    deadline_day=3 + n, deadline_slot=96)
@@ -344,16 +326,9 @@ def test_profile_settings_default_sleep_rule_allows_override():
 
 def test_custom_settings_change_solver_behavior():
     low_spread = ProfileSettings(same_day_penalty=1)
-    exams = [Exam(title="Hard test", day=8, difficulty=5)]
-    tasks = generate_study_tasks(exams, settings=low_spread)
+    tasks = [_study("Hard test", 56, 5, earliest=1, deadline=8)]
     items, unscheduled = build_schedule([], tasks, num_days=9, settings=low_spread)
     assert unscheduled == []
-
-def test_custom_settings_change_default_max_session_slots():
-    custom = ProfileSettings(default_max_session_slots=16)  # 4h instead of 2h
-    exams = [Exam(title="Test", day=9, difficulty=5)]
-    tasks = generate_study_tasks(exams, settings=custom)
-    assert tasks[0].max_session_slots == 16
 
 def test_settings_defaults_to_profile_settings_when_omitted():
     tasks = [DynamicTask(title="A", duration_slots=4, priority=3, difficulty=2)]

@@ -1,14 +1,7 @@
 import pytest
 from pydantic import ValidationError
-from scheduler.models import DynamicTask, time_to_slot, slot_to_time, FixedBlock, SleepRule, Exam, StudyPlanRule
-
-def test_time_to_slot():
-    assert time_to_slot("00:00") == 0
-    assert time_to_slot("09:30") == 38
-    assert time_to_slot("23:45") == 95
-
-def test_slot_to_time_roundtrip():
-    assert slot_to_time(38) == "09:30"
+from scheduler.models import DynamicTask, FixedBlock, SleepRule
+from scheduler.units import time_to_slot
 
 def test_task_rejects_bad_priority():
     with pytest.raises(ValidationError):
@@ -29,18 +22,6 @@ def test_sleep_rule_min_cannot_exceed_length():
 def test_sleep_rule_preferred_bed_must_be_in_window(): 
     with pytest.raises(ValidationError): 
         SleepRule(earliest_bed=88, preferred_bed=80, latest_bed=100)  
-
-def test_study_plan_rule_bands_by_difficulty():
-    rule = StudyPlanRule()  
-    assert rule.band_for(1) is rule.easy
-    assert rule.band_for(2) is rule.easy
-    assert rule.band_for(3) is rule.medium
-    assert rule.band_for(4) is rule.hard
-    assert rule.band_for(5) is rule.hard
-
-def test_study_band_rejects_min_over_max():
-    with pytest.raises(ValidationError):
-        StudyPlanRule(easy=dict(days_before=2, min_hours_per_day=5, max_hours_per_day=3))
 
 def test_earliest_start_defaults_to_none():  
     task = DynamicTask(title="x", duration_slots=4, priority=1, difficulty=1)
@@ -80,3 +61,12 @@ def test_times_are_stored_zero_padded_so_they_sort():
 def test_non_ascii_digits_are_rejected():
     with pytest.raises(ValueError):
         _WP(title="x", day="Mon", start_time="٩:30", end_time="10:00")
+
+
+def test_fixed_block_span_and_overlap_use_the_continuous_axis():
+    late = FixedBlock(title="Shift", day=0, start_slot=88, end_slot=104)  # 22:00-02:00
+    early = FixedBlock(title="Class", day=1, start_slot=4, end_slot=12)  # 01:00-03:00
+    after = FixedBlock(title="Next", day=1, start_slot=12, end_slot=16)
+    assert late.span == (88, 104) and early.span == (100, 108)
+    assert late.overlaps(early) and early.overlaps(late)
+    assert not early.overlaps(after)  # back to back is fine

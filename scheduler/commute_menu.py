@@ -1,13 +1,12 @@
 import re
 from datetime import date
 
-from scheduler.calendar_utils import weekday_name
 from scheduler.db import add_commute, delete_commute, get_commutes, skip_commute_date, update_commute
 from scheduler.menu_input import ask_until, pick
 from scheduler.models import Commute
-from scheduler.review import _confirm, _date, _day
+from scheduler.review import _confirm, _date
+from scheduler.units import WEEKDAYS, parse_weekday, weekday_name
 
-_DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 
 def _clock(s: str) -> str:
     try:
@@ -28,10 +27,10 @@ def _minutes(s: str) -> int:
     return n
 
 def _weekdays(s: str) -> list[str]:
-    names = [_day(t) for t in re.split(r"[,\s]+", s.strip()) if t]
+    names = [parse_weekday(t) for t in re.split(r"[,\s]+", s.strip()) if t]
     if not names:
         raise ValueError("enter at least one weekday")
-    return sorted(set(names), key=_DAYS.index)
+    return sorted(set(names), key=WEEKDAYS.index)
 
 def _describe(c: Commute) -> str:
     if not c.recurring:
@@ -46,7 +45,7 @@ def _describe(c: Commute) -> str:
 def _sorted(conn, student_id: int):
     def key(item):
         c = item[1]
-        return (not c.recurring, _DAYS.index(c.weekday) if c.recurring else 0, c.date or "", c.start_time)
+        return (not c.recurring, WEEKDAYS.index(c.weekday) if c.recurring else 0, c.date or "", c.start_time)
     return sorted(get_commutes(conn, student_id), key=key)
 
 def _show_list(items, show) -> None:

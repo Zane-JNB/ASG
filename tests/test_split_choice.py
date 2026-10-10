@@ -46,8 +46,8 @@ def test_old_saved_tasks_without_the_field_load_as_splittable():
 
 
 def test_the_choice_reaches_the_solver_task():
-    assert extracted_task_to_dynamic_task(_task(splittable=False), D).splittable is False
-    assert extracted_task_to_dynamic_task(_task(splittable=True), D).splittable is True
+    assert extracted_task_to_dynamic_task(_task(splittable=False), D, 8).splittable is False
+    assert extracted_task_to_dynamic_task(_task(splittable=True), D, 8).splittable is True
 
 
 def test_short_tasks_are_not_asked_about_splitting():

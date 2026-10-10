@@ -5,7 +5,7 @@ from scheduler.models import (
     DropAction, DropProposal, DropReport, DynamicTask, FixedBlock,
     ProfileSettings, SleepRule,
 )
-from scheduler.models import SLOTS_PER_DAY
+from scheduler.units import SLOTS_PER_DAY
 from scheduler.solver import build_schedule, merge_fixed_spans, reachable_sleep, sleep_warnings, split_sizes   
 
 def chunk_sizes(task):   

@@ -4,7 +4,8 @@ from scheduler.db import (
     delete_extracted_task, delete_unreadable_item, get_extracted_tasks, get_unreadable_items,
     update_extracted_task, load_settings
 )
-from scheduler.models import DynamicTask, ExtractedTask, MINUTES_PER_SLOT, _check_time   
+from scheduler.models import DynamicTask, ExtractedTask
+from scheduler.units import parse_time, slots_to_hours
 from scheduler.review import _confirm, _describe, _due, _hours, _missed
 from scheduler.completion import finish_task, run_checkin   
 from scheduler.task_filter import describe_reminders   
@@ -51,7 +52,7 @@ def prompt_new_task(ask=input, show=print, today: date | None = None, session_ca
         if date.fromisoformat(typed.date) < today:  # plans start from today, so an earlier date is never planned
             raise ValueError("due date must be today or later")
         clock = s.strip().partition(" ")[2].strip()
-        if clock and _check_time(clock, end=True) != typed.due_time or typed.date != d:
+        if clock and parse_time(clock, end=True) != typed.due_time or typed.date != d:
             show(f"  Saved as due {typed.due_label()} (plans run in 15-minute steps).")
         return typed.date, typed.due_time
 
@@ -59,7 +60,7 @@ def prompt_new_task(ask=input, show=print, today: date | None = None, session_ca
     due, due_time = _ask_field(ask, show, "due date YYYY-MM-DD (add HH:MM if it has a time)", future_due)
     fields = {"title": title, "date": due, "due_time": due_time}
     for label, key, parse, default in (
-        ("hours", "duration_slots", _hours, f"{_DEFAULT.duration_slots * 15 / 60:g}"),
+        ("hours", "duration_slots", _hours, f"{slots_to_hours(_DEFAULT.duration_slots):g}"),
         ("priority 1-5", "priority", _rating, _DEFAULT.priority),
         ("difficulty 1-5", "difficulty", _rating, _DEFAULT.difficulty),
     ):
@@ -68,7 +69,7 @@ def prompt_new_task(ask=input, show=print, today: date | None = None, session_ca
             fields[key] = value
     task = ExtractedTask(**fields)
     if task.duration_slots > session_cap:  #   -- splitting only matters for tasks longer than one session
-        hours, cap = task.duration_slots * MINUTES_PER_SLOT / 60, session_cap * MINUTES_PER_SLOT / 60
+        hours, cap = slots_to_hours(task.duration_slots), slots_to_hours(session_cap)
         can = _confirm(ask, f"  {hours:g}h is longer than a {cap:g}h session. Can it be split across several sessions?", True)
         task = task.model_copy(update={"splittable": can})
     return task
@@ -198,7 +199,7 @@ def run_menu(conn, student_id, ask=input, show=print, today: date | None = None,
                 show(f"Enter a number between 1 and {len(tasks)}.")
         elif choice == "t":  #   -- how long each session of a task lasts by default
             settings = load_settings(conn, student_id)
-            now_h = settings.default_max_session_slots * MINUTES_PER_SLOT / 60
+            now_h = slots_to_hours(settings.default_max_session_slots)
             raw = ask(f"Longest single session in hours [{now_h:g}] (Enter to keep): ").strip()
             if raw:
                 try:
@@ -211,7 +212,7 @@ def run_menu(conn, student_id, ask=input, show=print, today: date | None = None,
                 except PreferenceError as e:
                     show(str(e))
                     continue
-                show(f"Saved -- tasks are now planned in sessions of up to {slots * MINUTES_PER_SLOT / 60:g}h.")
+                show(f"Saved -- tasks are now planned in sessions of up to {slots_to_hours(slots):g}h.")
         elif choice == "m":   
             run_commute_menu(conn, student_id, ask, show, today)
         elif choice == "p":                                        

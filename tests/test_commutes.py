@@ -1,7 +1,7 @@
 from datetime import date
 import pytest
 from pydantic import ValidationError
-from scheduler.commutes import (commute_overlaps, commute_to_block, expand_commute, expand_commutes, overlap_warnings,)
+from scheduler.commutes import commute_overlaps, commute_to_block, expand_commutes, overlap_warnings
 from scheduler.models import Commute, FixedBlock, PlanAnchor
 
 MON = date(2026, 10, 5)  # a Monday
@@ -17,23 +17,23 @@ def test_fixedblock_buffer_before_defaults_true():
     assert FixedBlock(title="x", start_slot=0, end_slot=1).buffer_before is True
 
 def test_recurring_expands_only_matching_weekday():
-    blocks = expand_commute(recurring(), anchor(14))
+    blocks = expand_commutes([recurring()], anchor(14))
     assert [b.day for b in blocks] == [0, 7]
     assert all(b.buffer_before is False for b in blocks)
 
 def test_one_time_expands_once():
     c = Commute(start_time="07:00", length_minutes=30, date="2026-10-07")
-    assert [b.day for b in expand_commute(c, anchor())] == [2]
+    assert [b.day for b in expand_commutes([c], anchor())] == [2]
 
 def test_one_time_outside_window_gives_nothing():
     c = Commute(start_time="07:00", length_minutes=30, date="2027-01-01")
-    assert expand_commute(c, anchor()) == []
+    assert expand_commutes([c], anchor()) == []
 
 def test_end_date_stops_recurrence():
-    assert [b.day for b in expand_commute(recurring(end_date="2026-10-05"), anchor(14))] == [0]
+    assert [b.day for b in expand_commutes([recurring(end_date="2026-10-05")], anchor(14))] == [0]
 
 def test_skip_date_removes_one_occurrence():
-    assert [b.day for b in expand_commute(recurring(skip_dates=["2026-10-12"]), anchor(14))] == [0]
+    assert [b.day for b in expand_commutes([recurring(skip_dates=["2026-10-12"])], anchor(14))] == [0]
 
 def test_two_commutes_same_day():
     blocks = expand_commutes([recurring(), recurring(start_time="16:30", length_minutes=60)], anchor(7))
