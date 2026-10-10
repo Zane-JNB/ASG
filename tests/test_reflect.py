@@ -162,3 +162,13 @@ def test_model_answering_in_the_wrong_format_offers_a_retry_and_logs_nothing(mon
     out = capsys.readouterr().out
     assert "didn't match" in out and "Try again? Your text is kept." in out
     assert get_reflections(conn, get_or_create_student(conn, "Zane")) == []
+
+
+def test_a_preference_error_is_our_bug_not_a_backend_failure(monkeypatch, conn):  # #20
+    from scheduler.llm_backends import is_backend_failure
+    from scheduler.preferences import PreferenceError
+    assert not is_backend_failure(PreferenceError("'Break time' is protected and can't be changed."))
+    _fail_first(monkeypatch, PreferenceError("'Break time' is protected and can't be changed."))
+    feed_inputs(monkeypatch, ["y", "Zane", "felt rushed today"])  # no "try again?" is asked
+    with pytest.raises(PreferenceError):
+        reflect.main()

@@ -45,8 +45,9 @@ class Actor(str, Enum):
     INTERNAL = "internal"  # developer/app code
 
 
-class PreferenceError(ValueError):
-    pass
+class PreferenceError(Exception):
+    """A settings change our own rules refuse (tiers, limits), with a message for the student.
+    Not a ValueError, so entry points never mistake it for a bad answer from the LLM."""
 
 
 def _policy(field: str) -> FieldPolicy:
