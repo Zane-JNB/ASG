@@ -8,7 +8,7 @@ from scheduler.db import (
 from scheduler.units import MINUTES_PER_SLOT, SLOTS_PER_DAY, format_hours
 from scheduler.models import PlanAnchor
 from scheduler.restore import plan_restores
-from scheduler.review import _confirm
+from scheduler.prompts import confirm
 from scheduler.task_filter import wants_reminder
 
 
@@ -40,7 +40,7 @@ def finish_task(conn, student_id: int, task_id: int, now: datetime, ask=input, s
     show("That frees up time. These tasks can get hours back:")
     for tid, slots in restores.items():
         show(f"  - '{titles[tid]}' +{format_hours(slots)}")
-    if not _confirm(ask, "Restore them?", True):
+    if not confirm(ask, "Restore them?", True):
         return {"restored": {}}
     with transaction(conn):
         for tid, slots in restores.items():
@@ -90,7 +90,7 @@ def run_checkin(conn, student_id: int, now: datetime, ask=input, show=print) -> 
     for c in checkins:
         when = datetime.fromisoformat(c.ended)
         show(f"Your time for '{c.title}' ended {when:%a %d %b %H:%M}.")
-        if _confirm(ask, f"Did you finish '{c.title}'?", False):
+        if confirm(ask, f"Did you finish '{c.title}'?", False):
             finish_task(conn, student_id, c.task_id, now, ask, show)
         else:
             mark_sessions_asked(conn, student_id, c.task_id, _iso(now))

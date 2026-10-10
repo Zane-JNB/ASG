@@ -15,7 +15,8 @@ from scheduler.models import (
     DatedBlock, DynamicTask, ExtractedTask, ExtractionResult, FixedBlock,
     ProfileSettings, SleepRule,
 )
-from scheduler.review import _describe, review_extraction
+from scheduler.prompts import describe_task
+from scheduler.review import review_extraction
 from scheduler.solver import PlanFrame
 from scheduler.task_manager import prompt_new_task, run_menu
 
@@ -216,6 +217,6 @@ def test_import_flow_uses_the_students_session_length(tmp_path, conn, sid):
 
 def test_describe_only_says_can_be_split_when_given_a_session_length():
     t = ExtractedTask(title="Report", date="2026-10-05", duration_slots=24)
-    assert "can be split" not in _describe("Task", t)
-    assert "can be split" in _describe("Task", t, 8)
-    assert "one block" in _describe("Task", t.model_copy(update={"splittable": False}), 8)
+    assert "can be split" not in describe_task(t)
+    assert "can be split" in describe_task(t, 8)
+    assert "one block" in describe_task(t.model_copy(update={"splittable": False}), 8)

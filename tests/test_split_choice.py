@@ -6,7 +6,7 @@ from scheduler.calendar_utils import extracted_task_to_dynamic_task
 from scheduler.db import EXTRACTED_TASKS, connect, get_or_create_student
 from scheduler.models import ExtractedTask, ExtractionResult
 from scheduler.planner import plan_from_saved
-from scheduler.review import _describe
+from scheduler.prompts import describe_task
 from scheduler.task_manager import prompt_new_task, run_menu
 
 TODAY = date(2026, 9, 28)
@@ -120,5 +120,5 @@ def test_update_only_touches_the_owners_task(conn, sid):
 
 
 def test_list_line_marks_one_block_tasks_only():
-    assert "one block" in _describe("Task", _task(splittable=False))
-    assert "one block" not in _describe("Task", _task(splittable=True))
+    assert "one block" in describe_task(_task(splittable=False))
+    assert "one block" not in describe_task(_task(splittable=True))

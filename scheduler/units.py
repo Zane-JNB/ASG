@@ -86,6 +86,14 @@ def slots_to_hours(slots: int) -> float:
     return slots * MINUTES_PER_SLOT / 60
 
 
+def hours_to_slots(hours: float) -> int:
+    """1.5 -> 6. Rounds to the nearest 15 minutes (halves round up); minimum one slot."""
+    slots = math.floor(hours * 60 / MINUTES_PER_SLOT + 0.5)
+    if slots < 1:
+        raise ValueError("duration must be at least 15 minutes")
+    return slots
+
+
 def format_hours(slots: int) -> str:
     """7 -> '1h 45m', 4 -> '1h', 2 -> '30m', 0 -> '0m'."""
     h, m = divmod(slots * MINUTES_PER_SLOT, 60)

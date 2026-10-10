@@ -11,7 +11,8 @@ from scheduler.fit_check import overlap_lines
 from scheduler.llm_backends import is_backend_failure
 from scheduler.models import ExtractionResult, PlanAnchor
 from scheduler.paths import CACHE_PATH
-from scheduler.review import _confirm, _missed, review_extraction
+from scheduler.prompts import ask_missed, confirm
+from scheduler.review import review_extraction
 from scheduler.schedule_extraction import extract_schedule
 from scheduler.pdf_extraction import PartialExtraction, extract_schedule_from_pdf
 
@@ -76,7 +77,7 @@ def _load_result(source_path, ask, show, extractor, cache_path):
             show(f"'{source_path}' could not be opened as a PDF.")
             return None, [], None
         page_note = f" This PDF has {num_pages} page(s); each may use its own call."
-    if not _confirm(ask, f"Groq (free tier, but a real API call).{page_note} Continue?", default=False):
+    if not confirm(ask, f"Groq (free tier, but a real API call).{page_note} Continue?", default=False):
         show("Aborted.")
         return None, [], None
     failed = []
@@ -120,7 +121,7 @@ def _close_past_tasks(reviewed: ExtractionResult, now: datetime, ask, show) -> t
         if task.completed_at or task.due_at() > now:
             tasks.append(task)
             continue
-        missed = _missed(ask, show, f"'{task.title}' was due {task.due_label()}.")
+        missed = ask_missed(ask, show, f"'{task.title}' was due {task.due_label()}.")
         tasks.append(task.model_copy(update={"completed_at": now.isoformat(timespec="minutes"), "missed": missed}))
         closed += 1
     return reviewed.model_copy(update={"tasks": tasks}), closed
@@ -165,7 +166,7 @@ def run_import(conn, student_id, source_path, ask=input, show=print,
         show("Nothing kept. Your saved schedule is untouched.")
         return False
     reviewed, closed = _close_past_tasks(reviewed, now, ask, show)
-    if failed and not _confirm(ask, f"Page(s) {pages} weren't read, so this import is "
+    if failed and not confirm(ask, f"Page(s) {pages} weren't read, so this import is "
                                "incomplete. Saving replaces your saved classes with only what was read. "
                                "Save anyway?", default=False):
         show("Not saved. Your saved schedule is untouched."
@@ -177,7 +178,7 @@ def run_import(conn, student_id, source_path, ask=input, show=print,
         show("WARNING -- these overlap your saved classes/sessions:")
         for line in clashes:
             show(f"  {line}")
-        if not _confirm(ask, "Save anyway? Both are kept and plans avoid both (with a warning).", default=False):
+        if not confirm(ask, "Save anyway? Both are kept and plans avoid both (with a warning).", default=False):
             show("Not saved. Your saved schedule is untouched.")
             return False
 
