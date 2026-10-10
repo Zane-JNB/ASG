@@ -1,18 +1,28 @@
+"""The CP-SAT scheduler: places tasks and sleep around fixed blocks on one multi-day slot axis."""
 import math
+from dataclasses import dataclass, field
 from ortools.sat.python import cp_model
 from scheduler.models import (
     DynamicTask, FixedBlock, ProfileSettings, ScheduledItem, ScheduleWarning, SleepRule,
 )
 from scheduler.units import SLOTS_PER_DAY, format_hours, slot_to_time
 
-#Splits tasks into chunks no larger than the student's preference.
+
 def split_sizes(duration: int, max_session: int) -> list[int]:
     """Fewest, most even chunks that are each <= max_session."""
     n = math.ceil(duration / max_session)
     base, extra = divmod(duration, n)
     return [base + 1] * extra + [base] * (n - extra)
 
-def merge_fixed_spans(blocks: list[FixedBlock]) -> list[tuple[int, int, bool]]:   
+
+def chunk_sizes(task: DynamicTask) -> list[int]:
+    """The sessions a task is planned in: even chunks if the student lets it split, else one block."""
+    if task.splittable:
+        return split_sizes(task.duration_slots, task.max_session_slots)
+    return [task.duration_slots]
+
+
+def merge_fixed_spans(blocks: list[FixedBlock]) -> list[tuple[int, int, bool]]:
     """Union overlapping fixed spans on the absolute slot axis. Touching spans stay separate."""
     spans = sorted((b.day * SLOTS_PER_DAY + b.start_slot,
                     b.day * SLOTS_PER_DAY + b.end_slot, b.buffer_before) for b in blocks)
@@ -20,239 +30,230 @@ def merge_fixed_spans(blocks: list[FixedBlock]) -> list[tuple[int, int, bool]]:
     for s, e, buf in spans:
         if merged and s < merged[-1][1]:
             ps, pe, pbuf = merged[-1]
-            merged[-1] = (ps, max(pe, e), pbuf or buf if s == ps else pbuf)   
+            merged[-1] = (ps, max(pe, e), pbuf or buf if s == ps else pbuf)
         else:
             merged.append((s, e, buf))
     return merged
 
-def build_schedule(fixed_blocks: list[FixedBlock], tasks: list[DynamicTask],
-                buffer_slots: int | None = None , num_days: int = 1,
-                sleep_rules: list[SleepRule] | None = None,
-                time_limit_seconds: float | None = 30.0, #Optimal->Use it. Time up, but feasible plan found. Else RunTime Error.
-                settings: ProfileSettings | None = None): 
-    
-    settings = settings or ProfileSettings()
-    model = cp_model.CpModel()
-    buffer_slots = settings.buffer_slots if buffer_slots is None else buffer_slots
-    intervals = []
 
-    fixed_block_bounds = [] #(abs_start, abs_end) per fixed block, for the buffer-after rule below
-    flush_intervals = []  #  spans a task may end flush against (buffer_before=False)
-    sleep_intervals = []   
+@dataclass
+class _Chunk:
+    start: cp_model.IntVar
+    size: int
+
+
+@dataclass
+class _Task:
+    task: DynamicTask
+    present: cp_model.IntVar
+    chunks: list[_Chunk]
+
+
+@dataclass
+class _Night:
+    start: cp_model.IntVar
+    size: cp_model.IntVar
+
+
+@dataclass
+class _Plan:
+    """One CP-SAT model being built, shared by the build steps below."""
+    num_days: int
+    settings: ProfileSettings
+    model: cp_model.CpModel = field(default_factory=cp_model.CpModel)
+    spaced: list = field(default_factory=list)  # never overlap: tasks (+ buffer after), blocks, sleep + wake buffer
+    flush: list = field(default_factory=list)  # blocks a task may end right against: only sleep must avoid them
+    sleep: list = field(default_factory=list)
+    block_spans: list = field(default_factory=list)  # (start, end) of each merged block, for the buffer after it
+    costs: list = field(default_factory=list)  # scaled like the presence bonus (see _set_objective)
+
+    @property
+    def horizon(self) -> int:
+        return self.num_days * SLOTS_PER_DAY
+
+
+def build_schedule(fixed_blocks: list[FixedBlock], tasks: list[DynamicTask], num_days: int = 1,
+                   sleep_rules: list[SleepRule] | None = None,
+                   time_limit_seconds: float | None = 30.0,
+                   settings: ProfileSettings | None = None):
+    """(scheduled items, tasks that did not fit). With a time limit, the best plan found by then is
+    used; RuntimeError if there is none."""
+    sleep_rules = sleep_rules or []
+    _check_days(fixed_blocks, sleep_rules, num_days)
+    plan = _Plan(num_days, settings or ProfileSettings())
+    _add_fixed_blocks(plan, fixed_blocks)
+    placed = [_add_task(plan, i, task) for i, task in enumerate(tasks)]
+    nights = [_add_night(plan, rule) for rule in sleep_rules if not rule.skip]  # skipped: free for tasks
+    plan.model.AddNoOverlap(plan.spaced)
+    plan.model.AddNoOverlap(plan.flush + plan.sleep)
+    _add_buffer_after_blocks(plan, placed)
+    _set_objective(plan, placed)
+    solver = _solve(plan.model, time_limit_seconds)
+    return _read_back(solver, fixed_blocks, nights, placed)
+
+
+def _check_days(fixed_blocks: list[FixedBlock], sleep_rules: list[SleepRule], num_days: int) -> None:
     for block in fixed_blocks:
         if block.day >= num_days:
-            raise ValueError(
-                f"'{block.title}' is on day {block.day}, but the plan has {num_days} day(s)"
-            )
+            raise ValueError(f"'{block.title}' is on day {block.day}, but the plan has {num_days} day(s)")
+    seen = set()
+    for rule in sleep_rules:
+        if rule.night >= num_days:
+            raise ValueError(f"sleep rule is for night {rule.night}, but the plan has {num_days} day(s)")
+        if rule.night in seen:
+            raise ValueError(f"two sleep rules for night {rule.night}")
+        seen.add(rule.night)
 
-    for k, (start, end, buffer_before) in enumerate(merge_fixed_spans(fixed_blocks)):   
-        iv = model.NewFixedSizeIntervalVar(start, end - start, f"fixed_{k}")   
-        (intervals if buffer_before else flush_intervals).append(iv)   
-        fixed_block_bounds.append((start, end))   
- 
-    # tasks: each becomes one or more chunks the solver places
-    placed = []  # (task, is_present, [(start_expr, size), ...])
-    spread_cost = []  #  penalty for two sessions of the same task on the same day
-    for i, task in enumerate(tasks):
-        is_present = model.NewBoolVar(f"present_{i}")
- 
-        if task.splittable:
-            sizes = split_sizes(task.duration_slots, task.max_session_slots)
-        else:
-            sizes = [task.duration_slots]
- 
-        chunks = []
-        chunk_days = []
-        earliest = 0
-        if task.earliest_start_day is not None:
-            earliest = task.earliest_start_day * SLOTS_PER_DAY + task.earliest_start_slot
-        for j, size in enumerate(sizes):
-            lower = earliest if j == 0 else 0  # later chunks are bounded by the ordering constraint instead
-            start = model.NewIntVar(lower, num_days * SLOTS_PER_DAY - size, f"start_{i}_{j}")
- 
-            intervals.append(
-                model.NewOptionalFixedSizeIntervalVar(
-                    start, size + buffer_slots, is_present, f"task_{i}_{j}"
-                )
-            )
- 
-            # rule: finish before the deadline
-            if task.deadline_day is not None:
-                deadline_end = task.deadline_day * SLOTS_PER_DAY + task.deadline_slot
-                model.Add(start + size <= deadline_end).OnlyEnforceIf(is_present)
- 
-            # rule: parts of one task stay in order
-            if chunks:
-                prev_start, prev_size = chunks[-1]
-                model.Add(
-                    start >= prev_start + prev_size + buffer_slots
-                ).OnlyEnforceIf(is_present)
 
-                prev_day = chunk_days[-1][0]
-                # model.AddDivisionEquality(prev_day, prev_start, SLOTS_PER_DAY)
-                this_day = model.NewIntVar(0, num_days - 1, f"day_{i}_{j}")
-                model.AddDivisionEquality(this_day, start, SLOTS_PER_DAY)
-                same_day = model.NewBoolVar(f"same_day_{i}_{j}") 
-                model.Add(prev_day == this_day).OnlyEnforceIf(same_day) 
-                model.Add(prev_day != this_day).OnlyEnforceIf(same_day.Not())
-                spread_cost.append(settings.same_day_penalty * same_day)
-            else:
-                this_day = model.NewIntVar(0, num_days - 1, f"day_{i}_{j}")  # first chunk's day
-                model.AddDivisionEquality(this_day, start, SLOTS_PER_DAY)
+def _add_fixed_blocks(plan: _Plan, blocks: list[FixedBlock]) -> None:
+    """Blocks never overlap anything (two blocks may be back to back)."""
+    for k, (start, end, buffer_before) in enumerate(merge_fixed_spans(blocks)):
+        iv = plan.model.NewFixedSizeIntervalVar(start, end - start, f"fixed_{k}")
+        (plan.spaced if buffer_before else plan.flush).append(iv)
+        plan.block_spans.append((start, end))
 
-            chunk_days.append((this_day, size))
-            chunks.append((start, size))
 
-            
-        if task.max_daily_slots is not None and len(chunk_days) > 1:  # : cap this task's per-day total
-            for d in range(num_days):
-                on_day = []
-                for day_var, size in chunk_days:
-                    b = model.NewBoolVar(f"on_day_{i}_{d}_{len(on_day)}")
-                    model.Add(day_var == d).OnlyEnforceIf(b)
-                    model.Add(day_var != d).OnlyEnforceIf(b.Not())
-                    on_day.append((b, size))
-                model.Add(
-                    sum(size * b for b, size in on_day) <= task.max_daily_slots
-                ).OnlyEnforceIf(is_present)
-        placed.append((task, is_present, chunks))
- 
-    # sleep: one flexible interval per night (the solver picks bedtime and length) 
-    sleep_placed = []  # (rule, start, size) 
-    sleep_cost = []  #   terms subtracted from the objective
-    seen_nights = set()  
-    for rule in sleep_rules or []:  
-        if rule.night >= num_days: 
-            raise ValueError(  
-                f"sleep rule is for night {rule.night}, but the plan has {num_days} day(s)"  
-            )   
-        if rule.night in seen_nights:  
-            raise ValueError(f"two sleep rules for night {rule.night}")   
-        seen_nights.add(rule.night)   
-        if rule.skip:  #    no sleep interval at all: the night is free for tasks
-            continue   
- 
-        base = rule.night * SLOTS_PER_DAY   
-        start = model.NewIntVar(   
-            base + rule.earliest_bed, base + rule.latest_bed, f"sleep_start_{rule.night}"   
-        )   
-        size = model.NewIntVar(0, rule.length_slots, f"sleep_size_{rule.night}")   
-        end = model.NewIntVar(  
-            base + rule.earliest_bed, base + rule.latest_bed + rule.length_slots,  
-            f"sleep_end_{rule.night}",  
-        )  
-        model.Add(end == start + size)   
-        if rule.latest_wake is not None:  # e.g. an early class the morning after the plan ends
-            model.Add(end <= base + rule.latest_wake)
-        # nothing starts within the wake buffer after waking (sleep never had the normal buffer
-        # after it, so 0 keeps the old behaviour); a night with no sleep gets no buffer
-        wake_buffer = settings.wake_buffer_slots
-        slept = model.NewBoolVar(f"slept_{rule.night}")
-        model.Add(size >= 1).OnlyEnforceIf(slept)
-        model.Add(size == 0).OnlyEnforceIf(slept.Not())
-        ready_end = model.NewIntVar(base + rule.earliest_bed,
-                                    base + rule.latest_bed + rule.length_slots + wake_buffer,
-                                    f"ready_end_{rule.night}")
-        ready_size = model.NewIntVar(0, rule.length_slots + wake_buffer, f"ready_size_{rule.night}")
-        model.Add(ready_size == size + wake_buffer * slept)
-        # optional: a night with no room for sleep takes up no time (a hard warning, not a crash)
-        sleep_iv = model.NewOptionalIntervalVar(start, ready_size, ready_end, slept,
-                                                f"sleep_and_ready_{rule.night}")
-        intervals.append(sleep_iv)   
-        sleep_intervals.append(sleep_iv)      
- 
-        # how far below the minimum (0 if the minimum is met)
-        shortfall = model.NewIntVar(0, rule.min_slots, f"sleep_short_{rule.night}")   
-        model.Add(shortfall >= rule.min_slots - size)  
-        # how far the bedtime is from the preferred one
-        drift = model.NewIntVar(0, 2 * SLOTS_PER_DAY, f"bed_drift_{rule.night}")   
-        model.AddAbsEquality(drift, start - (base + rule.preferred_bed))   
- 
-        sleep_cost.append(settings.sleep_min_penalty * shortfall)  
-        sleep_cost.append(settings.sleep_target_penalty * (rule.length_slots - size))   
-        sleep_cost.append(settings.bedtime_penalty * drift)   
-        sleep_placed.append((rule, start, size))   
- 
-    for bi, (bs, be) in enumerate(fixed_block_bounds):
-        for i, (task, is_present, chunks) in enumerate(placed):
-            for j, (start, size) in enumerate(chunks):
-                after_block = model.NewBoolVar(f"after_block_{bi}_{i}_{j}")
-                model.Add(start >= be + buffer_slots).OnlyEnforceIf([is_present, after_block])
-                model.Add(start + size <= bs).OnlyEnforceIf([is_present, after_block.Not()])
-    model.AddNoOverlap(intervals)
-    model.AddNoOverlap(flush_intervals + sleep_intervals)
- 
-    # goal: fit as many high-priority tasks as possible, and place them early.
-    # "early" is averaged per chunk (everything else is scaled by the most chunks any task has),
-    # so a task with many late chunks never costs more than fitting it is worth
-    scale = max([len(chunks) for _, _, chunks in placed], default=1)
-    model.Maximize(
-        scale * sum(task.priority * settings.presence_bonus * present for task, present, _ in placed)
-        - sum(task.priority * sum(start for start, _ in chunks) for task, _, chunks in placed)
-        - scale * sum(sleep_cost)
-        - scale * sum(spread_cost)
-    )
- 
+def _add_buffer_after_blocks(plan: _Plan, placed: list["_Task"]) -> None:
+    """Every task chunk ends before a block, or starts the normal buffer after it."""
+    model, buffer = plan.model, plan.settings.buffer_slots
+    for bi, (bs, be) in enumerate(plan.block_spans):
+        for i, p in enumerate(placed):
+            for j, chunk in enumerate(p.chunks):
+                after = model.NewBoolVar(f"after_block_{bi}_{i}_{j}")
+                model.Add(chunk.start >= be + buffer).OnlyEnforceIf([p.present, after])
+                model.Add(chunk.start + chunk.size <= bs).OnlyEnforceIf([p.present, after.Not()])
+
+
+def _add_task(plan: _Plan, i: int, task: DynamicTask) -> _Task:
+    """One optional interval per session: in order, before the deadline, with the buffer after each."""
+    model, buffer = plan.model, plan.settings.buffer_slots
+    present = model.NewBoolVar(f"present_{i}")
+    earliest = 0
+    if task.earliest_start_day is not None:
+        earliest = task.earliest_start_day * SLOTS_PER_DAY + task.earliest_start_slot
+    chunks = []
+    for j, size in enumerate(chunk_sizes(task)):
+        lower = earliest if j == 0 else 0  # later chunks are bounded by the order rule instead
+        start = model.NewIntVar(lower, plan.horizon - size, f"start_{i}_{j}")
+        plan.spaced.append(model.NewOptionalFixedSizeIntervalVar(start, size + buffer, present, f"task_{i}_{j}"))
+        if task.deadline_day is not None:
+            deadline = task.deadline_day * SLOTS_PER_DAY + task.deadline_slot
+            model.Add(start + size <= deadline).OnlyEnforceIf(present)
+        if chunks:
+            prev = chunks[-1]
+            model.Add(start >= prev.start + prev.size + buffer).OnlyEnforceIf(present)
+        chunks.append(_Chunk(start, size))
+    if len(chunks) > 1:
+        _add_days(plan, i, task, present, chunks)
+    return _Task(task, present, chunks)
+
+
+def _add_days(plan: _Plan, i: int, task: DynamicTask, present, chunks: list[_Chunk]) -> None:
+    """A split task: a cost for two sessions on the same day, and its own daily cap."""
+    model = plan.model
+    days = []
+    for j, chunk in enumerate(chunks):
+        day = model.NewIntVar(0, plan.num_days - 1, f"day_{i}_{j}")
+        model.AddDivisionEquality(day, chunk.start, SLOTS_PER_DAY)
+        days.append(day)
+    for j in range(1, len(days)):
+        same_day = model.NewBoolVar(f"same_day_{i}_{j}")
+        model.Add(days[j - 1] == days[j]).OnlyEnforceIf(same_day)
+        model.Add(days[j - 1] != days[j]).OnlyEnforceIf(same_day.Not())
+        plan.costs.append(plan.settings.same_day_penalty * same_day)
+    if task.max_daily_slots is None:
+        return
+    for d in range(plan.num_days):
+        on_day = []
+        for j, (day, chunk) in enumerate(zip(days, chunks)):
+            b = model.NewBoolVar(f"on_day_{i}_{d}_{j}")
+            model.Add(day == d).OnlyEnforceIf(b)
+            model.Add(day != d).OnlyEnforceIf(b.Not())
+            on_day.append(chunk.size * b)
+        model.Add(sum(on_day) <= task.max_daily_slots).OnlyEnforceIf(present)
+
+
+def _add_night(plan: _Plan, rule: SleepRule) -> _Night:
+    """One flexible interval: the solver picks bedtime and length. Nothing starts within the wake
+    buffer after waking; a night with no room for sleep takes no time and gets no buffer (a hard
+    warning, not a crash)."""
+    model, s, n = plan.model, plan.settings, rule.night
+    base = n * SLOTS_PER_DAY
+    start = model.NewIntVar(base + rule.earliest_bed, base + rule.latest_bed, f"sleep_start_{n}")
+    size = model.NewIntVar(0, rule.length_slots, f"sleep_size_{n}")
+    if rule.latest_wake is not None:  # e.g. an early class the morning after the plan ends
+        model.Add(start + size <= base + rule.latest_wake)
+    slept = model.NewBoolVar(f"slept_{n}")
+    model.Add(size >= 1).OnlyEnforceIf(slept)
+    model.Add(size == 0).OnlyEnforceIf(slept.Not())
+    ready_size = model.NewIntVar(0, rule.length_slots + s.wake_buffer_slots, f"ready_size_{n}")
+    model.Add(ready_size == size + s.wake_buffer_slots * slept)
+    ready_end = model.NewIntVar(base + rule.earliest_bed,
+                                base + rule.latest_bed + rule.length_slots + s.wake_buffer_slots, f"ready_end_{n}")
+    iv = model.NewOptionalIntervalVar(start, ready_size, ready_end, slept, f"sleep_and_ready_{n}")
+    plan.spaced.append(iv)
+    plan.sleep.append(iv)
+
+    shortfall = model.NewIntVar(0, rule.min_slots, f"sleep_short_{n}")  # below the minimum
+    model.Add(shortfall >= rule.min_slots - size)
+    drift = model.NewIntVar(0, 2 * SLOTS_PER_DAY, f"bed_drift_{n}")  # away from the preferred bedtime
+    model.AddAbsEquality(drift, start - (base + rule.preferred_bed))
+    plan.costs += [s.sleep_min_penalty * shortfall,
+                   s.sleep_target_penalty * (rule.length_slots - size),
+                   s.bedtime_penalty * drift]
+    return _Night(start, size)
+
+
+def _set_objective(plan: _Plan, placed: list[_Task]) -> None:
+    """Fit as many high-priority tasks as possible, and place them early. "Early" is averaged per
+    chunk (everything else is scaled by the most chunks any task has), so a task with many late
+    chunks never costs more than fitting it is worth."""
+    scale = max((len(p.chunks) for p in placed), default=1)
+    bonus = sum(p.task.priority * plan.settings.presence_bonus * p.present for p in placed)
+    lateness = sum(p.task.priority * sum(c.start for c in p.chunks) for p in placed)
+    plan.model.Maximize(scale * bonus - lateness - scale * sum(plan.costs))
+
+
+def _solve(model: cp_model.CpModel, time_limit_seconds: float | None) -> cp_model.CpSolver:
     solver = cp_model.CpSolver()
-    if time_limit_seconds is not None: 
-        solver.parameters.max_time_in_seconds = time_limit_seconds 
+    if time_limit_seconds is not None:
+        solver.parameters.max_time_in_seconds = time_limit_seconds
     status = solver.Solve(model)
-    if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
-        if status == cp_model.UNKNOWN:  #hit the time limit before finding any feasible plan
-            raise RuntimeError(  
-                f"No schedule found within {time_limit_seconds}s "  
-                "(too many tasks/constraints for the time limit -- try raising it or simplifying the plan)"  
-            )  
-        raise RuntimeError("No valid schedule (check your fixed blocks and sleep rules)")
- 
-    items = [
-        ScheduledItem(
-            title=b.title,
-            start_slot=b.start_slot,
-            end_slot=b.end_slot,
-            kind="fixed",
-            day=b.day,
+    if status == cp_model.UNKNOWN:  # hit the time limit before finding any feasible plan
+        raise RuntimeError(
+            f"No schedule found within {time_limit_seconds}s "
+            "(too many tasks/constraints for the time limit -- try raising it or simplifying the plan)"
         )
-        for b in fixed_blocks
-    ]
- 
-    for rule, start, size in sleep_placed:   
-        length = solver.Value(size)  
-        if length == 0:  #    no room at all; sleep_warnings will report it
-            continue   
-        day, offset = divmod(solver.Value(start), SLOTS_PER_DAY)   
-        items.append(   
-            ScheduledItem(   
-                title="Sleep", start_slot=offset, end_slot=offset + length,   
-                kind="sleep", day=day,   
-            )   
-        )   
- 
+    if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+        raise RuntimeError("No valid schedule (check your fixed blocks and sleep rules)")
+    return solver
+
+
+def _item(title: str, abs_start: int, length: int, kind: str, saved_id: int | None = None) -> ScheduledItem:
+    day, offset = divmod(abs_start, SLOTS_PER_DAY)
+    return ScheduledItem(title=title, start_slot=offset, end_slot=offset + length, kind=kind, day=day,
+                         saved_id=saved_id)
+
+
+def _read_back(solver: cp_model.CpSolver, fixed_blocks: list[FixedBlock], nights: list[_Night],
+               placed: list[_Task]) -> tuple[list[ScheduledItem], list[DynamicTask]]:
+    items = [ScheduledItem(title=b.title, start_slot=b.start_slot, end_slot=b.end_slot, kind="fixed", day=b.day)
+             for b in fixed_blocks]
+    for night in nights:
+        length = solver.Value(night.size)
+        if length:  # 0 = no room at all; sleep_warnings reports it
+            items.append(_item("Sleep", solver.Value(night.start), length, "sleep"))
     unscheduled = []
-    for task, present, chunks in placed:
-        if not solver.Value(present):
-            unscheduled.append(task)
+    for p in placed:
+        if not solver.Value(p.present):
+            unscheduled.append(p.task)
             continue
-        for j, (start, size) in enumerate(chunks):
-            day, offset = divmod(solver.Value(start), SLOTS_PER_DAY)
-            title = (
-                task.title
-                if len(chunks) == 1
-                else f"{task.title} ({j + 1}/{len(chunks)})"
-            )
-            items.append(
-                ScheduledItem(
-                    title=title,
-                    start_slot=offset,
-                    end_slot=offset + size,
-                    kind="task",
-                    day=day,
-                    saved_id=task.saved_id,
-                )
-            )
- 
+        for j, chunk in enumerate(p.chunks):
+            title = p.task.title if len(p.chunks) == 1 else f"{p.task.title} ({j + 1}/{len(p.chunks)})"
+            items.append(_item(title, solver.Value(chunk.start), chunk.size, "task", p.task.saved_id))
     items.sort(key=lambda i: (i.day, i.start_slot))
     return items, unscheduled
+
 
 def reachable_sleep(rule: SleepRule) -> int:
     """The most sleep this night allows: the target, unless latest_wake caps it (going to bed
@@ -263,72 +264,52 @@ def reachable_sleep(rule: SleepRule) -> int:
         return rule.length_slots
     return max(0, min(rule.length_slots, rule.latest_wake - rule.earliest_bed))
 
-def sleep_warnings(sleep_rules: list[SleepRule],   
-                   items: list[ScheduledItem]) -> list[ScheduleWarning]:   
-    """Check the finished plan against each night's rule and report anything given up."""   
-    warnings = []   
-    for rule in sorted(sleep_rules, key=lambda r: r.night):   
-        label = f"Night {rule.night}"   
-        if rule.skip:   
-            warnings.append(ScheduleWarning(   
-                severity="hard", kind="sleep_skipped",   
-                message=f"{label}: sleep skipped. Tasks may run through the night.",   
-            ))   
-            continue   
- 
-        # find this night's sleep item: its start falls inside this night's bedtime window
-        base = rule.night * SLOTS_PER_DAY   
-        found = None   
-        for item in items:   
-            abs_start = item.day * SLOTS_PER_DAY + item.start_slot   
-            if (item.kind == "sleep"   
-                    and base + rule.earliest_bed <= abs_start <= base + rule.latest_bed):   
-                found = item   
-                break   
- 
-        length = 0 if found is None else found.end_slot - found.start_slot
-        why = ""  # an early start the morning after the plan can be the cause, not the plan itself
-        woke_at_cap = rule.latest_wake is not None and (
-            found.day * SLOTS_PER_DAY + found.end_slot - base == rule.latest_wake if found is not None
-            else reachable_sleep(rule) == 0)  # the cap left no room for any sleep
-        if rule.latest_wake_reason and woke_at_cap:  # the next morning's start is what ended it
-            why = f" It has to end by then: {rule.latest_wake_reason}."   
-        if length < rule.min_slots:   
-            warnings.append(ScheduleWarning(   
-                severity="hard", kind="sleep_short",   
-                message=(f"{label}: only {format_hours(length)} of sleep fits, below your minimum "   
-                         f"of {format_hours(rule.min_slots)}.{why}"),   
-            ))   
-        elif length < rule.length_slots:   
-            warnings.append(ScheduleWarning(   
-                severity="soft", kind="sleep_short",   
-                message=(f"{label}: {format_hours(length)} of sleep, shorter than your "   
-                         f"target of {format_hours(rule.length_slots)}.{why}"),   
-            ))   
- 
-        if found is not None:  
-            bed = found.day * SLOTS_PER_DAY + found.start_slot - base   
-            if bed > rule.preferred_bed:   
-                warnings.append(ScheduleWarning(   
-                    severity="soft", kind="late_bedtime",  
-                    message=(f"{label}: bedtime is {slot_to_time(bed % SLOTS_PER_DAY)}, "   
-                             f"later than your preferred "  
-                             f"{slot_to_time(rule.preferred_bed % SLOTS_PER_DAY)}."),  
-                ))  
-    return warnings  
 
-def task_warnings(unscheduled: list[DynamicTask]) -> list[ScheduleWarning]:   
-    """A task that did not fit is never dropped silently. Missing a deadline is hard.""" 
-    warnings = []  
-    for task in unscheduled:   
-        if task.deadline_day is not None:  
-            warnings.append(ScheduleWarning(   
-                severity="hard", kind="task_unscheduled",   
-                message=f"'{task.title}' cannot be finished before its deadline.",  
-            ))   
-        else: 
-            warnings.append(ScheduleWarning(  
-                severity="soft", kind="task_unscheduled",  
-                message=f"'{task.title}' did not fit in this plan.",   
-            ))  
+def _night_item(rule: SleepRule, items: list[ScheduledItem]) -> ScheduledItem | None:
+    """This night's sleep item: the one whose start falls inside the night's bedtime window."""
+    base = rule.night * SLOTS_PER_DAY
+    return next((i for i in items if i.kind == "sleep"
+                 and base + rule.earliest_bed <= i.day * SLOTS_PER_DAY + i.start_slot <= base + rule.latest_bed),
+                None)
+
+
+def sleep_warnings(sleep_rules: list[SleepRule], items: list[ScheduledItem]) -> list[ScheduleWarning]:
+    """Check the finished plan against each night's rule and report anything given up."""
+    warnings = []
+    for rule in sorted(sleep_rules, key=lambda r: r.night):
+        label = f"Night {rule.night}"
+        if rule.skip:
+            warnings.append(ScheduleWarning.hard("sleep_skipped", f"{label}: sleep skipped. Tasks may run through the night."))
+            continue
+        base = rule.night * SLOTS_PER_DAY
+        found = _night_item(rule, items)
+        length = 0 if found is None else found.end_slot - found.start_slot
+        # an early start the morning after the plan can be the cause, not the plan itself
+        if found is None:
+            woke_at_cap = reachable_sleep(rule) == 0  # the cap left no room for any sleep
+        else:
+            woke_at_cap = found.day * SLOTS_PER_DAY + found.end_slot - base == rule.latest_wake
+        why = f" It has to end by then: {rule.latest_wake_reason}." if rule.latest_wake_reason and woke_at_cap else ""
+        if length < rule.min_slots:
+            warnings.append(ScheduleWarning.hard("sleep_short", (
+                f"{label}: only {format_hours(length)} of sleep fits, below your minimum "
+                f"of {format_hours(rule.min_slots)}.{why}")))
+        elif length < rule.length_slots:
+            warnings.append(ScheduleWarning.soft("sleep_short", (
+                f"{label}: {format_hours(length)} of sleep, shorter than your "
+                f"target of {format_hours(rule.length_slots)}.{why}")))
+        if found is not None:
+            bed = found.day * SLOTS_PER_DAY + found.start_slot - base
+            if bed > rule.preferred_bed:
+                warnings.append(ScheduleWarning.soft("late_bedtime", (
+                    f"{label}: bedtime is {slot_to_time(bed % SLOTS_PER_DAY)}, later than your "
+                    f"preferred {slot_to_time(rule.preferred_bed % SLOTS_PER_DAY)}.")))
     return warnings
+
+
+def task_warnings(unscheduled: list[DynamicTask]) -> list[ScheduleWarning]:
+    """A task that did not fit is never dropped silently. Missing a deadline is hard."""
+    return [ScheduleWarning.hard("task_unscheduled", f"'{t.title}' cannot be finished before its deadline.")
+            if t.deadline_day is not None
+            else ScheduleWarning.soft("task_unscheduled", f"'{t.title}' did not fit in this plan.")
+            for t in unscheduled]

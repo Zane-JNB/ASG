@@ -120,6 +120,14 @@ class ScheduleWarning(BaseModel):
     kind: str  # e.g. "sleep_skipped", "sleep_short", "late_bedtime", "task_unscheduled"
     message: str
 
+    @classmethod
+    def hard(cls, kind: str, message: str) -> "ScheduleWarning":
+        return cls(severity="hard", kind=kind, message=message)
+
+    @classmethod
+    def soft(cls, kind: str, message: str) -> "ScheduleWarning":
+        return cls(severity="soft", kind=kind, message=message)
+
 class ScheduledItem(BaseModel):
     title: str
     start_slot: int

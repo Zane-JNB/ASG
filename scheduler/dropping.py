@@ -6,12 +6,7 @@ from scheduler.models import (
     ProfileSettings, SleepRule,
 )
 from scheduler.units import SLOTS_PER_DAY
-from scheduler.solver import build_schedule, merge_fixed_spans, reachable_sleep, sleep_warnings, split_sizes   
-
-def chunk_sizes(task):   
-    if task.splittable:
-        return split_sizes(task.duration_slots, task.max_session_slots)
-    return [task.duration_slots]
+from scheduler.solver import build_schedule, chunk_sizes, merge_fixed_spans, reachable_sleep, sleep_warnings
 
 def cut_task(task, chunks_cut):   
     sizes = chunk_sizes(task)

@@ -1,7 +1,9 @@
 import pytest
-from scheduler.models import DynamicTask, FixedBlock, ScheduledItem, SleepRule
+from scheduler.models import DynamicTask, FixedBlock, ProfileSettings, ScheduledItem, SleepRule
 from scheduler.units import SLOTS_PER_DAY
-from scheduler.solver import build_schedule, ProfileSettings, merge_fixed_spans,sleep_warnings,split_sizes, task_warnings
+from scheduler.solver import (
+    build_schedule, chunk_sizes, merge_fixed_spans, sleep_warnings, split_sizes, task_warnings,
+)
 
 def _study(title, duration, difficulty, earliest, deadline, deadline_slot=SLOTS_PER_DAY):
     """A multi-day study task, capped at 4h a day in 2h sessions."""
@@ -34,7 +36,7 @@ def test_solver_leaves_a_buffer_after_tasks():
         DynamicTask(title="A", duration_slots=4, priority=5, difficulty=3),
         DynamicTask(title="B", duration_slots=4, priority=4, difficulty=3),
     ]
-    items, _ = build_schedule([], tasks, buffer_slots=1)
+    items, _ = build_schedule([], tasks, settings=ProfileSettings(buffer_slots=1))
     first, second = items[0], items[1]
     assert second.start_slot - first.end_slot >= 1
 
@@ -288,21 +290,21 @@ def test_task_gets_a_break_after_a_fixed_block():
     block = FixedBlock(title="Class", start_slot=32, end_slot=48)  # 08:00-12:00
     task = DynamicTask(title="Homework", duration_slots=4, priority=3, difficulty=2,
                        earliest_start_day=0, earliest_start_slot=48)
-    items, unscheduled = build_schedule([block], [task], buffer_slots=2)
+    items, unscheduled = build_schedule([block], [task], settings=ProfileSettings(buffer_slots=2))
     homework = [i for i in items if i.kind == "task"][0]
     assert homework.start_slot >= block.end_slot + 2
 
 def test_task_can_still_end_right_before_a_fixed_block_starts():
     block = FixedBlock(title="Class", start_slot=32, end_slot=48)
     task = DynamicTask(title="Homework", duration_slots=4, priority=3, difficulty=2)
-    items, unscheduled = build_schedule([block], [task], buffer_slots=2)
+    items, unscheduled = build_schedule([block], [task], settings=ProfileSettings(buffer_slots=2))
     homework = [i for i in items if i.kind == "task"][0]
     assert homework.end_slot <= block.start_slot  # no buffer required before a block
 
 def test_two_fixed_blocks_can_still_be_back_to_back():
     b1 = FixedBlock(title="Class A", start_slot=32, end_slot=48)
     b2 = FixedBlock(title="Class B", start_slot=48, end_slot=64)  # zero gap from b1
-    items, unscheduled = build_schedule([b1, b2], [], buffer_slots=2)
+    items, unscheduled = build_schedule([b1, b2], [], settings=ProfileSettings(buffer_slots=2))
     assert unscheduled == []
     assert len(items) == 2
 
@@ -344,15 +346,6 @@ def test_buffer_slots_falls_back_to_settings_when_not_given():
     homework = [i for i in items if i.kind == "task"][0]
     assert homework.start_slot >= block.end_slot + 4
 
-def test_explicit_buffer_slots_overrides_settings():
-    custom = ProfileSettings(buffer_slots=4)
-    block = FixedBlock(title="Class", start_slot=32, end_slot=48)
-    task = DynamicTask(title="Homework", duration_slots=4, priority=3, difficulty=2,
-                       earliest_start_day=0, earliest_start_slot=48)
-    items, unscheduled = build_schedule([block], [task], buffer_slots=1, settings=custom)
-    homework = [i for i in items if i.kind == "task"][0]
-    assert homework.start_slot == block.end_slot + 1  # explicit arg wins, not the profile's 4
-
 def test_merge_fixed_spans_unions_overlaps_and_keeps_touching():   
     a = FixedBlock(title="Commute", start_slot=28, end_slot=32, buffer_before=False)
     b = FixedBlock(title="Class", start_slot=30, end_slot=40)
@@ -363,7 +356,7 @@ def test_task_can_end_flush_against_commute():
     commute = FixedBlock(title="Commute", start_slot=40, end_slot=44, buffer_before=False)
     task = DynamicTask(title="Read", duration_slots=4, priority=3,
                        earliest_start_day=0, earliest_start_slot=36, deadline_day=0, deadline_slot=40)
-    items, unscheduled = build_schedule([commute], [task], buffer_slots=2)
+    items, unscheduled = build_schedule([commute], [task], settings=ProfileSettings(buffer_slots=2))
     read = [i for i in items if i.kind == "task"][0]
     assert unscheduled == [] and read.end_slot == 40
 
@@ -371,14 +364,14 @@ def test_normal_block_still_needs_buffer_before():
     cls = FixedBlock(title="Class", start_slot=40, end_slot=44)  # buffer_before=True
     task = DynamicTask(title="Read", duration_slots=4, priority=3,
                        earliest_start_day=0, earliest_start_slot=36, deadline_day=0, deadline_slot=40)
-    _, unscheduled = build_schedule([cls], [task], buffer_slots=2)
+    _, unscheduled = build_schedule([cls], [task], settings=ProfileSettings(buffer_slots=2))
     assert [t.title for t in unscheduled] == ["Read"]
 
 def test_overlapping_commute_and_class_solve_without_error():   
     cls = FixedBlock(title="Class", start_slot=30, end_slot=40)
     commute = FixedBlock(title="Commute", start_slot=28, end_slot=32, buffer_before=False)
     task = DynamicTask(title="Read", duration_slots=4, priority=3)
-    items, unscheduled = build_schedule([cls, commute], [task], buffer_slots=2)
+    items, unscheduled = build_schedule([cls, commute], [task], settings=ProfileSettings(buffer_slots=2))
     read = [i for i in items if i.kind == "task"][0]
     assert unscheduled == []
     assert sum(i.kind == "fixed" for i in items) == 2  # both still shown
@@ -403,3 +396,31 @@ def test_sleep_warning_hours_are_exact():
     items = [ScheduledItem(title="Sleep", start_slot=92, end_slot=92 + 31, kind="sleep", day=0)]
     [w] = sleep_warnings([rule], items)
     assert w.message == "Night 0: 7h 45m of sleep, shorter than your target of 8h."
+
+
+def test_chunk_sizes_follow_the_split_choice():
+    whole = DynamicTask(title="Essay", duration_slots=13, priority=3, splittable=False, max_session_slots=6)
+    split = whole.model_copy(update={"splittable": True})
+    assert chunk_sizes(whole) == [13]
+    assert chunk_sizes(split) == [5, 4, 4]
+
+
+def test_buffer_after_a_block_also_covers_a_short_gap_before_the_next_block():
+    first = FixedBlock(title="Class A", start_slot=32, end_slot=48)
+    second = FixedBlock(title="Class B", start_slot=50, end_slot=60)  # 30 min gap, buffer is 1h
+    task = DynamicTask(title="Read", duration_slots=1, priority=3, earliest_start_day=0, earliest_start_slot=48)
+    items, unscheduled = build_schedule([first, second], [task], settings=ProfileSettings(buffer_slots=4))
+    [read] = [i for i in items if i.kind == "task"]
+    assert unscheduled == []
+    assert read.start_slot >= 64  # not in the gap: the earliest is after Class B plus its buffer
+
+
+def test_buffer_after_a_block_with_touching_blocks():
+    first = FixedBlock(title="Class", start_slot=32, end_slot=48)
+    commute = FixedBlock(title="Bus", start_slot=48, end_slot=52, buffer_before=False)
+    task = DynamicTask(title="Read", duration_slots=2, priority=3, earliest_start_day=0, earliest_start_slot=40)
+    items, unscheduled = build_schedule([first, commute], [task], settings=ProfileSettings(buffer_slots=4))
+    [read] = [i for i in items if i.kind == "task"]
+    assert unscheduled == []
+    assert read.start_slot >= 56
+
