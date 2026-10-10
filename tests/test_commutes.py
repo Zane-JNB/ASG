@@ -77,3 +77,24 @@ def test_commute_vs_commute_reported_once():
 def test_invalid_commutes_rejected(kw):
     with pytest.raises((ValidationError, ValueError)):
         Commute(**{**dict(start_time="07:00", length_minutes=30), **kw})
+def test_commute_dates_and_times_use_the_shared_checks():
+    # "20261005" used to pass unchecked and never match a plan day (#15)
+    c = Commute(start_time="7:05", length_minutes=30, date="20261005")
+    assert (c.start_time, c.date) == ("07:05", "2026-10-05")
+    assert [b.day for b in expand_commutes([c], anchor())] == [0]
+    r = recurring(end_date="20261012", skip_dates=["20261005"])
+    assert (r.end_date, r.skip_dates) == ("2026-10-12", ["2026-10-05"])
+    assert [b.day for b in expand_commutes([r], anchor(14))] == [7]
+    for bad in (dict(start_time="25:00"), dict(start_time="7.30"), dict(date="2026-02-30")):
+        with pytest.raises(ValidationError):
+            Commute(**{"start_time": "07:00", "length_minutes": 30, "date": "2026-10-05", **bad})
+
+
+def test_skipping_a_commute_date_stores_the_normalised_date():
+    from scheduler.db import add_commute, connect, get_commutes, get_or_create_student, skip_commute_date
+    conn = connect(":memory:")
+    sid = get_or_create_student(conn, "Z")
+    cid = add_commute(conn, sid, recurring())
+    assert skip_commute_date(conn, sid, cid, "2026-10-12") is True
+    assert skip_commute_date(conn, sid, cid, "20261012") is True  # the same day: no duplicate
+    assert get_commutes(conn, sid)[0][1].skip_dates == ["2026-10-12"]

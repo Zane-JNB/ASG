@@ -4,6 +4,7 @@ from datetime import date, datetime, timezone
 
 from pydantic import BaseModel, ValidationError
 from scheduler.preference_policy import POLICY, Tier
+from scheduler.units import parse_date
 from scheduler.models import ProfileSettings, FixedBlock, DynamicTask, WeeklyPattern, DatedBlock, ExtractedTask, ExtractionResult,Commute
 
 SCHEMA = """
@@ -457,7 +458,7 @@ def clear_commutes(conn, student_id: int) -> int:
     return _clear_items(conn, "commutes", student_id)
 
 def skip_commute_date(conn, student_id: int, item_id: int, day: str) -> bool:   
-    date.fromisoformat(day)  # raises ValueError on a bad date
+    day = parse_date(day)  # raises ValueError on a bad date
     found = {i: c for i, c in get_commutes(conn, student_id)}.get(item_id)
     if found is None or not found.recurring:
         return False

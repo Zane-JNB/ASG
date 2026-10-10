@@ -16,7 +16,7 @@ Zane will review and correct each. Referenced from `CLAUDE.md`.
 12. Hard-coded search tunables: `propose_drops` (`max_actions`, `max_proposals`, `max_checks`, `time_limit_seconds`) and the `restore.plan_restores` steps should be `ProfileSettings` fields with `POLICY` entries. Do this with the optimal-schedule work.
 13. Solver/drop search size: `_cheapest_first` rebuilds every combination on each batch (slow with about 40+ open tasks). The buffer-after-block rule adds a variable per (block x chunk) pair. Both go with the optimal-schedule work.
 14. Unused reminder fields on `ExtractedTask` (`reminders_enabled`, `reminder_min_*`) are sent in the Groq extraction schema. Remove them or mark them `SkipJsonSchema` (see 10).
-15. Commutes: adding one doesn't check for overlaps or ask the student (it breaks the commute invariant; planning only gives a soft warning). `Commute` doesn't use the shared `_check_time`/`_check_date`, so a date like `20261005` passes but never matches.
+15. Commutes: adding one doesn't check for overlaps or ask the student (it breaks the commute invariant; planning only gives a soft warning).
 16. Small CLI issues:
     - "inf" as hours crashes (`review.hours_to_slots` raises OverflowError).
     - `24:00` is rejected as an end time when editing an import (`review._time`).

@@ -225,19 +225,16 @@ class ExtractionResult(BaseModel):
 
 class Commute(BaseModel):
     title: str = "Commute"
-    start_time: str  # "HH:MM", 24-hour
+    start_time: ClockTime
     length_minutes: int = Field(gt=0, le=720)
     recurring: bool = False
     weekday: Weekday | None = None
-    date: str | None = None  # one-time only
-    end_date: str | None = None  # recurring only; None = until deleted
-    skip_dates: list[str] = Field(default_factory=list)  # recurring only
+    date: IsoDate | None = None  # one-time only
+    end_date: IsoDate | None = None  # recurring only; None = until deleted
+    skip_dates: list[IsoDate] = Field(default_factory=list)  # recurring only
 
     @model_validator(mode="after")
     def check_commute(self):
-        h, m = self.start_time.split(":")
-        if not (0 <= int(h) <= 23 and 0 <= int(m) <= 59):
-            raise ValueError("start_time must be a valid HH:MM")
         if self.recurring:
             if self.weekday is None:
                 raise ValueError("a recurring commute needs a weekday")
@@ -248,9 +245,6 @@ class Commute(BaseModel):
                 raise ValueError("a one-time commute needs a date")
             if self.weekday or self.end_date or self.skip_dates:
                 raise ValueError("weekday, end_date and skip_dates are for recurring commutes only")
-        for d in [self.date, self.end_date, *self.skip_dates]:
-            if d is not None:
-                date.fromisoformat(d)  # raises on a bad date
         return self
 
     def runs_on(self, day: date) -> bool:
