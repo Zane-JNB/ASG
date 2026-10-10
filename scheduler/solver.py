@@ -61,11 +61,12 @@ class _Plan:
     num_days: int
     settings: ProfileSettings
     model: cp_model.CpModel = field(default_factory=cp_model.CpModel)
-    spaced: list = field(default_factory=list)  # never overlap: tasks (+ buffer after), blocks, sleep + wake buffer
-    flush: list = field(default_factory=list)  # blocks a task may end right against: only sleep must avoid them
-    sleep: list = field(default_factory=list)
-    block_spans: list = field(default_factory=list)  # (start, end) of each merged block, for the buffer after it
-    costs: list = field(default_factory=list)  # scaled like the presence bonus (see _set_objective)
+    # three no-overlap groups:
+    spaced: list[cp_model.IntervalVar] = field(default_factory=list)  # tasks + buffer after, blocks, sleep + wake buffer
+    flush: list[cp_model.IntervalVar] = field(default_factory=list)  # blocks a task may end right against (commutes)
+    sleep: list[cp_model.IntervalVar] = field(default_factory=list)  # (flush + sleep never overlap)
+    after_blocks: list[cp_model.IntervalVar] = field(default_factory=list)  # each block + buffer after it, task chunks
+    costs: list[cp_model.LinearExprT] = field(default_factory=list)  # scaled like the presence bonus (_set_objective)
 
     @property
     def horizon(self) -> int:
@@ -86,7 +87,7 @@ def build_schedule(fixed_blocks: list[FixedBlock], tasks: list[DynamicTask], num
     nights = [_add_night(plan, rule) for rule in sleep_rules if not rule.skip]  # skipped: free for tasks
     plan.model.AddNoOverlap(plan.spaced)
     plan.model.AddNoOverlap(plan.flush + plan.sleep)
-    _add_buffer_after_blocks(plan, placed)
+    plan.model.AddNoOverlap(plan.after_blocks)
     _set_objective(plan, placed)
     solver = _solve(plan.model, time_limit_seconds)
     return _read_back(solver, fixed_blocks, nights, placed)
@@ -106,22 +107,15 @@ def _check_days(fixed_blocks: list[FixedBlock], sleep_rules: list[SleepRule], nu
 
 
 def _add_fixed_blocks(plan: _Plan, blocks: list[FixedBlock]) -> None:
-    """Blocks never overlap anything (two blocks may be back to back)."""
-    for k, (start, end, buffer_before) in enumerate(merge_fixed_spans(blocks)):
+    """Blocks never overlap anything. After a block comes the normal buffer, which never reaches
+    into the next block (two blocks may be back to back)."""
+    spans = merge_fixed_spans(blocks)
+    for k, (start, end, buffer_before) in enumerate(spans):
         iv = plan.model.NewFixedSizeIntervalVar(start, end - start, f"fixed_{k}")
         (plan.spaced if buffer_before else plan.flush).append(iv)
-        plan.block_spans.append((start, end))
-
-
-def _add_buffer_after_blocks(plan: _Plan, placed: list["_Task"]) -> None:
-    """Every task chunk ends before a block, or starts the normal buffer after it."""
-    model, buffer = plan.model, plan.settings.buffer_slots
-    for bi, (bs, be) in enumerate(plan.block_spans):
-        for i, p in enumerate(placed):
-            for j, chunk in enumerate(p.chunks):
-                after = model.NewBoolVar(f"after_block_{bi}_{i}_{j}")
-                model.Add(chunk.start >= be + buffer).OnlyEnforceIf([p.present, after])
-                model.Add(chunk.start + chunk.size <= bs).OnlyEnforceIf([p.present, after.Not()])
+        next_start = spans[k + 1][0] if k + 1 < len(spans) else math.inf
+        reach = min(end + plan.settings.buffer_slots, next_start)
+        plan.after_blocks.append(plan.model.NewFixedSizeIntervalVar(start, reach - start, f"after_fixed_{k}"))
 
 
 def _add_task(plan: _Plan, i: int, task: DynamicTask) -> _Task:
@@ -136,6 +130,7 @@ def _add_task(plan: _Plan, i: int, task: DynamicTask) -> _Task:
         lower = earliest if j == 0 else 0  # later chunks are bounded by the order rule instead
         start = model.NewIntVar(lower, plan.horizon - size, f"start_{i}_{j}")
         plan.spaced.append(model.NewOptionalFixedSizeIntervalVar(start, size + buffer, present, f"task_{i}_{j}"))
+        plan.after_blocks.append(model.NewOptionalFixedSizeIntervalVar(start, size, present, f"chunk_{i}_{j}"))
         if task.deadline_day is not None:
             deadline = task.deadline_day * SLOTS_PER_DAY + task.deadline_slot
             model.Add(start + size <= deadline).OnlyEnforceIf(present)

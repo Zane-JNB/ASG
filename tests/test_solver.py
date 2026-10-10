@@ -1,4 +1,6 @@
 import pytest
+from unittest import mock
+from ortools.sat.python import cp_model
 from scheduler.models import DynamicTask, FixedBlock, ProfileSettings, ScheduledItem, SleepRule
 from scheduler.units import SLOTS_PER_DAY
 from scheduler.solver import (
@@ -424,3 +426,26 @@ def test_buffer_after_a_block_with_touching_blocks():
     assert unscheduled == []
     assert read.start_slot >= 56
 
+
+def _model_size(blocks, tasks, num_days):
+    """Number of variables in the CP-SAT model build_schedule makes (#13)."""
+    seen = {}
+    real_solve = cp_model.CpSolver.Solve
+
+    def counting(self, model, *args, **kwargs):
+        seen["vars"] = len(model.Proto().variables)
+        return real_solve(self, model, *args, **kwargs)
+
+    with mock.patch.object(cp_model.CpSolver, "Solve", counting):
+        build_schedule(blocks, tasks, num_days=num_days, time_limit_seconds=5)
+    return seen["vars"]
+
+
+def test_buffer_after_blocks_adds_no_variable_per_block_and_chunk():
+    # #13: one bool per (block x chunk) made the model grow with blocks * chunks
+    tasks = [DynamicTask(title=f"T{i}", duration_slots=8, priority=3, max_session_slots=2) for i in range(5)]
+    few = [FixedBlock(title="Class", day=0, start_slot=40, end_slot=44)]
+    many = [FixedBlock(title="Class", day=d, start_slot=s, end_slot=s + 4)
+            for d in range(4) for s in (20, 40, 60, 80)]
+    pairs = (len(many) - len(few)) * 4 * len(tasks)  # 4 chunks per task
+    assert _model_size(many, tasks, 4) - _model_size(few, tasks, 4) < pairs // 4
