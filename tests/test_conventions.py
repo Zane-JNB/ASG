@@ -21,9 +21,10 @@ def test_the_logic_never_reads_the_clock_itself():
 
 
 def test_no_module_imports_another_modules_private_names():
-    """A name starting with _ is private to its module: share it by making it public."""
+    """A name starting with _ is private to its module: share it by making it public. The tests
+    keep to it too; only conftest reaches into the provider tables, and tests patch db._now."""
     leaks = [f"{path.relative_to(ROOT)}: {node.module}.{alias.name}"
-             for path in APP for node in ast.walk(_tree(path))
+             for path in APP + sorted((ROOT / "tests").glob("*.py")) for node in ast.walk(_tree(path))
              if isinstance(node, ast.ImportFrom) and (node.module or "").startswith("scheduler")
              for alias in node.names if alias.name.startswith("_")]
     assert leaks == []

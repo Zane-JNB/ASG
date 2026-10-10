@@ -156,8 +156,8 @@ class _LazyRenderer:
         if self._error is not None:
             raise RenderError(f"the PDF renderer couldn't open this file: {self._error}")
         try:
-            return _render_page(self._doc, page_index)
-        except Exception as e:  # _render_page is only pdfium/Pillow calls: any failure is this page's
+            return render_page(self._doc, page_index)
+        except Exception as e:  # render_page is only pdfium/Pillow calls: any failure is this page's
             raise RenderError(f"page {page_index + 1} couldn't be rendered: {e}") from e
 
     def close(self) -> None:
@@ -165,7 +165,7 @@ class _LazyRenderer:
             self._doc.close()
 
 
-def _render_page(doc, page_index: int) -> bytes:
+def render_page(doc, page_index: int) -> bytes:
     """One page of an open pypdfium2 PdfDocument -> PNG bytes (pypdfium2 is permissively
     licensed, unlike PyMuPDF)."""
     page = doc.get_page(page_index)

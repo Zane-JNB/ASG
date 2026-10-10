@@ -5,7 +5,7 @@ from datetime import date, datetime, timedelta
 import pytest
 
 from scheduler.db import COMMUTES, DATED_BLOCKS, connect, get_or_create_student
-from scheduler.dropping import _sleep_sacrificed
+from scheduler.dropping import sleep_sacrificed
 from scheduler.fit_check import build_fit_inputs
 from scheduler.models import (
     Commute, DatedBlock, DynamicTask, FixedBlock, ProfileSettings, ScheduledItem, SleepRule,
@@ -79,7 +79,7 @@ def test_reachable_sleep_is_capped_by_the_morning_after():
 def test_drop_proposals_do_not_blame_the_cuts_for_an_early_start():
     capped = SleepRule(night=0, latest_wake=SLOTS_PER_DAY + 20, **RULE)
     slept = [ScheduledItem(title="Sleep", day=0, start_slot=88, end_slot=116, kind="sleep")]  # all 28 allowed
-    assert _sleep_sacrificed([capped], slept) == 0  # "target kept"
+    assert sleep_sacrificed([capped], slept) == 0  # "target kept"
 
 def test_a_short_night_names_the_next_mornings_start():
     capped = SleepRule(night=0, latest_wake=SLOTS_PER_DAY + 20, latest_wake_reason="'Work' at 06:00 the next morning", **RULE)

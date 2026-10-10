@@ -100,10 +100,9 @@ def test_9_no_mode_prompt_when_the_task_already_fits(conn):
     assert len(EXTRACTED_TASKS.get(conn, 1)) == 2 and get_plan_cuts(conn, 1) == {}
 
 def test_10_cut_time_is_offered_back_once_room_appears(conn):
-    from scheduler.task_manager import _sorted_tasks
     menu(conn, NEW_ESSAY + ["m", "1", "d", "s"])
-    n = 1 + [t.title for _, t in _sorted_tasks(conn, 1)].index("Essay")
-    menu(conn, ["d", str(n)])
+    n = next(line.split(".")[0] for line in menu(conn, ["l"]) if " Essay due " in line)
+    menu(conn, ["d", n])
     lab_id = next(i for i, t in EXTRACTED_TASKS.get(conn, 1) if t.title == "Lab")
     assert plan_restores(conn, 1, NOW) == {lab_id: 20}
 

@@ -11,7 +11,7 @@ from reportlab.pdfgen import canvas
 import pypdfium2 as pdfium
 
 from scheduler.llm_backends import BadModelOutput
-from scheduler.pdf_extraction import PartialExtraction, extract_schedule_from_pdf, extract_text_page, _render_page
+from scheduler.pdf_extraction import PartialExtraction, extract_schedule_from_pdf, extract_text_page, render_page
 from scheduler.models import ExtractionResult
 
 
@@ -111,7 +111,7 @@ def test_extract_text_page_directly():
 def test_render_page_produces_a_real_png():
     doc = pdfium.PdfDocument(_image_only_pdf())
     try:
-        png_bytes = _render_page(doc, 0)
+        png_bytes = render_page(doc, 0)
     finally:
         doc.close()
     assert png_bytes.startswith(b"\x89PNG")
@@ -241,12 +241,12 @@ def test_the_model_error_is_kept_as_the_cause_when_the_renderer_also_fails(monke
 
 @pytest.mark.parametrize("error", [pdfium.PdfiumError("bad page"), OSError("cannot encode")])
 def test_one_page_that_wont_render_is_skipped_not_the_rest(monkeypatch, error):
-    real_render = __import__("scheduler.pdf_extraction", fromlist=["_render_page"])._render_page
+    real_render = render_page
     def render(doc, i):
         if i == 0:
             raise error
         return real_render(doc, i)
-    monkeypatch.setattr("scheduler.pdf_extraction._render_page", render)
+    monkeypatch.setattr("scheduler.pdf_extraction.render_page", render)
     with pytest.raises(PartialExtraction) as e:
         extract_schedule_from_pdf(_multi_page_pdf([None, None]), call_text_llm=_boom, call_vision=_fake_vision("Scan"))
     assert e.value.failed_pages == [1] and len(e.value.result.weekly_patterns) == 1

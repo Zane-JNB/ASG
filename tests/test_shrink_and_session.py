@@ -8,7 +8,7 @@ from scheduler.db import (
     save_settings,
 )
 from scheduler.make_room import describe_proposal
-from scheduler.dropping import _options, _shrink_amounts, propose_drops
+from scheduler.dropping import cut_options, shrink_amounts, propose_drops
 from scheduler.fit_check import build_fit_inputs
 from scheduler.import_flow import run_import
 from scheduler.models import (
@@ -67,16 +67,16 @@ def _tight_day(conn, sid):
 # ---------- shortening a one-block task ----------
 def test_shrink_amounts_never_reach_a_full_drop():
     s = ProfileSettings()
-    assert _shrink_amounts(4, s) == [1, 2, 3]
-    assert _shrink_amounts(2, s) == [1]
-    assert _shrink_amounts(1, s) == []
+    assert shrink_amounts(4, s) == [1, 2, 3]
+    assert shrink_amounts(2, s) == [1]
+    assert shrink_amounts(1, s) == []
 
 
 def test_only_one_block_tasks_can_be_shortened():
     s = ProfileSettings()
     one = DynamicTask(title="Lab", duration_slots=20, priority=3, difficulty=3, splittable=False)
     many = DynamicTask(title="Project", duration_slots=40, priority=3, difficulty=3, max_session_slots=8)
-    opts = _options([one, many], s)
+    opts = cut_options([one, many], s)
     assert any(a.shrink for a in opts[0]) and not any(a.shrink for a in opts[1])
     assert all(not a.shrink for a in opts[1])
 

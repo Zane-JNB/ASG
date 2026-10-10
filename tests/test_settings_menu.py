@@ -1,7 +1,7 @@
 import pytest
 from scheduler.db import connect, get_or_create_student, load_settings, load_tiers
 from scheduler.preference_policy import POLICY, Tier
-from scheduler.settings_menu import _UI, _user_facing, run_settings_menu
+from scheduler.settings_menu import FIELD_UI, USER_FIELDS, run_settings_menu
 
 @pytest.fixture
 def conn(): return connect(":memory:")
@@ -14,16 +14,16 @@ def run(conn, sid, answers):
     run_settings_menu(conn, sid, ask=lambda p: (shown.append(p), next(it))[1], show=shown.append)
     return shown
 
-def n(field): return str(_user_facing().index(field) + 1)
+def n(field): return str(USER_FIELDS.index(field) + 1)
 
 def test_every_user_editable_field_has_menu_ui_and_internals_are_hidden():
-    assert {k for k, p in POLICY.items() if p.user_editable} == set(_UI) == set(_user_facing())
+    assert {k for k, p in POLICY.items() if p.user_editable} == set(FIELD_UI) == set(USER_FIELDS)
     assert not {"bedtime_penalty", "same_day_penalty", "sleep_target_penalty",
-                "drop_deadline_multiplier"} & set(_user_facing())
+                "drop_deadline_multiplier"} & set(USER_FIELDS)
 
 def test_list_shows_labels_values_tiers_and_hides_internals_until_asked(conn, sid):
     shown = run(conn, sid, ["i", "q"])
-    first = [s for s in shown[:len(_user_facing())]]
+    first = [s for s in shown[:len(USER_FIELDS)]]
     assert any("Break time: 15 min  [learned automatically]" in s for s in first)
     assert not any("Bedtime drift weight" in s for s in first)
     assert any("Bedtime drift weight" in s for s in shown)

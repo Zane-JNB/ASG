@@ -52,7 +52,8 @@ _MINUTES = (_minutes, lambda v: f"{v * MINUTES_PER_SLOT} min")
 _BEDTIME = (_bed_slot, lambda v: slot_to_time(v % SLOTS_PER_DAY) + (" (after midnight)" if v >= SLOTS_PER_DAY else ""))
 _RATING = (_rating_or_none, lambda v: "any" if v is None else str(v))
 
-_UI = {  # Every user_editable POLICY field must be here (tested).
+USER_FIELDS = [n for n, p in POLICY.items() if p.user_editable]  # in the order the menu numbers them
+FIELD_UI = {  # how each one is typed and shown; every user_editable POLICY field must be here (tested)
     "buffer_slots": _Field(*_MINUTES, "minutes, e.g. 15"),
     "default_max_session_slots": _Field(*_HOURS, "hours, e.g. 2"),
     "default_sleep_length_slots": _Field(*_HOURS, "hours, e.g. 8"),
@@ -68,8 +69,8 @@ _UI = {  # Every user_editable POLICY field must be here (tested).
 
 
 def describe_pending(p: PendingChange) -> str:
-    if p.field in _UI:
-        fmt = _UI[p.field].fmt
+    if p.field in FIELD_UI:
+        fmt = FIELD_UI[p.field].fmt
         return f"{p.label}: {fmt(p.old)} -> {fmt(p.new)}"
     return f"{p.label}: {p.direction} slightly"
 
@@ -88,16 +89,12 @@ def _approval(conn, student_id: int, ask, show) -> None:
     show(f"Learned changes will now {_MODE_WORDS[raw]}." if changed else "No change.")
 
 
-def _user_facing():
-    return [n for n, p in POLICY.items() if p.user_editable]
-
-
 def show_settings(conn, student_id: int, show) -> list[str]:
     """Number and show every setting the student can see; returns their names in that order."""
-    settings, tiers, fields = load_settings(conn, student_id), load_tiers(conn, student_id), _user_facing()
-    for n, name in enumerate(fields, 1):
-        show(f"{n}. {POLICY[name].label}: {_UI[name].fmt(getattr(settings, name))}  [{_TIER_WORDS[tiers[name]]}]")
-    return fields
+    settings, tiers = load_settings(conn, student_id), load_tiers(conn, student_id)
+    for n, name in enumerate(USER_FIELDS, 1):
+        show(f"{n}. {POLICY[name].label}: {FIELD_UI[name].fmt(getattr(settings, name))}  [{_TIER_WORDS[tiers[name]]}]")
+    return USER_FIELDS
 
 
 def show_internal(conn, student_id: int, show) -> None:
@@ -114,7 +111,7 @@ def _edit(conn, student_id: int, name: str, ask, show) -> None:
     except PreferenceError as e:
         show(str(e))
         return
-    ui = _UI[name]
+    ui = FIELD_UI[name]
     value = ask_until(ask, show, f"New value for {POLICY[name].label} ({ui.hint}; Enter to cancel)", ui.parse,
                       default=_CANCEL)
     if value is _CANCEL:
@@ -135,7 +132,7 @@ def _switch(conn, student_id: int, name: str, new_tier: Tier, show) -> None:
     except PreferenceError as e:
         show(str(e))
         return
-    value = _UI[name].fmt(getattr(load_settings(conn, student_id), name))
+    value = FIELD_UI[name].fmt(getattr(load_settings(conn, student_id), name))
     if not changed:
         show(f"'{label}' is already {_TIER_WORDS[new_tier]}.")
     elif new_tier == Tier.USER:

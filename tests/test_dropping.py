@@ -3,7 +3,7 @@ import itertools
 import pytest
 from scheduler import dropping
 from scheduler.dropping import (
-    NEW_TASK, _cut_combos, _options, _shrink_amounts, loss_cost, propose_drops, try_cuts,
+    NEW_TASK, cut_combos, cut_options, shrink_amounts, loss_cost, propose_drops, try_cuts,
 )
 from scheduler.models import DynamicTask, FixedBlock, ProfileSettings, SleepRule
 from scheduler.solver import PlanFrame, chunk_sizes
@@ -22,8 +22,8 @@ def busy_day():
 
 def _full_sort(tasks, new, settings, max_actions, need):
     """The search order #13 replaced: build every combination, then a stable sort by cost."""
-    opts = _options(tasks, settings)
-    new_cuts = [0] + (_shrink_amounts(new.duration_slots, settings) if len(chunk_sizes(new)) == 1 else [])
+    opts = cut_options(tasks, settings)
+    new_cuts = [0] + (shrink_amounts(new.duration_slots, settings) if len(chunk_sizes(new)) == 1 else [])
     out = []
     for n in range(max_actions + 1):
         for idxs in itertools.combinations(range(len(tasks)), n):
@@ -50,7 +50,7 @@ def _mixed_tasks():
                                  DynamicTask(title="New split", duration_slots=24, priority=2, max_session_slots=8)])
 def test_cut_combos_come_cheapest_first_exactly_like_a_full_sort(max_actions, need, new):
     s, tasks = ProfileSettings(), _mixed_tasks()
-    assert list(_cut_combos(tasks, new, s, max_actions, need)) == _full_sort(tasks, new, s, max_actions, need)
+    assert list(cut_combos(tasks, new, s, max_actions, need)) == _full_sort(tasks, new, s, max_actions, need)
 
 
 def test_cut_combos_price_each_option_once_not_every_combination(monkeypatch):
@@ -61,22 +61,22 @@ def test_cut_combos_price_each_option_once_not_every_combination(monkeypatch):
     new = DynamicTask(title="New", duration_slots=6, priority=3)
     priced = []
     monkeypatch.setattr(dropping, "loss_cost", lambda *a: (priced.append(1), loss_cost(*a))[1])
-    first = list(itertools.islice(_cut_combos(tasks, new, s, 3, 0), 20))
+    first = list(itertools.islice(cut_combos(tasks, new, s, 3, 0), 20))
     assert len(first) == 20
-    options = sum(len(v) for v in _options(tasks, s).values()) + 1 + len(_shrink_amounts(6, s))
+    options = sum(len(v) for v in cut_options(tasks, s).values()) + 1 + len(shrink_amounts(6, s))
     assert len(priced) <= options
 
 
 def test_a_split_task_is_cut_by_whole_sessions():
     t = DynamicTask(title="X", duration_slots=14, priority=3, difficulty=2, max_session_slots=8)
     assert chunk_sizes(t) == [7, 7]
-    assert [(a.chunks_cut, a.slots_kept) for a in _options([t], ProfileSettings())[0]] == [(1, 7), (2, 0)]
+    assert [(a.chunks_cut, a.slots_kept) for a in cut_options([t], ProfileSettings())[0]] == [(1, 7), (2, 0)]
 
 
 def test_non_splittable_task_can_only_be_dropped_whole():
     t = DynamicTask(title="X", duration_slots=6, priority=3, difficulty=2, splittable=False)
     assert chunk_sizes(t) == [6]
-    assert [a.is_full_drop for a in _options([t], ProfileSettings())[0] if not a.shrink] == [True]
+    assert [a.is_full_drop for a in cut_options([t], ProfileSettings())[0] if not a.shrink] == [True]
 
 
 def test_deadline_and_priority_raise_the_cost_of_losing_time():

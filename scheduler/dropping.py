@@ -20,7 +20,7 @@ def loss_cost(task: DynamicTask, lost_slots: int, settings: ProfileSettings) -> 
     return per_slot * lost_slots
 
 
-def _shrink_amounts(duration: int, settings: ProfileSettings) -> list[int]:
+def shrink_amounts(duration: int, settings: ProfileSettings) -> list[int]:
     """How many slots a one-block task can lose and still exist (a full drop is a separate option)."""
     amounts = set()
     for f in settings.shrink_steps:
@@ -30,7 +30,7 @@ def _shrink_amounts(duration: int, settings: ProfileSettings) -> list[int]:
     return sorted(amounts)
 
 
-def _options(tasks: list[DynamicTask], settings: ProfileSettings) -> dict[int, list[DropAction]]:
+def cut_options(tasks: list[DynamicTask], settings: ProfileSettings) -> dict[int, list[DropAction]]:
     """Every way to cut each existing task: whole sessions, or (for a one-block task) a shorter block."""
     out = {}
     for i, t in enumerate(tasks):
@@ -45,7 +45,7 @@ def _options(tasks: list[DynamicTask], settings: ProfileSettings) -> dict[int, l
         if len(sizes) == 1:  # one block: it can also be shortened, staying one block
             out[i] += [DropAction(chunks_cut=0, total_chunks=1, slots_lost=x, slots_kept=t.duration_slots - x,
                                   shrink=True, **base)
-                       for x in _shrink_amounts(t.duration_slots, settings)]
+                       for x in shrink_amounts(t.duration_slots, settings)]
     return out
 
 
@@ -64,7 +64,7 @@ def _dominated(cuts, feasible):
     return any(all(cuts.get(i, 0) >= k for i, k in f.items()) for f in feasible)
 
 
-def _cut_combos(tasks: list[DynamicTask], new_task: DynamicTask, settings: ProfileSettings,
+def cut_combos(tasks: list[DynamicTask], new_task: DynamicTask, settings: ProfileSettings,
                 max_actions: int, need: int):
     """Every way to cut up to max_actions existing tasks (one option each) and/or shorten the new
     task that frees at least `need` slots, as (cost, actions, new_cut), cheapest first. Equal costs
@@ -76,9 +76,9 @@ def _cut_combos(tasks: list[DynamicTask], new_task: DynamicTask, settings: Profi
     previous new-task cut, or (with the new task uncut) one option fewer or its last option one
     step cheaper. Combinations that cut one task twice are walked through but never yielded."""
     options = sorted(((loss_cost(tasks[i], a.slots_lost, settings), i, k, a)
-                      for i, acts in _options(tasks, settings).items() for k, a in enumerate(acts)),
+                      for i, acts in cut_options(tasks, settings).items() for k, a in enumerate(acts)),
                      key=lambda o: o[0])
-    new_cuts = [0] + (_shrink_amounts(new_task.duration_slots, settings)  # a one-block new task can be shortened
+    new_cuts = [0] + (shrink_amounts(new_task.duration_slots, settings)  # a one-block new task can be shortened
                       if len(chunk_sizes(new_task)) == 1 else [])
     new_costs = [loss_cost(new_task, x, settings) for x in new_cuts]  # rising, like new_cuts
 
@@ -122,7 +122,7 @@ def _free_slots(frame: PlanFrame, tasks: list[DynamicTask]) -> int:
     return max(0, end - lo - covered)
 
 
-def _sleep_sacrificed(sleep_rules: list[SleepRule], items: list[ScheduledItem]) -> int:
+def sleep_sacrificed(sleep_rules: list[SleepRule], items: list[ScheduledItem]) -> int:
     """Sleep below what the nights allow; a cap from the morning after's early start isn't the cuts' fault."""
     target = sum(reachable_sleep(r) for r in sleep_rules)
     slept = sum(i.end_slot - i.start_slot for i in items if i.kind == "sleep")
@@ -141,7 +141,7 @@ def _proposal(frame: PlanFrame, tasks: list[DynamicTask], new_task: DynamicTask,
     if new_lost and new_task.deadline_day is not None:
         flags.append(f"'{new_task.title}' would fall short of its deadline" if new_added
                      else f"'{new_task.title}' would not be done by its deadline")
-    sleep = _sleep_sacrificed(frame.sleep_rules, items)
+    sleep = sleep_sacrificed(frame.sleep_rules, items)
     score = (sum(loss_cost(tasks[a.task_index], a.slots_lost, s) for a in actions)
              + loss_cost(new_task, new_lost, s)
              + s.drop_sleep_weight * sleep + s.drop_hard_flag_penalty * len(flags))
@@ -213,7 +213,7 @@ def propose_drops(frame: PlanFrame, tasks: list[DynamicTask], new_task: DynamicT
     # the least that must be freed: all task time minus every free slot (an over-count of the room)
     need = sum(t.duration_slots for t in tasks + [new_task]) - _free_slots(frame, tasks + [new_task])
     feasible_cuts = []
-    for _, pick, new_cut in _cut_combos(tasks, new_task, frame.settings, max_actions, need):
+    for _, pick, new_cut in cut_combos(tasks, new_task, frame.settings, max_actions, need):
         cuts = {a.task_index: a.slots_lost for a in pick}
         if new_cut:
             cuts[NEW_TASK] = new_cut
