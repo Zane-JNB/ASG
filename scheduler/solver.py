@@ -3,7 +3,7 @@ from ortools.sat.python import cp_model
 from scheduler.models import (
     DynamicTask, FixedBlock, ProfileSettings, ScheduledItem, ScheduleWarning, SleepRule,
 )
-from scheduler.units import MINUTES_PER_SLOT, SLOTS_PER_DAY, slot_to_time
+from scheduler.units import SLOTS_PER_DAY, format_hours, slot_to_time
 
 #Splits tasks into chunks no larger than the student's preference.
 def split_sizes(duration: int, max_session: int) -> list[int]:
@@ -11,9 +11,6 @@ def split_sizes(duration: int, max_session: int) -> list[int]:
     n = math.ceil(duration / max_session)
     base, extra = divmod(duration, n)
     return [base + 1] * extra + [base] * (n - extra)
-
-def hours(slots: int) -> str:  
-    return f"{slots * MINUTES_PER_SLOT / 60:.2g}h"  
 
 def merge_fixed_spans(blocks: list[FixedBlock]) -> list[tuple[int, int, bool]]:   
     """Union overlapping fixed spans on the absolute slot axis. Touching spans stay separate."""
@@ -299,14 +296,14 @@ def sleep_warnings(sleep_rules: list[SleepRule],
         if length < rule.min_slots:   
             warnings.append(ScheduleWarning(   
                 severity="hard", kind="sleep_short",   
-                message=(f"{label}: only {hours(length)} of sleep fits, below your minimum "   
-                         f"of {hours(rule.min_slots)}.{why}"),   
+                message=(f"{label}: only {format_hours(length)} of sleep fits, below your minimum "   
+                         f"of {format_hours(rule.min_slots)}.{why}"),   
             ))   
         elif length < rule.length_slots:   
             warnings.append(ScheduleWarning(   
                 severity="soft", kind="sleep_short",   
-                message=(f"{label}: {hours(length)} of sleep, shorter than your "   
-                         f"target of {hours(rule.length_slots)}.{why}"),   
+                message=(f"{label}: {format_hours(length)} of sleep, shorter than your "   
+                         f"target of {format_hours(rule.length_slots)}.{why}"),   
             ))   
  
         if found is not None:  

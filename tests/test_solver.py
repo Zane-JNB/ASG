@@ -1,5 +1,5 @@
 import pytest
-from scheduler.models import DynamicTask, FixedBlock, SleepRule
+from scheduler.models import DynamicTask, FixedBlock, ScheduledItem, SleepRule
 from scheduler.units import SLOTS_PER_DAY
 from scheduler.solver import build_schedule, ProfileSettings, merge_fixed_spans,sleep_warnings,split_sizes, task_warnings
 
@@ -395,3 +395,11 @@ def test_bedtime_window_fully_blocked_is_a_hard_warning_not_a_crash(blocks):
     assert not [i for i in items if i.kind == "sleep"]
     [w] = sleep_warnings([rule], items)
     assert (w.severity, w.kind) == ("hard", "sleep_short")
+
+
+def test_sleep_warning_hours_are_exact():
+    # 7h45m of sleep used to show as "7.8h" (#16)
+    rule = SleepRule(length_slots=32, min_slots=24)
+    items = [ScheduledItem(title="Sleep", start_slot=92, end_slot=92 + 31, kind="sleep", day=0)]
+    [w] = sleep_warnings([rule], items)
+    assert w.message == "Night 0: 7h 45m of sleep, shorter than your target of 8h."
