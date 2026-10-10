@@ -88,6 +88,8 @@ def slots_to_hours(slots: int) -> float:
 
 def hours_to_slots(hours: float) -> int:
     """1.5 -> 6. Rounds to the nearest 15 minutes (halves round up); minimum one slot."""
+    if not math.isfinite(hours):
+        raise ValueError("hours must be a real number, like 1.5")
     slots = math.floor(hours * 60 / MINUTES_PER_SLOT + 0.5)
     if slots < 1:
         raise ValueError("duration must be at least 15 minutes")

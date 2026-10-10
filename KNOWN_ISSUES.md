@@ -16,7 +16,6 @@ Zane will review and correct each. Referenced from `CLAUDE.md`.
 14. Unused reminder fields on `ExtractedTask` (`reminders_enabled`, `reminder_min_*`) are sent in the Groq extraction schema. Remove them or mark them `SkipJsonSchema` (see 10).
 15. Commutes: adding one doesn't check for overlaps or ask the student (it breaks the commute invariant; planning only gives a soft warning).
 16. Small CLI issues:
-    - "inf" as hours crashes (`units.hours_to_slots` raises OverflowError).
     - `24:00` is rejected as an end time when editing an import (`review._EDIT_FIELDS` uses `parse_time` without `end=True`).
     - Old reminder sessions with reminders turned off are never marked as asked (`completion.py`), so they pile up.
 17. A due time inside the current 15-minute slot (e.g. due 10:15 at 10:05) passes `prompt_new_task`, but plans start at the next slot, so it can never be placed and the drop menu opens for nothing. Reject `due_slot <= next_slot(now)` on the same day.

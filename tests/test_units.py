@@ -80,3 +80,9 @@ def test_hours_to_slots(hours, slots):
 def test_hours_to_slots_rejects_under_one_slot(hours):
     with pytest.raises(ValueError):
         hours_to_slots(hours)
+
+
+@pytest.mark.parametrize("hours", [float("inf"), float("-inf"), float("nan")])
+def test_hours_to_slots_rejects_non_finite_hours(hours):  # #16: inf used to raise OverflowError
+    with pytest.raises(ValueError, match="number"):
+        hours_to_slots(hours)

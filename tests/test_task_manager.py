@@ -1,6 +1,6 @@
 from datetime import date, datetime
 
-from scheduler.db import connect, get_or_create_student, EXTRACTED_TASKS, replace_extraction
+from scheduler.db import connect, get_or_create_student, EXTRACTED_TASKS, load_settings, replace_extraction
 from scheduler.models import ExtractedTask, ExtractionResult, WeeklyPattern
 from scheduler.planner import plan_from_saved
 from scheduler.task_manager import prompt_new_task, run_menu
@@ -154,3 +154,10 @@ def test_menu_m_opens_the_commute_menu():
     ask, shown = scripted(["m", "l", "b", "q"])
     run_menu(conn, sid, ask, shown.append, today=TODAY)
     assert "No commutes saved." in shown
+
+def test_session_time_inf_is_rejected_not_a_crash():  # #16
+    conn, sid = _conn()
+    ask, shown = scripted(["t", "inf", "q"])
+    run_menu(conn, sid, ask, shown.append, today=TODAY)
+    assert any(l.startswith("Invalid:") for l in shown)
+    assert load_settings(conn, sid).default_max_session_slots == 8
