@@ -214,11 +214,21 @@ def _long_day_then_early_class(conn, sid):
                                            start_time="06:00", end_time="08:00"))
 
 
-def test_fits_already_still_shows_sleep_given_up_for_it(conn, sid):
+def test_a_task_that_only_fits_by_cutting_target_sleep_is_never_added_silently(conn, sid):
+    # #11: it used to be added with a warning after "Added."; now the student is asked first
     _long_day_then_early_class(conn, sid)
-    result, shown = _run(conn, sid, _task("Essay", 1.5, 3, D), [])
-    assert result is not None and "Added." in shown
-    assert any(s.startswith("Warning:") and "sleep" in s for s in shown)
+    result, shown = _run(conn, sid, _task("Essay", 1.5, 3, D), [""])
+    assert result is None and "Added." not in shown and EXTRACTED_TASKS.get(conn, sid) == []
+
+
+def test_letting_the_new_task_use_sleep_is_saved_with_it_and_planned(conn, sid):
+    _long_day_then_early_class(conn, sid)
+    result, shown = _run(conn, sid, _task("Essay", 1.5, 3, D), ["a", "y"])
+    assert result["cuts"] == {} and dict(EXTRACTED_TASKS.get(conn, sid))[result["new_task_id"]].may_cut_sleep
+    assert "  'Essay' may use sleep below your target (saved with the task)" in shown
+    _, _, items, warnings = plan_from_saved(conn, sid, now=NINE_AM)
+    assert "Essay" in [i.title for i in items if i.kind == "task"]
+    assert [(w.severity, w.kind) for w in warnings if w.kind.startswith("sleep")] == [("soft", "sleep_short")]
 
 
 def test_easy_fit_shows_no_sleep_warning(conn, sid):

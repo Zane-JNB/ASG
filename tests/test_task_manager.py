@@ -48,6 +48,13 @@ def test_menu_add_list_and_quit():
     assert [t.title for t in _saved(conn, sid)] == ["Essay"]
     assert "Added." in shown and any(s.startswith("1. Essay due 2026-10-05") for s in shown)
 
+def test_the_list_shows_a_task_may_use_sleep_below_target():
+    conn, sid = _conn()
+    EXTRACTED_TASKS.add(conn, sid, ExtractedTask(title="Essay", date="2026-10-05", may_cut_sleep=True))
+    ask, shown = scripted(["l", "q"])
+    run_menu(conn, sid, ask, shown.append, today=TODAY)
+    assert "1. Essay due 2026-10-05 (1h, priority 3, difficulty 3, may use sleep below target)" in shown
+
 def test_list_is_sorted_by_due_date_and_delete_uses_those_numbers():
     conn, sid = _conn()
     for title, due in (("Late", "2026-11-01"), ("Soon", "2026-10-01")):

@@ -132,3 +132,12 @@ def test_a_manual_cut_of_a_split_task_says_how_many_sessions_are_left(slots_cut,
 def test_a_manual_cut_of_a_one_block_task_is_still_one_block():
     lab = DynamicTask(title="Lab", duration_slots=8, priority=3, splittable=False)
     assert "Shorten 'Lab' by 1h (2h -> 1h, still one block)" in _manual_line(lab, 4)
+
+
+def test_an_option_that_lets_the_new_task_use_sleep_says_so():
+    new = DynamicTask(title="Quiz", duration_slots=4, priority=5)
+    proposal = DropProposal(actions=[], new_task_added=True, new_task_may_cut_sleep=True, score=0,
+                            slots_freed=0, sleep_sacrificed_slots=6, flags=[], schedule=[])
+    lines = describe_proposal(1, proposal, new)
+    assert "   - Adds 'Quiz' (1h, priority 5, difficulty 3) and lets it use sleep below your target" in lines
+    assert "   - Sleep: 1h 30m below target" in lines

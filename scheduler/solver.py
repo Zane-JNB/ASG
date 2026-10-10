@@ -3,7 +3,7 @@ import math
 from dataclasses import dataclass, field
 from ortools.sat.python import cp_model
 from scheduler.models import (
-    DynamicTask, FixedBlock, ProfileSettings, ScheduledItem, ScheduleWarning, SleepRule,
+    MAX_PRIORITY, DynamicTask, FixedBlock, ProfileSettings, ScheduledItem, ScheduleWarning, SleepRule,
 )
 from scheduler.units import SLOTS_PER_DAY, format_hours, slot_to_time
 
@@ -53,6 +53,7 @@ class _Task:
 class _Night:
     start: cp_model.IntVar
     size: cp_model.IntVar
+    room: int  # the most sleep this night allows (reachable_sleep)
 
 
 @dataclass
@@ -85,6 +86,7 @@ def build_schedule(fixed_blocks: list[FixedBlock], tasks: list[DynamicTask], num
     _add_fixed_blocks(plan, fixed_blocks)
     placed = [_add_task(plan, i, task) for i, task in enumerate(tasks)]
     nights = [_add_night(plan, rule) for rule in sleep_rules if not rule.skip]  # skipped: free for tasks
+    _guard_sleep_target(plan, nights, placed)
     plan.model.AddNoOverlap(plan.spaced)
     plan.model.AddNoOverlap(plan.flush + plan.sleep)
     plan.model.AddNoOverlap(plan.after_blocks)
@@ -196,7 +198,21 @@ def _add_night(plan: _Plan, rule: SleepRule) -> _Night:
     plan.costs += [s.sleep_min_penalty * shortfall,
                    s.sleep_target_penalty * (rule.length_slots - size),
                    s.bedtime_penalty * drift]
-    return _Night(start, size)
+    return _Night(start, size, reachable_sleep(rule))
+
+
+def _guard_sleep_target(plan: _Plan, nights: list[_Night], placed: list[_Task]) -> None:
+    """Target sleep is never traded for a task the student hasn't let use it (#11). Sleep below
+    what the nights allow costs sleep_target_penalty, as above. The part of it beyond the time of
+    the planned tasks that may use it (each session plus a break on either side) also costs more
+    per slot than any task can gain from that slot, so sleep below target never adds up to more
+    than those tasks' time. Minimum sleep still outranks every task."""
+    breaks = 2 * plan.settings.buffer_slots
+    given_up = sum(n.room - n.size for n in nights)
+    allowed = sum(p.present * sum(c.size + breaks for c in p.chunks) for p in placed if p.task.may_cut_sleep)
+    beyond = plan.model.NewIntVar(0, sum(n.room for n in nights), "sleep_given_up_unallowed")
+    plan.model.Add(beyond >= given_up - allowed)
+    plan.costs.append(MAX_PRIORITY * plan.settings.presence_bonus * beyond)
 
 
 def _set_objective(plan: _Plan, placed: list[_Task]) -> None:

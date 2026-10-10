@@ -29,6 +29,7 @@ def extracted_task_to_dynamic_task(task: ExtractedTask, plan_start_date: date,
         priority=task.priority,
         difficulty=task.difficulty,
         splittable=task.splittable,
+        may_cut_sleep=task.may_cut_sleep,
         max_session_slots=max_session_slots,
         deadline_day=day_index_for_date(plan_start_date, date.fromisoformat(task.date)),
         deadline_slot=task.due_slot(),  # end of day unless the task has a due time

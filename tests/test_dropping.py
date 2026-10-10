@@ -199,3 +199,25 @@ def test_try_cuts_scores_a_verified_plan_or_returns_none():
     again = try_cuts(frame, tasks, new, best.actions, best.new_task_slots_cut)
     assert (again.score, again.flags, again.slots_freed) == (best.score, best.flags, best.slots_freed)
     assert try_cuts(frame, tasks, new, [], 0) is None  # the plan that already failed
+
+
+def _evening_frame():
+    """Busy until 21:00 and up at 05:00: a task tonight only fits by sleeping below target."""
+    work = FixedBlock(title="Work", start_slot=0, end_slot=84)
+    rule = SleepRule(earliest_bed=84, preferred_bed=84, latest_bed=100, latest_wake=116)
+    return PlanFrame([work], 1, [rule])
+
+
+def test_letting_the_new_task_use_sleep_below_target_is_offered():
+    quiz = DynamicTask(title="Quiz", duration_slots=1, priority=5, deadline_day=0)
+    report = propose_drops(_evening_frame(), [], quiz)
+    (sleepy,) = [p for p in report.proposals if p.new_task_may_cut_sleep]
+    assert sleepy.new_task_added and sleepy.actions == [] and sleepy.new_task_slots_cut == 0
+    assert sleepy.sleep_sacrificed_slots == 3
+    assert not any(p.new_task_may_cut_sleep for p in report.proposals if p is not sleepy)
+
+
+def test_sleep_below_target_is_not_offered_when_it_would_reach_below_minimum():
+    essay = DynamicTask(title="Essay", duration_slots=10, priority=5, deadline_day=0, splittable=False)
+    report = propose_drops(_evening_frame(), [], essay)
+    assert not any(p.new_task_may_cut_sleep for p in report.proposals)

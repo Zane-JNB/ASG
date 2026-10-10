@@ -94,6 +94,8 @@ def _describe(kind: str, item, session_cap: int | None = None) -> str:
             note = ", can be split"
         else:
             note = ""
+        if item.may_cut_sleep:
+            note += ", may use sleep below target"
         return f"{item.title} due {item.due_label()} ({hours:g}h, priority {item.priority}, difficulty {item.difficulty}{note})"
     when = f"{item.day}" if kind == "Weekly" else f"{item.date}"
     return f"{item.title} -- {when} {item.start_time}-{item.end_time}"

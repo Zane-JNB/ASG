@@ -76,3 +76,11 @@ def test_schedule_warning_hard_and_soft_constructors():
     assert ScheduleWarning.hard("sleep_short", "too little") == ScheduleWarning(
         severity="hard", kind="sleep_short", message="too little")
     assert ScheduleWarning.soft("task_cut", "shorter").severity == "soft"
+
+
+def test_sleep_permission_defaults_off_loads_from_old_rows_and_is_hidden_from_the_llm():
+    from scheduler.models import ExtractedTask, ExtractionResult
+    old_row = '{"title": "Essay", "date": "2026-10-06"}'  # saved before the field existed
+    assert ExtractedTask.model_validate_json(old_row).may_cut_sleep is False
+    assert DynamicTask(title="Essay", duration_slots=4, priority=3).may_cut_sleep is False
+    assert "may_cut_sleep" not in str(ExtractionResult.model_json_schema())
